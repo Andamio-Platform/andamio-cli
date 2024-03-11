@@ -1,15 +1,11 @@
+/*
+Copyright © 2024 Andamio dev@andamio.io
+
+*/
 package main
 
-import "fmt"
+import "github.com/Andamio-Platform/andamio-cli/cmd"
 
 func main() {
-	fmt.Printf(`
-
-----------------------------------
-+                                +
-+     welcome to andamio-cli     +
-+                                +
-----------------------------------
-
-`)
+	cmd.Execute()
 }
