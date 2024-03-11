@@ -3,5 +3,13 @@ package main
 import "fmt"
 
 func main() {
-	fmt.Printf("Welcome to andamio-cli!")
+	fmt.Printf(`
+
+----------------------------------
++                                +
++     welcome to andamio-cli     +
++                                +
+----------------------------------
+
+`)
 }
