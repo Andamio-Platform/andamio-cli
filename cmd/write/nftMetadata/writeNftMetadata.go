@@ -2,7 +2,6 @@ package nftMetadata
 
 import (
 	"bufio"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -29,10 +28,6 @@ type Metadata struct {
 }
 
 // Helper functions - we'll come back to these in a minute:
-
-func stringToHexString(s string) string {
-	return hex.EncodeToString([]byte(s))
-}
 
 func splitStringForMetadata(input string) []string {
 	const chunkSize = 56
@@ -72,7 +67,6 @@ func writeNftFile() {
 	fmt.Print("Enter asset_name: ")
 	assetName, _ := reader.ReadString('\n')
 	assetName = strings.TrimSpace(assetName)
-	assetHex := stringToHexString(assetName)
 
 	fmt.Print("Enter name: ")
 	name, _ := reader.ReadString('\n')
@@ -108,7 +102,7 @@ func writeNftFile() {
 	metadata := Metadata{
 		PolicyID: map[string]map[string]Asset{
 			policyID: {
-				assetHex: asset,
+				assetName: asset,
 			},
 		},
 	}
