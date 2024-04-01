@@ -1,0 +1,13 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.zip
+swag
+.vscode
+.editorconfig
+build
+db
+.env
+output
