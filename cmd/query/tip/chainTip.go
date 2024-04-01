@@ -15,64 +15,56 @@
 package tip
 
 import (
+	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"os"
 
-	ouroboros "github.com/blinklabs-io/gouroboros"
-	"github.com/kelseyhightower/envconfig"
+	"connectrpc.com/connect"
+	sync "github.com/utxorpc/go-codegen/utxorpc/v1alpha/sync"
+	utxorpc "github.com/utxorpc/go-sdk"
+	"golang.org/x/net/http2"
 )
 
-// We parse environment variables using envconfig into this struct
-type Config struct {
-	Magic   uint32
-	Address string `split_words:"true"`
-}
-
-// This code will be executed when run
 func chainTip() {
-	// Set config defaults
-	var cfg = Config{
-		Magic:   1,
-		Address: "0.0.0.0:3001",
+	ctx := context.Background()
+	httpClient := &http.Client{
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
+				// If you're also using this client for non-h2c traffic, you may want
+				// to delegate to tls.Dial if the network isn't TCP or the addr isn't
+				// in an allowlist.
+				return net.Dial(network, addr)
+			},
+		},
 	}
-	// Parse environment variables
-	if err := envconfig.Process("cardano_node", &cfg); err != nil {
-		panic(err)
-	}
-	// Create error channel
-	errorChan := make(chan error)
-	// start error handler
-	go func() {
-		for {
-			err := <-errorChan
-			panic(err)
+	baseUrl := "https://preview.utxorpc-v0.demeter.run"
+	client := utxorpc.NewClient(httpClient, baseUrl)
+	req := connect.NewRequest(&sync.FetchBlockRequest{})
+	// set API key for demeter
+	apiKey := os.Getenv("DEMETER_API_KEY")
+	req.Header().Set("dmtr-api-key", apiKey)
+	fmt.Println("connecting to utxorpc host:", baseUrl)
+	chainSync, err := client.ChainSync.FetchBlock(ctx, req)
+	if err != nil {
+		fmt.Println(connect.CodeOf(err))
+		if connectErr := new(connect.Error); errors.As(err, &connectErr) {
+			fmt.Println(connectErr.Message())
+			fmt.Println(connectErr.Details())
 		}
-	}()
-	// Configure Ouroboros
-	o, err := ouroboros.NewConnection(
-		ouroboros.WithNetworkMagic(uint32(cfg.Magic)),
-		ouroboros.WithErrorChan(errorChan),
-		ouroboros.WithNodeToNode(true),
-	)
-	if err != nil {
-		panic(err)
+		os.Exit(1)
 	}
-	// Connect to Node socket
-	// if err = o.Dial("unix", cfg.SocketPath); err != nil {
-	// 	panic(err)
-	// }
-	// Connect via tcp
-	if err = o.Dial("tcp", cfg.Address); err != nil {
-		panic(err)
+	fmt.Println("connected to utxorpc...")
+	for i, blockRef := range chainSync.Msg.Block {
+		fmt.Printf("Block[%d]:\n", i)
+		fmt.Printf("Index: %d\n", blockRef.GetCardano().GetHeader().GetSlot())
+		fmt.Printf("Hash: %x\n", blockRef.GetCardano().GetHeader().GetHash())
 	}
-	// Get current tip from Node via NtC ChainSync Ouroboros mini-protocol
-	tip, err := o.ChainSync().Client.GetCurrentTip()
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf(
-		"Chain Tip:\nSlot: %-10d Block Hash: %x\n",
-		tip.Point.Slot,
-		tip.Point.Hash,
-	)
-	fmt.Println()
 }
