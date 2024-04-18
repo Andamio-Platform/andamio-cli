@@ -11,4 +11,4 @@ build
 db
 .env
 output
-
+/andamio-cli
