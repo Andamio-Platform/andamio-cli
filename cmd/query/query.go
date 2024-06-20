@@ -6,6 +6,8 @@ package query
 import (
 	"fmt"
 
+	courseInstances "github.com/Andamio-Platform/andamio-cli/cmd/query/course-instances"
+	globalState "github.com/Andamio-Platform/andamio-cli/cmd/query/global-state"
 	"github.com/Andamio-Platform/andamio-cli/cmd/query/tip"
 	"github.com/spf13/cobra"
 )
@@ -28,6 +30,8 @@ to quickly create a Cobra application.`,
 func addQuerySubcommandIslands() {
 	// WriteCmd.AddCommand(playground.PlaygroundCmd)
 	QueryCmd.AddCommand(tip.TipCmd)
+	QueryCmd.AddCommand(globalState.GlobalStateCmd)
+	QueryCmd.AddCommand(courseInstances.CourseInstanceCmd)
 }
 
 func init() {

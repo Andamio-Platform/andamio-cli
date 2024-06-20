@@ -8,6 +8,7 @@ import (
 
 	"github.com/Andamio-Platform/andamio-cli/cmd/playground"
 	"github.com/Andamio-Platform/andamio-cli/cmd/query"
+	"github.com/Andamio-Platform/andamio-cli/cmd/sync"
 	"github.com/Andamio-Platform/andamio-cli/cmd/transaction"
 	"github.com/Andamio-Platform/andamio-cli/cmd/write"
 	"github.com/spf13/cobra"
@@ -42,6 +43,7 @@ func addSubcommandIslands() {
 	rootCmd.AddCommand(write.WriteCmd)
 	rootCmd.AddCommand(query.QueryCmd)
 	rootCmd.AddCommand(transaction.TransactionCmd)
+	rootCmd.AddCommand(sync.SyncCmd)
 }
 
 func init() {
