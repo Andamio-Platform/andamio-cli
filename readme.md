@@ -31,6 +31,7 @@ Then run `andamio-cli` from the same directory.
 
 ### Q 2024:
 - [ ] Andamio Public API MVP
+- [ ] CLI includes server functions to run APIs
 
 ## Using Andamio CLI
 
