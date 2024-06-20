@@ -20,6 +20,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 
 	"github.com/Andamio-Platform/andamio-cli/utils"
 )
@@ -58,27 +59,89 @@ type GlobalStateUTxO struct {
 	TxoutCbor       *string `json:"txout_cbor"`       // Use *string to allow null values
 }
 
-func globalState() {
+func globalState(tokenName string) {
 	fmt.Println("Global state called")
-	url := "https://dev.andamio.io/api/global-state/utxos"
+	fmt.Println(tokenName)
+	// Feature - if tokenName is specified, use https://dev.andamio.io/api/global-state/decodedGlobalStateDatumByAlias instead
+	if tokenName == "" {
+		apiURL := "https://dev.andamio.io/api/global-state/utxos"
 
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Fatalf("Failed to make GET request: %v", err)
-	}
-	defer resp.Body.Close()
+		resp, err := http.Get(apiURL)
+		if err != nil {
+			log.Fatalf("Failed to make GET request: %v", err)
+		}
+		defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Failed to read response body: %v", err)
-	}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatalf("Failed to read response body: %v", err)
+		}
 
-	var globalStates []GlobalStateUTxO
-	if err := json.Unmarshal(body, &globalStates); err != nil {
-		log.Fatalf("Failed to unmarshal JSON: %v", err)
-	}
+		var globalStates []GlobalStateUTxO
+		if err := json.Unmarshal(body, &globalStates); err != nil {
+			log.Fatalf("Failed to unmarshal JSON: %v", err)
+		}
 
-	for _, instance := range globalStates {
+		for _, instance := range globalStates {
+
+			fmt.Printf("TxHash: %s\n", instance.TxHash)
+			fmt.Printf("Index: %d\n", instance.Index)
+			fmt.Printf("Slot: %d\n", instance.Slot)
+			fmt.Printf("Address: %s\n", instance.Address)
+			fmt.Printf("Assets:\n")
+			for _, asset := range instance.Assets {
+				if asset.Unit == "lovelace" {
+					fmt.Printf("  - Unit: %s, Amount: %s\n", asset.Unit, asset.Amount)
+				} else {
+					unit, _ := utils.HexToString(asset.Unit)
+					fmt.Printf("  - Unit: %s, Amount: %s\n", unit, asset.Amount)
+				}
+			}
+			fmt.Printf("Datum:\n")
+			fmt.Printf("  Type: %s\n", instance.Datum.Type)
+			fmt.Printf("  Hash: %s\n", instance.Datum.Hash)
+			fmt.Printf("  Bytes: %s\n", instance.Datum.Bytes)
+			// fmt.Println("  JSON Fields:")
+			// fmt.Print(instance.Datum.JSON)
+			// Task: How to make Datum useful?
+			fmt.Println("---------------------------------------------")
+		}
+
+	} else {
+		apiURL := "https://dev.andamio.io/api/global-state/utxoByAlias"
+
+		// Parse the base URL
+		parsedURL, err := url.Parse(apiURL)
+		if err != nil {
+			log.Fatalf("Failed to parse URL: %v", err)
+		}
+
+		// Create query parameters
+		queryParams := url.Values{}
+		queryParams.Add("alias", tokenName)
+
+		// Add the query parameters to the URL
+		parsedURL.RawQuery = queryParams.Encode()
+
+		// Construct the full URL
+		fullURL := parsedURL.String()
+
+		resp, err := http.Get(fullURL)
+		if err != nil {
+			log.Fatalf("Failed to make GET request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Fatalf("Failed to read response body: %v", err)
+		}
+
+		var instance GlobalStateUTxO
+		if err := json.Unmarshal(body, &instance); err != nil {
+			log.Fatalf("Failed to unmarshal JSON: %v", err)
+		}
+
 		fmt.Printf("TxHash: %s\n", instance.TxHash)
 		fmt.Printf("Index: %d\n", instance.Index)
 		fmt.Printf("Slot: %d\n", instance.Slot)

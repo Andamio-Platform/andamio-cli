@@ -60,10 +60,10 @@ func SyncExample() {
 
 	// Configure pipeline input
 	inputOpts := []input_chainsync.ChainSyncOptionFunc{
-		input_chainsync.WithBulkMode(true),
+		// input_chainsync.WithBulkMode(true),
 		input_chainsync.WithAutoReconnect(true),
 		input_chainsync.WithIntersectTip(true),
-		input_chainsync.WithStatusUpdateFunc(updateStatus),
+		// input_chainsync.WithStatusUpdateFunc(updateStatus),
 		input_chainsync.WithNetworkMagic(cfg.Magic),
 		input_chainsync.WithSocketPath(cfg.SocketPath),
 		// Use this if you want to connect to a remote node and not SocketPath
@@ -102,6 +102,6 @@ func handleEvent(evt event.Event) error {
 	return nil
 }
 
-func updateStatus(status input_chainsync.ChainSyncStatus) {
-	slog.Info(fmt.Sprintf("ChainSync status update: %v\n", status))
-}
+// func updateStatus(status input_chainsync.ChainSyncStatus) {
+// 	slog.Info(fmt.Sprintf("ChainSync status update: %v\n", status))
+// }

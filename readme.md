@@ -1,5 +1,16 @@
 # Andamio CLI
 
+### Config
+Some functions require access to a Cardano Node. Create a `.env` and specify these values:
+```bash
+CARDANO_NODE_MAGIC="1"
+CARDANO_NODE_SOCKET_PATH="<PATH TO>/node.socket"
+```
+Then run `andamio-cli` from the same directory.
+
+
+- [ ] Add config as command line argument
+
 ## Roadmap:
 
 ### Q1 2024:
@@ -23,13 +34,7 @@
 
 ## Using Andamio CLI
 
-### Config
-- [ ] Add config as command line argument
-Create a .env file like this:
-```bash
-CARDANO_NODE_MAGIC="1"
-CARDANO_NODE_SOCKET_PATH="<PATH TO>/node.socket"
-```
+
 
 
 ## Credits
