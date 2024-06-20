@@ -9,12 +9,12 @@ import (
 var inputFileName string
 
 var ContractTokenDatumCmd = &cobra.Command{
-	Use:   "global-state",
+	Use:   "contract-token-datum",
 	Short: "Example for Cardano Go PBL",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Querying Andamio Global State...")
-		writeContractTokenDatum()
+		fmt.Println("Writing contract token datum from input.json...")
+		writeContractTokenDatum(inputFileName)
 	},
 }
 

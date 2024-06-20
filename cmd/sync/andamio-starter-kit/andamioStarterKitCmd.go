@@ -3,7 +3,7 @@ package andamioStarterKit
 import (
 	"fmt"
 
-	"andamio-indexer/src/indexer"
+	// "andamio-indexer/src/indexer"
 
 	"github.com/spf13/cobra"
 )
@@ -14,7 +14,7 @@ var AndamioStarterKitCmd = &cobra.Command{
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Starting Andamio network sync...")
-		indexer.RunIndexer()
+		// indexer.RunIndexer()
 	},
 }
 

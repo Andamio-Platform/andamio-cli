@@ -10,50 +10,51 @@ import (
 )
 
 // Input structures
-type InputProject struct {
+type InputProjectData struct {
 	Title      string `json:"title"`
 	Expiration int64  `json:"expiration"`
 	Ada        int    `json:"ada"`
 	Gimbals    int    `json:"gimbals"`
 }
 
-type InputData struct {
-	ContributorPolicyIds []string       `json:"contributorPolicyIds"`
-	Projects             []InputProject `json:"projects"`
+type InputContractTokenData struct {
+	ContributorPolicyIds []string           `json:"contributorPolicyIds"`
+	Projects             []InputProjectData `json:"projects"`
 }
 
 // Output structures
-type OutputField struct {
-	Constructor int           `json:"constructor"`
-	Fields      []interface{} `json:"fields,omitempty"`
-	Bytes       string        `json:"bytes,omitempty"`
-	Int         int64         `json:"int,omitempty"`
-	List        []OutputField `json:"list,omitempty"`
+type OutputDatumField struct {
+	Constructor int                `json:"constructor,omitempty"`
+	Fields      []interface{}      `json:"fields,omitempty"`
+	Bytes       string             `json:"bytes,omitempty"`
+	Int         int64              `json:"int,omitempty"`
+	List        []OutputDatumField `json:"list,omitempty"`
 }
 
-type OutputData struct {
-	Constructor int           `json:"constructor"`
-	Fields      []OutputField `json:"fields"`
+type OutputDatum struct {
+	Constructor int                `json:"constructor"`
+	Fields      []OutputDatumField `json:"fields"`
 }
 
-func writeContractTokenDatum() {
-	inputFilePath := "input.json"
-	outputFilePath := "output.json"
+func writeContractTokenDatum(inputFileName string) {
+	inputFilePath := inputFileName
+	ctInputName := inputFileName[:len(inputFileName)-5]
+	outputFilePath := ctInputName + "-contract-token-datum.json"
 
 	// Read input JSON file
-	inputData := readInputJSON(inputFilePath)
+	InputContractTokenData := readInputJSON(inputFilePath)
 
 	// Transform the data
-	outputData := transformData(inputData)
+	outputDatum := transformData(InputContractTokenData)
 
 	// Write output JSON file
-	writeOutputJSON(outputFilePath, outputData)
+	writeOutputJSON(outputFilePath, outputDatum)
 
 	fmt.Println("Data transformation complete. Output written to", outputFilePath)
 }
 
 // Function to read input JSON file
-func readInputJSON(filename string) InputData {
+func readInputJSON(filename string) InputContractTokenData {
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatalf("Failed to open input file: %v", err)
@@ -65,57 +66,57 @@ func readInputJSON(filename string) InputData {
 		log.Fatalf("Failed to read input file: %v", err)
 	}
 
-	var inputData InputData
-	if err := json.Unmarshal(byteValue, &inputData); err != nil {
+	var InputContractTokenData InputContractTokenData
+	if err := json.Unmarshal(byteValue, &InputContractTokenData); err != nil {
 		log.Fatalf("Failed to unmarshal input JSON: %v", err)
 	}
 
-	return inputData
+	return InputContractTokenData
 }
 
 // Function to transform the input data
-func transformData(input InputData) OutputData {
-	var projectList []OutputField
+func transformData(input InputContractTokenData) OutputDatum {
+	var projectList []OutputDatumField
 
 	for _, project := range input.Projects {
 		projectHexTitle := hex.EncodeToString([]byte(project.Title))
-		projectField := OutputField{
+		projectField := OutputDatumField{
 			Constructor: 0,
 			Fields: []interface{}{
-				OutputField{Bytes: projectHexTitle},
-				OutputField{Int: project.Expiration},
-				OutputField{Int: int64(project.Ada) * 1000000},
-				OutputField{Int: int64(project.Gimbals) * 1000000},
+				OutputDatumField{Bytes: projectHexTitle},
+				OutputDatumField{Int: project.Expiration},
+				OutputDatumField{Int: int64(project.Ada) * 1000000},
+				OutputDatumField{Int: int64(project.Gimbals) * 1000000},
 			},
 		}
 		projectList = append(projectList, projectField)
 	}
 
-	policyList := []OutputField{}
+	policyList := []OutputDatumField{}
 	for _, policy := range input.ContributorPolicyIds {
-		policyField := OutputField{Bytes: policy}
+		policyField := OutputDatumField{Bytes: policy}
 		policyList = append(policyList, policyField)
 	}
 
-	outputFields := []OutputField{
+	OutputDatumFields := []OutputDatumField{
 		{
 			Constructor: 0,
 			Fields: []interface{}{
-				OutputField{List: projectList},
-				OutputField{List: policyList},
+				OutputDatumField{List: projectList},
+				OutputDatumField{List: policyList},
 			},
 		},
 	}
 
-	return OutputData{
+	return OutputDatum{
 		Constructor: 1,
-		Fields:      outputFields,
+		Fields:      OutputDatumFields,
 	}
 }
 
 // Function to write output JSON file
-func writeOutputJSON(filename string, outputData OutputData) {
-	byteValue, err := json.MarshalIndent(outputData, "", "  ")
+func writeOutputJSON(filename string, outputDatum OutputDatum) {
+	byteValue, err := json.MarshalIndent(outputDatum, "", "  ")
 	if err != nil {
 		log.Fatalf("Failed to marshal output JSON: %v", err)
 	}
