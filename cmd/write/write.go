@@ -6,6 +6,7 @@ package write
 import (
 	"fmt"
 
+	writeContractTokenDatum "github.com/Andamio-Platform/andamio-cli/cmd/write/contractTokenDatum"
 	"github.com/Andamio-Platform/andamio-cli/cmd/write/nftMetadata"
 	"github.com/spf13/cobra"
 )
@@ -28,6 +29,7 @@ to quickly create a Cobra application.`,
 func addWriteSubcommandIslands() {
 	// WriteCmd.AddCommand(playground.PlaygroundCmd)
 	WriteCmd.AddCommand(nftMetadata.NftMetadataCmd)
+	WriteCmd.AddCommand(writeContractTokenDatum.ContractTokenDatumCmd)
 }
 
 func init() {
