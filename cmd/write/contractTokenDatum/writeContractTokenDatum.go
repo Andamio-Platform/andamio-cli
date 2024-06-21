@@ -20,37 +20,49 @@ type InputProjectData struct {
 type InputContractTokenData struct {
 	ContributorPolicyIds []string           `json:"contributorPolicyIds"`
 	Projects             []InputProjectData `json:"projects"`
+	EscrowHash           string             `json:"escrowHash"`
 }
 
 // Output structures
+type OutputDatumConstructor struct {
+	Constructor int           `json:"constructor"`
+	Fields      []interface{} `json:"fields,omitempty"`
+}
+
 type OutputDatumField struct {
-	Constructor int                `json:"constructor,omitempty"`
-	Fields      []interface{}      `json:"fields,omitempty"`
-	Bytes       string             `json:"bytes,omitempty"`
-	Int         int64              `json:"int,omitempty"`
-	List        []OutputDatumField `json:"list,omitempty"`
+	Bytes string             `json:"bytes,omitempty"`
+	Int   int64              `json:"int,omitempty"`
+	List  []OutputDatumField `json:"list,omitempty"`
+}
+
+type OutputDatumConstructorList struct {
+	List []OutputDatumConstructor `json:"list"`
 }
 
 type OutputDatum struct {
-	Constructor int                `json:"constructor"`
-	Fields      []OutputDatumField `json:"fields"`
+	Constructor int                      `json:"constructor"`
+	Fields      []OutputDatumConstructor `json:"fields"`
 }
 
 func writeContractTokenDatum(inputFileName string) {
 	inputFilePath := inputFileName
 	ctInputName := inputFileName[:len(inputFileName)-5]
-	outputFilePath := ctInputName + "-contract-token-datum.json"
+	datumOutputFilePath := ctInputName + "-contract-token-datum.json"
+	redeemerOutputFilePath := ctInputName + "-manage-redeemer.json"
 
 	// Read input JSON file
 	InputContractTokenData := readInputJSON(inputFilePath)
 
-	// Transform the data
-	outputDatum := transformData(InputContractTokenData)
+	// Write Datum
+	outputDatum := writeDataToContractTokenDatum(InputContractTokenData)
+
+	// Write Redeemer
+	outputRedeemer := writeDataToManageRedeemer(InputContractTokenData)
 
 	// Write output JSON file
-	writeOutputJSON(outputFilePath, outputDatum)
+	writeOutputJSON(datumOutputFilePath, outputDatum)
+	writeOutputJSON(redeemerOutputFilePath, outputRedeemer)
 
-	fmt.Println("Data transformation complete. Output written to", outputFilePath)
 }
 
 // Function to read input JSON file
@@ -74,13 +86,13 @@ func readInputJSON(filename string) InputContractTokenData {
 	return InputContractTokenData
 }
 
-// Function to transform the input data
-func transformData(input InputContractTokenData) OutputDatum {
-	var projectList []OutputDatumField
+// Function to write Contract Token Datum
+func writeDataToContractTokenDatum(input InputContractTokenData) OutputDatum {
+	var projectList []OutputDatumConstructor
 
 	for _, project := range input.Projects {
 		projectHexTitle := hex.EncodeToString([]byte(project.Title))
-		projectField := OutputDatumField{
+		projectField := OutputDatumConstructor{
 			Constructor: 0,
 			Fields: []interface{}{
 				OutputDatumField{Bytes: projectHexTitle},
@@ -98,11 +110,11 @@ func transformData(input InputContractTokenData) OutputDatum {
 		policyList = append(policyList, policyField)
 	}
 
-	OutputDatumFields := []OutputDatumField{
+	OutputDatumFields := []OutputDatumConstructor{
 		{
 			Constructor: 0,
 			Fields: []interface{}{
-				OutputDatumField{List: projectList},
+				OutputDatumConstructorList{List: projectList},
 				OutputDatumField{List: policyList},
 			},
 		},
@@ -110,6 +122,47 @@ func transformData(input InputContractTokenData) OutputDatum {
 
 	return OutputDatum{
 		Constructor: 1,
+		Fields:      OutputDatumFields,
+	}
+}
+
+// Function to write Manage redeemer
+func writeDataToManageRedeemer(input InputContractTokenData) OutputDatum {
+	var projectList []OutputDatumConstructor
+
+	for _, project := range input.Projects {
+		projectHexTitle := hex.EncodeToString([]byte(project.Title))
+		projectField := OutputDatumConstructor{
+			Constructor: 0,
+			Fields: []interface{}{
+				OutputDatumField{Bytes: projectHexTitle},
+				OutputDatumField{Int: project.Expiration},
+				OutputDatumField{Int: int64(project.Ada) * 1000000},
+				OutputDatumField{Int: int64(project.Gimbals) * 1000000},
+			},
+		}
+		projectList = append(projectList, projectField)
+	}
+
+	policyList := []OutputDatumField{}
+	for _, policy := range input.ContributorPolicyIds {
+		policyField := OutputDatumField{Bytes: policy}
+		policyList = append(policyList, policyField)
+	}
+
+	OutputDatumFields := []OutputDatumConstructor{
+		{
+			Constructor: 0,
+			Fields: []interface{}{
+				OutputDatumConstructorList{List: projectList},
+				OutputDatumField{List: policyList},
+				OutputDatumField{Bytes: input.EscrowHash},
+			},
+		},
+	}
+
+	return OutputDatum{
+		Constructor: 2,
 		Fields:      OutputDatumFields,
 	}
 }
@@ -124,4 +177,6 @@ func writeOutputJSON(filename string, outputDatum OutputDatum) {
 	if err := os.WriteFile(filename, byteValue, 0644); err != nil {
 		log.Fatalf("Failed to write output file: %v", err)
 	}
+	fmt.Println("Output written to", filename)
+
 }

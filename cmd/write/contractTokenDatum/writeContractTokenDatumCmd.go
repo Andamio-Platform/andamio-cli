@@ -13,7 +13,7 @@ var ContractTokenDatumCmd = &cobra.Command{
 	Short: "Example for Cardano Go PBL",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Writing contract token datum from input.json...")
+		fmt.Printf("Writing contract token datum from %s...\n", inputFileName)
 		writeContractTokenDatum(inputFileName)
 	},
 }
