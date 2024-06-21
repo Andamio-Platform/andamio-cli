@@ -42,3 +42,21 @@ Then run `andamio-cli` from the same directory.
 
 Thank you to Blink Labs for sharing examples.
 - https://github.com/blinklabs-io/adder-library-starter-kit/tree/main is used in `/sync`
+
+
+## Convenience Phase
+Next Steps (see also roadmap):
+- Deploy reference scripts
+- Compile contract instances
+-
+-
+
+## Queries Phase
+
+Next Steps (see also roadmap):
+- Query course status
+- Query learner status
+- Aggregate course learner status
+- Aggregate contributor status
+
+## Deployment Phase
