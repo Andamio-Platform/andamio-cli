@@ -10,8 +10,11 @@ var inputFileName string
 
 var ContractTokenDatumCmd = &cobra.Command{
 	Use:   "contract-token-datum",
-	Short: "Example for Cardano Go PBL",
-	Long:  ``,
+	Short: "Andamio Course Contract Token Datum",
+	Long: `
+Query the list of courses currently registered on the Andamio Network
+	
+	`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("Writing contract token datum from %s...\n", inputFileName)
 		writeContractTokenDatum(inputFileName)

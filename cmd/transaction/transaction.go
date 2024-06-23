@@ -12,12 +12,11 @@ var TransactionCmd = &cobra.Command{
 	Short: "Transaction building commands",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println(`andamio-cli transaction
-		Usage: andamio-cli transaction
-					( walletToWallet
-					)
+		fmt.Println(`
+andamio-cli transaction
 
-		`)
+Usage: andamio-cli transaction
+( walletToWallet )`)
 	},
 }
 

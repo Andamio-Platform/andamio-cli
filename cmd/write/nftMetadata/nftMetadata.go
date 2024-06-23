@@ -57,12 +57,19 @@ func splitStringForMetadata(input string) []string {
 var NftMetadataCmd = &cobra.Command{
 	Use:   "nft-metadata",
 	Short: "Write NFT metadata",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Long: `
+Utility for writing simple NFT Metadata that adheres to CIP-25 standard.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+andamio-cli write nft-medata
+	--policyid
+	--asset-name
+	--name
+	--image
+	--media-type
+	--description
+	--out-file
+
+	`,
 	Run: func(cmd *cobra.Command, args []string) {
 		policyID, _ := cmd.Flags().GetString("policyid")
 		assetName, _ := cmd.Flags().GetString("asset-name")

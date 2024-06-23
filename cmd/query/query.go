@@ -15,13 +15,21 @@ import (
 // queryCmd represents the query command
 var QueryCmd = &cobra.Command{
 	Use:   "query",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Short: "Andamio Network queries",
+	Long: `
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+The Andamio Network is home to valuable, public data that becomes even 
+more valuable when you have tools to make sense of it. Andamio CLI gives 
+developers instant access to helpful queries that allow users to gain 
+insights about the network. In this phase of Andamio CLI development, we 
+will focus on making it easy for anyone to make useful queries to the 
+Andamio network.
+
+The queries provided here serve two purposes:
+ 1. Protoyping for production release of Andamio CLI
+ 2. Examples for Cardano Go Project-Based Learning Course
+
+`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("query called")
 	},

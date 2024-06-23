@@ -10,8 +10,11 @@ var tokenName string
 
 var GlobalStateCmd = &cobra.Command{
 	Use:   "global-state",
-	Short: "Example for Cardano Go PBL",
-	Long:  ``,
+	Short: "List global state UTxOs on Andamio Network",
+	Long: `
+List network participants
+
+	`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Querying Andamio Global State...")
 		globalState(tokenName)

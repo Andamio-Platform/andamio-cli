@@ -4,29 +4,47 @@ Copyright © 2024 Andamio dev@andamio.io
 package cmd
 
 import (
+	"log"
 	"os"
 
-	"github.com/Andamio-Platform/andamio-cli/cmd/playground"
 	"github.com/Andamio-Platform/andamio-cli/cmd/query"
 	"github.com/Andamio-Platform/andamio-cli/cmd/sync"
 	"github.com/Andamio-Platform/andamio-cli/cmd/transaction"
 	"github.com/Andamio-Platform/andamio-cli/cmd/write"
 	"github.com/spf13/cobra"
+	"github.com/spf13/cobra/doc"
 )
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "andamio-cli",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Short: "Command-line utilities for Andamio",
+	Long: `
+Roadmap Phases:
+1. Utilities
+2. Queries
+3. Deployment
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+Learn more at andamio.io/blog/014
+	
+	`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
+}
+
+var docCmd = &cobra.Command{
+	Use:   "doc",
+	Short: "Generate andamio-cli documentation",
+	Long: `
+Generate markdown docs in ./docs	
+	`,
+	Run: func(cmd *cobra.Command, args []string) {
+		err := doc.GenMarkdownTree(rootCmd, "./docs")
+		if err != nil {
+			log.Fatal(err)
+		}
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -39,11 +57,11 @@ func Execute() {
 }
 
 func addSubcommandIslands() {
-	rootCmd.AddCommand(playground.PlaygroundCmd)
 	rootCmd.AddCommand(write.WriteCmd)
 	rootCmd.AddCommand(query.QueryCmd)
 	rootCmd.AddCommand(transaction.TransactionCmd)
 	rootCmd.AddCommand(sync.SyncCmd)
+	rootCmd.AddCommand(docCmd)
 }
 
 func init() {
