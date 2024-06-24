@@ -1,5 +1,5 @@
 
-# Andamio Roadmap:
+# Andamio CLI Roadmap:
 
 1. Utilities Phase
 2. Queries Phase
