@@ -3,25 +3,27 @@ package module_ref_validator
 import (
 	"fmt"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/spf13/cobra"
 )
 
-var alias string
+var policy string
 
 var DecodedModuleRefDatumsCmd = &cobra.Command{
 	Use:   "decoded-module-ref-datums",
-	Short: "Check alias availability",
-	Long:  `Check whether a given alias is available.`,
+	Short: "Check policy availability",
+	Long:  `Check whether a given policy is available.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if alias == "" {
-			fmt.Println("Please provide an alias using --alias flag")
+		if policy == "" {
+			fmt.Println("Please provide an policy using --policy flag")
 			return
 		}
-		fmt.Printf("Checking availability for alias: %s\n", alias)
-		// Your alias availability logic here
+		fmt.Printf("Checking availability for policy: %s\n", policy)
+		// Your policy availability logic here
+		client.GetDecodedModuleRefDatums(policy)
 	},
 }
 
 func init() {
-	DecodedModuleRefDatumsCmd.Flags().StringVar(&alias, "alias", "", "Alias to check availability for")
+	DecodedModuleRefDatumsCmd.Flags().StringVar(&policy, "policy", "", "policy to check availability for")
 }

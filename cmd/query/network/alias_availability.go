@@ -3,6 +3,7 @@ package network
 import (
 	"fmt"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -18,7 +19,7 @@ var AliasAvailabilityCmd = &cobra.Command{
 			return
 		}
 		fmt.Printf("Checking availability for alias: %s\n", alias)
-		// Your alias availability logic here
+		client.GetAliasAvailability(alias)
 	},
 }
 

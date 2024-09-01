@@ -3,6 +3,7 @@ package index_validator
 import (
 	"fmt"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +18,7 @@ var InputUtxoCmd = &cobra.Command{
 		}
 		fmt.Printf("Checking availability for alias: %s\n", alias)
 		// Your alias availability logic here
+		client.GetInputUtxo(alias)
 	},
 }
 
