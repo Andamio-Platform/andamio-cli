@@ -234,3 +234,82 @@ func GetCoursePolicies(alias string) {
 		Get("/course-governance-validator/creatorsCoursePoliciesByAlias")
 	logResponse(resp, err)
 }
+
+func GetMintAccessToken(userAddress string, alias string, userInfo string) {
+	resp, err := client.R().
+		SetQueryParam("userAddress", userAddress).
+		SetQueryParam("alias", alias).
+		SetQueryParam("userInfo", userInfo).
+		Get("/txs/mintAccessToken")
+	logResponse(resp, err)
+}
+
+func GetMintLocalState(userAccessToken string, policy string) {
+	resp, err := client.R().
+		SetQueryParam("userAccessToken", userAccessToken).
+		SetQueryParam("policy", policy).
+		Get("/txs/student-actions/mintLocalState")
+	logResponse(resp, err)
+}
+
+func GetCommitToAssignment(userAccessToken string, policy string, assignmentCode string, assignmentInfo string) {
+	resp, err := client.R().
+		SetQueryParam("userAccessToken", userAccessToken).
+		SetQueryParam("policy", policy).
+		SetQueryParam("assignmentCode", assignmentCode).
+		SetQueryParam("assignmentInfo", assignmentInfo).
+		Get("/txs/student-actions/commitToAssignment")
+	logResponse(resp, err)
+}
+
+func GetUpdateAssignment(userAccessToken string, policy string, assignmentInfo string) {
+	resp, err := client.R().
+		SetQueryParam("userAccessToken", userAccessToken).
+		SetQueryParam("policy", policy).
+		SetQueryParam("assignmentInfo", assignmentInfo).
+		Get("/txs/student-actions/update-assignment")
+	logResponse(resp, err)
+}
+
+func GetLeaveAssignment(userAccessToken string, policy string) {
+	resp, err := client.R().
+		SetQueryParam("userAccessToken", userAccessToken).
+		SetQueryParam("policy", policy).
+		Get("/txs/student-actions/leave-assignment")
+	logResponse(resp, err)
+}
+
+func GetBurnLocalState(userAccessToken string, policy string) {
+	resp, err := client.R().
+		SetQueryParam("userAccessToken", userAccessToken).
+		SetQueryParam("policy", policy).
+		Get("/txs/student-actions/burnLocalState")
+	logResponse(resp, err)
+}
+
+func GetMintModuleTokens(userAccessToken string, policy string, moduleInfos string) {
+	resp, err := client.R().
+		SetQueryParam("userAccessToken", userAccessToken).
+		SetQueryParam("policy", policy).
+		SetQueryParam("moduleInfos", moduleInfos).
+		Get("/txs/course-creator-actions/mintModuleTokens")
+	logResponse(resp, err)
+}
+
+func GetAcceptAssignment(userAccessToken string, studentAlias string, policy string) {
+	resp, err := client.R().
+		SetQueryParam("userAccessToken", userAccessToken).
+		SetQueryParam("studentAlias", studentAlias).
+		SetQueryParam("policy", policy).
+		Get("/txs/course-creator-actions/acceptAssignment")
+	logResponse(resp, err)
+}
+
+func GetDenyAssignment(userAccessToken string, studentAlias string, policy string) {
+	resp, err := client.R().
+		SetQueryParam("userAccessToken", userAccessToken).
+		SetQueryParam("studentAlias", studentAlias).
+		SetQueryParam("policy", policy).
+		Get("/txs/course-creator-actions/denyAssignment")
+	logResponse(resp, err)
+}
