@@ -13,8 +13,8 @@ var userInfo string
 
 var MintAccessTokenCmd = &cobra.Command{
 	Use:   "mint-access-token",
-	Short: "Build transaction",
-	Long:  `Build transactions.`,
+	Short: "",
+	Long:  `.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if userAddress == "" {
 			fmt.Println("Please provide an userAddress using --userAddress flag")
@@ -33,7 +33,7 @@ var MintAccessTokenCmd = &cobra.Command{
 }
 
 func init() {
-	MintAccessTokenCmd.Flags().StringVar(&userAddress, "userAddress", "", "userAddress to check availability for")
-	MintAccessTokenCmd.Flags().StringVar(&alias, "alias", "", "alias to check availability for")
-	MintAccessTokenCmd.Flags().StringVar(&userInfo, "userInfo", "", "userInfo to check availability for")
+	MintAccessTokenCmd.Flags().StringVar(&userAddress, "userAddress", "", "")
+	MintAccessTokenCmd.Flags().StringVar(&alias, "alias", "", "")
+	MintAccessTokenCmd.Flags().StringVar(&userInfo, "userInfo", "", "")
 }

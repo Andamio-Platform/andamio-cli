@@ -10,8 +10,8 @@ import (
 
 var CourseCmd = &cobra.Command{
 	Use:   "course",
-	Short: "change this",
-	Long:  `change this.`,
+	Short: "",
+	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help
 		if len(args) == 0 {
@@ -20,8 +20,8 @@ var CourseCmd = &cobra.Command{
 		}
 
 		// If an invalid subcommand is passed, show an error message
-		fmt.Printf("Error: '%s' is not a valid subcommand for 'network'\n", args[0])
-		fmt.Println("Run './andamio-cli query network --help' for available subcommands.")
+		fmt.Printf("Error: '%s' is not a valid subcommand for 'course'\n", args[0])
+		fmt.Println("Run './andamio-cli query course --help' for available subcommands.")
 		os.Exit(1) // Exit with a non-zero status to indicate an error
 	},
 }

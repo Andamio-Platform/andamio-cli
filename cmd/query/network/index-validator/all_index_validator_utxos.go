@@ -9,8 +9,8 @@ var alias string
 
 var AllIndexValidatorUtxosCmd = &cobra.Command{
 	Use:   "all-index-validator-utxos",
-	Short: "Check alias availability",
-	Long:  `Check whether a given alias is available.`,
+	Short: "",
+	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAllIndexValidatorUtxos()
 	},

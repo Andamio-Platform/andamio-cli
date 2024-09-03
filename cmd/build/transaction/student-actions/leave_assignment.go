@@ -25,6 +25,6 @@ var LeaveAssignmentCmd = &cobra.Command{
 }
 
 func init() {
-	LeaveAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "userAccessToken to check availability for")
-	LeaveAssignmentCmd.Flags().StringVar(&policy, "policy", "", "policy to check availability for")
+	LeaveAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "")
+	LeaveAssignmentCmd.Flags().StringVar(&policy, "policy", "", "")
 }

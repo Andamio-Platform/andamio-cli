@@ -9,19 +9,18 @@ import (
 
 var CoursePoliciesCmd = &cobra.Command{
 	Use:   "course-policies",
-	Short: "Check alias availability",
-	Long:  `Check whether a given alias is available.`,
+	Short: "",
+	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		if alias == "" {
 			fmt.Println("Please provide an alias using --alias flag")
 			return
 		}
-		fmt.Printf("Checking availability for alias: %s\n", alias)
-		// Your alias availability logic here
+
 		client.GetCoursePolicies(alias)
 	},
 }
 
 func init() {
-	CoursePoliciesCmd.Flags().StringVar(&alias, "alias", "", "Alias to check availability for")
+	CoursePoliciesCmd.Flags().StringVar(&alias, "alias", "", "")
 }

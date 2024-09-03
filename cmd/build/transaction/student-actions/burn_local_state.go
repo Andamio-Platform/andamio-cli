@@ -28,6 +28,6 @@ var BurnLocalStateCmd = &cobra.Command{
 }
 
 func init() {
-	BurnLocalStateCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "userAccessToken to check availability for")
-	BurnLocalStateCmd.Flags().StringVar(&policy, "policy", "", "policy to check availability for")
+	BurnLocalStateCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "")
+	BurnLocalStateCmd.Flags().StringVar(&policy, "policy", "", "")
 }

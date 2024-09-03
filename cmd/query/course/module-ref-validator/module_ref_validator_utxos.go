@@ -9,19 +9,18 @@ import (
 
 var ModuleRefValidatorUtxosCmd = &cobra.Command{
 	Use:   "module-ref-validator-utxos",
-	Short: "Check policy availability",
-	Long:  `Check whether a given policy is available.`,
+	Short: "",
+	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		if policy == "" {
 			fmt.Println("Please provide an policy using --policy flag")
 			return
 		}
-		fmt.Printf("Checking availability for policy: %s\n", policy)
-		// Your policy availability logic here
+
 		client.GetModuleRefValidatorUtxos(policy)
 	},
 }
 
 func init() {
-	ModuleRefValidatorUtxosCmd.Flags().StringVar(&policy, "policy", "", "policy to check availability for")
+	ModuleRefValidatorUtxosCmd.Flags().StringVar(&policy, "policy", "", "")
 }

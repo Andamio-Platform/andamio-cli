@@ -31,7 +31,7 @@ var MintModuleTokensCmd = &cobra.Command{
 }
 
 func init() {
-	MintModuleTokensCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "userAccessToken to check availability for")
-	MintModuleTokensCmd.Flags().StringVar(&policy, "policy", "", "policy to check availability for")
-	MintModuleTokensCmd.Flags().StringVar(&moduleInfos, "moduleInfos", "", "moduleInfos to check availability for")
+	MintModuleTokensCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "")
+	MintModuleTokensCmd.Flags().StringVar(&policy, "policy", "", "")
+	MintModuleTokensCmd.Flags().StringVar(&moduleInfos, "moduleInfos", "", "")
 }

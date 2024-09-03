@@ -29,7 +29,7 @@ var DenyAssignmentCmd = &cobra.Command{
 }
 
 func init() {
-	DenyAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "userAccessToken to check availability for")
-	DenyAssignmentCmd.Flags().StringVar(&studentAlias, "studentAlias", "", "studentAlias to check availability for")
-	DenyAssignmentCmd.Flags().StringVar(&policy, "policy", "", "policy to check availability for")
+	DenyAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "")
+	DenyAssignmentCmd.Flags().StringVar(&studentAlias, "studentAlias", "", "")
+	DenyAssignmentCmd.Flags().StringVar(&policy, "policy", "", "")
 }

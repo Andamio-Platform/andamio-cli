@@ -10,8 +10,8 @@ import (
 
 var NetworkCmd = &cobra.Command{
 	Use:   "network",
-	Short: "change this",
-	Long:  `change this.`,
+	Short: "",
+	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help
 		if len(args) == 0 {

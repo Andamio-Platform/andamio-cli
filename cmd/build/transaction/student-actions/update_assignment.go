@@ -29,7 +29,7 @@ var UpdateAssignmentCmd = &cobra.Command{
 }
 
 func init() {
-	UpdateAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "userAccessToken to check availability for")
-	UpdateAssignmentCmd.Flags().StringVar(&policy, "policy", "", "policy to check availability for")
-	UpdateAssignmentCmd.Flags().StringVar(&assignmentInfo, "assignmentInfo", "", "assignmentInfo to check availability for")
+	UpdateAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "")
+	UpdateAssignmentCmd.Flags().StringVar(&policy, "policy", "", "")
+	UpdateAssignmentCmd.Flags().StringVar(&assignmentInfo, "assignmentInfo", "", "")
 }

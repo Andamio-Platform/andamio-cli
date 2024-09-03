@@ -36,8 +36,8 @@ var CommitToAssignmentCmd = &cobra.Command{
 }
 
 func init() {
-	CommitToAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "userAccessToken to check availability for")
-	CommitToAssignmentCmd.Flags().StringVar(&policy, "policy", "", "policy to check availability for")
-	CommitToAssignmentCmd.Flags().StringVar(&assignmentCode, "assignmentCode", "", "assignmentCode to check availability for")
-	CommitToAssignmentCmd.Flags().StringVar(&assignmentInfo, "assignmentInfo", "", "assignmentInfo to check availability for")
+	CommitToAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "")
+	CommitToAssignmentCmd.Flags().StringVar(&policy, "policy", "", "")
+	CommitToAssignmentCmd.Flags().StringVar(&assignmentCode, "assignmentCode", "", "")
+	CommitToAssignmentCmd.Flags().StringVar(&assignmentInfo, "assignmentInfo", "", "")
 }

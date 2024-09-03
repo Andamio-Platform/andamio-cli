@@ -7,8 +7,8 @@ import (
 
 var AllDecodedCourseGovDatumsCmd = &cobra.Command{
 	Use:   "all-decoded-course-gov-datums",
-	Short: "Check alias availability",
-	Long:  `Check whether a given alias is available.`,
+	Short: "",
+	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAllDecodedCourseGovDatums()
 	},

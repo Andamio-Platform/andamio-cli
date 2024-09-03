@@ -25,6 +25,6 @@ var MintLocalStateCmd = &cobra.Command{
 }
 
 func init() {
-	MintLocalStateCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "userAccessToken to check availability for")
-	MintLocalStateCmd.Flags().StringVar(&policy, "policy", "", "policy to check availability for")
+	MintLocalStateCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "")
+	MintLocalStateCmd.Flags().StringVar(&policy, "policy", "", "")
 }
