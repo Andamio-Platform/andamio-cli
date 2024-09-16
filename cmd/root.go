@@ -19,16 +19,17 @@ import (
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "andamio-cli",
-	Short: "Command-line utilities for Andamio",
+	Short: "Instant access to Andamio",
 	Long: `
-Roadmap Phases:
-1. Utilities
-2. Queries
-3. Deployment
+  Welcome to Andamio CLI. With this program, you can:
+  1. Query the Andamio Network
+  2. Write and convert data for Andamio transactions
+  3. Build transactions to interact with Andamio
 
-Learn more at andamio.io/blog/014
+  Learn More: https://andamio.io
 	
 	`,
+
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
@@ -67,6 +68,7 @@ func addSubcommandIslands() {
 }
 
 func init() {
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	addSubcommandIslands()
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,

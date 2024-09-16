@@ -10,8 +10,8 @@ import (
 
 var TransactionCmd = &cobra.Command{
 	Use:   "transaction",
-	Short: "Build transaction",
-	Long:  `Build transactions.`,
+	Short: "build transaction",
+	Long:  `Build transactions. Try a subcommand.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help
 		if len(args) == 0 {

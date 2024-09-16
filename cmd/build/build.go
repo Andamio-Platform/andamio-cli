@@ -13,7 +13,7 @@ import (
 // buildCmd represents the build command
 var BuildCmd = &cobra.Command{
 	Use:   "build",
-	Short: "",
+	Short: "Build Andamio transactions",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help
