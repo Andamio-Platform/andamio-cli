@@ -40,6 +40,8 @@ func addQuerySubcommandIslands() {
 	QueryCmd.AddCommand(tip.TipCmd)
 	QueryCmd.AddCommand(globalState.GlobalStateCmd)
 	QueryCmd.AddCommand(courseInstances.CourseInstanceCmd)
+	QueryCmd.AddCommand(CourseCmd)
+	QueryCmd.AddCommand(NetworkCmd)
 }
 
 func init() {

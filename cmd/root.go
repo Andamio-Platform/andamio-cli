@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/Andamio-Platform/andamio-cli/cmd/build"
 	"github.com/Andamio-Platform/andamio-cli/cmd/query"
 	"github.com/Andamio-Platform/andamio-cli/cmd/sync"
 	"github.com/Andamio-Platform/andamio-cli/cmd/transaction"
@@ -61,6 +62,7 @@ func addSubcommandIslands() {
 	rootCmd.AddCommand(query.QueryCmd)
 	rootCmd.AddCommand(transaction.TransactionCmd)
 	rootCmd.AddCommand(sync.SyncCmd)
+	rootCmd.AddCommand(build.BuildCmd)
 	rootCmd.AddCommand(docCmd)
 }
 
