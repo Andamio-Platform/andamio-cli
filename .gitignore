@@ -7,7 +7,6 @@
 swag
 .vscode
 .editorconfig
-build
 db
 .env
 output
