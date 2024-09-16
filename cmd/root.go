@@ -39,5 +39,6 @@ func init() {
 	// when this action is called directly.
 	rootCmd.AddCommand(queryCmd)
 	rootCmd.AddCommand(buildCmd)
+	rootCmd.AddCommand(GenerateDocs)
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
