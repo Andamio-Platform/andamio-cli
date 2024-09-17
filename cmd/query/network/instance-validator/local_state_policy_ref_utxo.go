@@ -7,7 +7,7 @@ import (
 
 var LocalStatePolicyRefUtxoCmd = &cobra.Command{
 	Use:   "local-state-policy-ref-utxo",
-	Short: "",
+	Short: "View the local state policy reference UTxO for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetLocalStatePolicyRefUtxo(policy)

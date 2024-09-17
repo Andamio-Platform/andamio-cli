@@ -12,7 +12,7 @@ var (
 
 var AssignmentValidatorAddressCmd = &cobra.Command{
 	Use:   "assignment-validator-address",
-	Short: "",
+	Short: "Get a list of assignment validator addresses for course",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAssignmentValidatorAddresses(policy)

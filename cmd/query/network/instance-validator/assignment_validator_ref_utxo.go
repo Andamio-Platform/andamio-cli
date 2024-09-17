@@ -9,7 +9,7 @@ var policy string
 
 var AssignmentValidatorRefUtxoCmd = &cobra.Command{
 	Use:   "assignment-validator-ref-utxo",
-	Short: "",
+	Short: "View the assignment validator reference UTxOs for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAssignmentValidatorRefUtxo(policy)

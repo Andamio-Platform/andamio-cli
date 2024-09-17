@@ -10,10 +10,9 @@ import (
 
 var CourseStateCmd = &cobra.Command{
 	Use:   "course-state",
-	Short: "",
+	Short: "View course details",
 	Long:  `.`,
 	Run: func(cmd *cobra.Command, args []string) {
-
 		// If no arguments are passed, show help
 		if len(args) == 0 {
 			cmd.Help()

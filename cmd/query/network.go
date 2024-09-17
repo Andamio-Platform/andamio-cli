@@ -10,7 +10,7 @@ import (
 
 var NetworkCmd = &cobra.Command{
 	Use:   "network",
-	Short: "",
+	Short: "View Andamio network data",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help

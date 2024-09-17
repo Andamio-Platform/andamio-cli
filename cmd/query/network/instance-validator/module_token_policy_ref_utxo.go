@@ -7,7 +7,7 @@ import (
 
 var ModuleTokenPolicyRefUtxoCmd = &cobra.Command{
 	Use:   "module-token-policy-ref-utxo",
-	Short: "",
+	Short: "View the module token minting reference UTxO for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetModuleTokenPolicyRefUtxo(policy)

@@ -10,10 +10,9 @@ import (
 
 var AssignmentValidatorCmd = &cobra.Command{
 	Use:   "assignment-validator",
-	Short: "",
+	Short: "View network assignment data",
 	Long:  `.`,
 	Run: func(cmd *cobra.Command, args []string) {
-
 		// If no arguments are passed, show help
 		if len(args) == 0 {
 			cmd.Help()

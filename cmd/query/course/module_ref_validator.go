@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	module_ref_validator "github.com/Andamio-Platform/andamio-cli/cmd/query/course/module-ref-validator"
+	module_ref_validator "github.com/Andamio-Platform/andamio-cli/cmd/query/course/modules"
 	"github.com/spf13/cobra"
 )
 
 var ModuleRefValidatorCmd = &cobra.Command{
 	Use:   "modules",
-	Short: "",
-	Long:  `.`,
+	Short: "View course module credential details",
+	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help
 		if len(args) == 0 {

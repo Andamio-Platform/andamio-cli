@@ -9,7 +9,7 @@ var alias string
 
 var CourseStateUtxoCmd = &cobra.Command{
 	Use:   "course-state-utxo",
-	Short: "",
+	Short: "View the courses status of specified alias in course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetCourseStateUtxo(policy, alias)

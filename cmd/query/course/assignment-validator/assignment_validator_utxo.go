@@ -7,7 +7,7 @@ import (
 
 var AssignmentValidatorUtxoCmd = &cobra.Command{
 	Use:   "assignment-validator-utxo",
-	Short: "",
+	Short: "View commitment UTxO currently locked at assignment validator address for specified alias",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAssignmentValidatorUtxo(policy, alias)

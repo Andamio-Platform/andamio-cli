@@ -7,7 +7,7 @@ import (
 
 var DecodedCourseStateDatumCmd = &cobra.Command{
 	Use:   "decoded-course-state-datum",
-	Short: "",
+	Short: "View course datum for specified alias in course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetDecodedCourseStateDatum(policy, alias)

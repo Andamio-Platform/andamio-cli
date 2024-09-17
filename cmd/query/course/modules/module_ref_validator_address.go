@@ -7,7 +7,7 @@ import (
 
 var ModuleRefValidatorAddressCmd = &cobra.Command{
 	Use:   "module-ref-validator-address",
-	Short: "",
+	Short: "View module reference validator address for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetModuleRefValidatorAddress(policy)

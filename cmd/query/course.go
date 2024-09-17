@@ -10,7 +10,7 @@ import (
 
 var CourseCmd = &cobra.Command{
 	Use:   "course",
-	Short: "",
+	Short: "View course details",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help

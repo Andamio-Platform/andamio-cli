@@ -9,7 +9,7 @@ var policy string
 
 var CourseGovernanceValidatorUtxoCmd = &cobra.Command{
 	Use:   "course-governance-validator-utxo",
-	Short: "",
+	Short: "View course governance utxo for specified course policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetCourseGovernanceValidatorUtxo(policy)

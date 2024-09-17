@@ -7,7 +7,7 @@ import (
 
 var AllDecodedCourseGovDatumsCmd = &cobra.Command{
 	Use:   "all-decoded-course-gov-datums",
-	Short: "",
+	Short: "View all course governance datums",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAllDecodedCourseGovDatums()

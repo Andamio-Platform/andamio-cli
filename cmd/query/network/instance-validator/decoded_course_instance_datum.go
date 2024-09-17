@@ -7,7 +7,7 @@ import (
 
 var DecodedCourseInstanceDatumCmd = &cobra.Command{
 	Use:   "decoded-course-instance-datum",
-	Short: "",
+	Short: "View course instance datum for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetDecodedCourseInstanceDatum(policy)

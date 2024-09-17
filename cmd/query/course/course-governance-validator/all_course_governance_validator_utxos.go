@@ -9,7 +9,7 @@ var alias string
 
 var AllCourseGovernanceValidatorUtxosCmd = &cobra.Command{
 	Use:   "all-course-governance-validator-utxos",
-	Short: "",
+	Short: "View all course governance utxos",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAllCourseGovernanceValidatorUtxos()

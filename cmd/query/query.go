@@ -23,8 +23,8 @@ will focus on making it easy for anyone to make useful queries to the
 Andamio network.
 
 The queries provided here serve two purposes:
- 1. Protoyping for production release of Andamio CLI
- 2. Examples for Cardano Go Project-Based Learning Course
+ 1. Opening access to Andamio network data
+ 2. Providing examples for Cardano Go Project-Based Learning Course
 
 `,
 	Run: func(cmd *cobra.Command, args []string) {

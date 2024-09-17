@@ -9,7 +9,7 @@ var token_name string
 
 var ModuleRefValidatorUtxoCmd = &cobra.Command{
 	Use:   "module-ref-validator-utxo",
-	Short: "",
+	Short: "View module reference utxo for module with specified token-name in course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetModuleRefValidatorUtxo(policy, token_name)

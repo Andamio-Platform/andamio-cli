@@ -7,7 +7,7 @@ import (
 
 var LocalStateValidatorRefUtxoCmd = &cobra.Command{
 	Use:   "local-state-validator-ref-utxo",
-	Short: "",
+	Short: "View the local state validator reference UTxO for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetLocalStateValidatorRefUtxo(policy)

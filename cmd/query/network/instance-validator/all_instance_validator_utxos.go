@@ -7,7 +7,7 @@ import (
 
 var AllInstanceValidatorUtxosCmd = &cobra.Command{
 	Use:   "all-instance-validator-utxos",
-	Short: "",
+	Short: "View all instance validator UTxOs",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAllInstanceValidatorUtxos()

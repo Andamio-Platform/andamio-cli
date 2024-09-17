@@ -7,7 +7,7 @@ import (
 
 var AllCourseInstanceUtxosCmd = &cobra.Command{
 	Use:   "all-course-instance-utxos",
-	Short: "",
+	Short: "View all course instance UTxOs",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAllCourseInstanceUtxos()

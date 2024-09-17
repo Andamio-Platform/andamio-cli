@@ -9,7 +9,7 @@ var alias string
 
 var DecodedGlobalStateDatumCmd = &cobra.Command{
 	Use:   "decoded-global-state-datum",
-	Short: "",
+	Short: "View access token datum for specified alias",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetDecodedGlobalStateDatum(alias)

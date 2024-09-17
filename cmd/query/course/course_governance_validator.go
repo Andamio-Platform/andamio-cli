@@ -10,10 +10,9 @@ import (
 
 var CourseGovernanceValidatorCmd = &cobra.Command{
 	Use:   "course-governance-validator",
-	Short: "",
+	Short: "View network course governance data",
 	Long:  `.`,
 	Run: func(cmd *cobra.Command, args []string) {
-
 		// If no arguments are passed, show help
 		if len(args) == 0 {
 			cmd.Help()

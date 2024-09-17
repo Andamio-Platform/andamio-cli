@@ -10,10 +10,9 @@ import (
 
 var InstanceValidatorCmd = &cobra.Command{
 	Use:   "instance-validator",
-	Short: "",
+	Short: "View course instance details",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-
 		// If no arguments are passed, show help
 		if len(args) == 0 {
 			cmd.Help()

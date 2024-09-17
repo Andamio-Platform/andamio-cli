@@ -7,7 +7,7 @@ import (
 
 var CoursePoliciesCmd = &cobra.Command{
 	Use:   "course-policies",
-	Short: "",
+	Short: "View a list of course policies where specified alias has creator access",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetCoursePolicies(alias)

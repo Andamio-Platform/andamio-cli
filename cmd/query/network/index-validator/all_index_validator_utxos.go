@@ -9,7 +9,7 @@ var alias string
 
 var AllIndexValidatorUtxosCmd = &cobra.Command{
 	Use:   "all-index-validator-utxos",
-	Short: "",
+	Short: "View all access token alias index utxos",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetAllIndexValidatorUtxos()

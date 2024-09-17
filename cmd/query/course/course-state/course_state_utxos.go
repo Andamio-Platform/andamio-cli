@@ -7,7 +7,7 @@ import (
 
 var CourseStateUtxosCmd = &cobra.Command{
 	Use:   "course-state-utxos",
-	Short: "",
+	Short: "View all course state utxos for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetCourseStateUtxos(policy)
@@ -17,5 +17,5 @@ var CourseStateUtxosCmd = &cobra.Command{
 func init() {
 	CourseStateUtxosCmd.Flags().StringVar(&policy, "policy", "", "")
 
-	CourseStateUtxoCmd.MarkFlagRequired("policy")
+	CourseStateUtxosCmd.MarkFlagRequired("policy")
 }

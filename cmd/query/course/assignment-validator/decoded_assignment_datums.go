@@ -7,7 +7,7 @@ import (
 
 var DecodedAssignmentDatums = &cobra.Command{
 	Use:   "decoded-assignment-datums",
-	Short: "",
+	Short: "View all assignment datum",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetDecodedAssignmentDatums(policy)

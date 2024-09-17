@@ -9,7 +9,7 @@ var policy string
 
 var DecodedModuleRefDatumsCmd = &cobra.Command{
 	Use:   "decoded-module-ref-datums",
-	Short: "",
+	Short: "View module datum for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetDecodedModuleRefDatums(policy)

@@ -7,7 +7,7 @@ import (
 
 var GlobalStateUtxoCmd = &cobra.Command{
 	Use:   "global-state-utxo",
-	Short: "",
+	Short: "View global state utxo for specified alias",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetGlobalStateUtxo(alias)

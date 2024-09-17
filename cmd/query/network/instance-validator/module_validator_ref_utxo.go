@@ -7,7 +7,7 @@ import (
 
 var ModuleValidatorRefUtxoCmd = &cobra.Command{
 	Use:   "module-validator-ref-utxo",
-	Short: "",
+	Short: "View the module validator reference UTxO for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetModuleValidatorRefUtxo(policy)

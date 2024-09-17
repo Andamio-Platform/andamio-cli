@@ -7,7 +7,7 @@ import (
 
 var CourseInstanceUtxoCmd = &cobra.Command{
 	Use:   "course-instance-utxo",
-	Short: "",
+	Short: "View the course instance UTxO for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetCourseInstanceUtxo(policy)

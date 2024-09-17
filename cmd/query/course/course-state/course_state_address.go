@@ -9,7 +9,7 @@ var policy string
 
 var CourseStateAddressCmd = &cobra.Command{
 	Use:   "course-state-address",
-	Short: "",
+	Short: "View course state address for course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetCourseStateAddress(policy)

@@ -10,10 +10,9 @@ import (
 
 var IndexValidatorCmd = &cobra.Command{
 	Use:   "index-validator",
-	Short: "",
+	Short: "View Andamio Access Token naming index",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-
 		// If no arguments are passed, show help
 		if len(args) == 0 {
 			cmd.Help()
