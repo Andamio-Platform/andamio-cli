@@ -51,7 +51,7 @@ func filePrepender(filename string) string {
 
 // linkHandler handles link generation between commands
 func linkHandler(name string) string {
-	return fmt.Sprintf("%s.md", strings.ToLower(name))
+	return name
 }
 
 var DocCmd = &cobra.Command{
