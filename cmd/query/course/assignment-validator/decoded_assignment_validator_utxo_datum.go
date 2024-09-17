@@ -7,7 +7,7 @@ import (
 
 var DecodedAssignmentValidatorUtxoDatum = &cobra.Command{
 	Use:   "decoded-assignment-validator-utxo-datum",
-	Short: "View assignment datum for specified alias",
+	Short: "View assignment datum for specified alias in course with specified policy",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetDecodedAssignmentValidatorUtxoDatum(policy, alias)

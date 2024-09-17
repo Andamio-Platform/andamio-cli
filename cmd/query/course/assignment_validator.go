@@ -9,7 +9,7 @@ import (
 )
 
 var AssignmentValidatorCmd = &cobra.Command{
-	Use:   "assignment-validator",
+	Use:   "assignments",
 	Short: "View network assignment data",
 	Long:  `.`,
 	Run: func(cmd *cobra.Command, args []string) {

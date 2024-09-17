@@ -32,13 +32,6 @@ func GetGlobalStateUtxo(alias string) {
 	logResponse(resp, err)
 }
 
-func GetDecodedGlobalStateDatum(alias string) {
-	resp, err := client.R().
-		SetQueryParam("alias", alias).
-		Get("/global-state/decodedGlobalStateDatumByAlias")
-	logResponse(resp, err)
-}
-
 func GetAllIndexValidatorUtxos() {
 	resp, err := client.R().
 		Get("/index-validator/utxos")
@@ -135,14 +128,6 @@ func GetCourseStateUtxo(policy string, alias string) {
 	logResponse(resp, err)
 }
 
-func GetDecodedCourseStateDatum(policy string, alias string) {
-	resp, err := client.R().
-		SetQueryParam("policy", policy).
-		SetQueryParam("alias", alias).
-		Get("/course-state/decodedCourseStateDatumByCourseNftPolicyAndAlias")
-	logResponse(resp, err)
-}
-
 func GetAssignmentValidatorAddresses(policy string) {
 	resp, err := client.R().
 		SetQueryParam("policy", policy).
@@ -154,13 +139,6 @@ func GetAssignmentValidatorUtxos(policy string) {
 	resp, err := client.R().
 		SetQueryParam("policy", policy).
 		Get("/assignment-validator/assignmentValidatorUtxosByCourseNftPolicy")
-	logResponse(resp, err)
-}
-
-func GetDecodedAssignmentDatums(policy string) {
-	resp, err := client.R().
-		SetQueryParam("policy", policy).
-		Get("/assignment-validator/decodedAssignmentDatumsByCourseNftPolicy")
 	logResponse(resp, err)
 }
 
@@ -191,13 +169,6 @@ func GetModuleRefValidatorUtxos(policy string) {
 	resp, err := client.R().
 		SetQueryParam("policy", policy).
 		Get("/module-ref/moduleRefValidatorUtxosByCourseNftPolicy")
-	logResponse(resp, err)
-}
-
-func GetDecodedModuleRefDatums(policy string) {
-	resp, err := client.R().
-		SetQueryParam("policy", policy).
-		Get("/module-ref/decodedModuleRefDatumsByCourseNftPolicy")
 	logResponse(resp, err)
 }
 
