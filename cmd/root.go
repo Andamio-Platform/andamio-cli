@@ -4,7 +4,6 @@ Copyright © 2024 Andamio dev@andamio.io
 package cmd
 
 import (
-	"log"
 	"os"
 
 	"github.com/Andamio-Platform/andamio-cli/cmd/query"
@@ -12,7 +11,6 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/cmd/transaction"
 	"github.com/Andamio-Platform/andamio-cli/cmd/write"
 	"github.com/spf13/cobra"
-	"github.com/spf13/cobra/doc"
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -34,20 +32,6 @@ var rootCmd = &cobra.Command{
 	// Run: func(cmd *cobra.Command, args []string) { },
 }
 
-var docCmd = &cobra.Command{
-	Use:   "doc",
-	Short: "Generate andamio-cli documentation",
-	Long: `
-Generate markdown docs in ./docs	
-	`,
-	Run: func(cmd *cobra.Command, args []string) {
-		err := doc.GenMarkdownTree(rootCmd, "./docs")
-		if err != nil {
-			log.Fatal(err)
-		}
-	},
-}
-
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
@@ -62,7 +46,7 @@ func addSubcommandIslands() {
 	rootCmd.AddCommand(query.QueryCmd)
 	rootCmd.AddCommand(transaction.TransactionCmd)
 	rootCmd.AddCommand(sync.SyncCmd)
-	rootCmd.AddCommand(docCmd)
+	rootCmd.AddCommand(DocCmd)
 }
 
 func init() {
