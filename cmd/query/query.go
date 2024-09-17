@@ -4,8 +4,6 @@ Copyright © 2024 NAME HERE <EMAIL ADDRESS>
 package query
 
 import (
-	"fmt"
-
 	courseInstances "github.com/Andamio-Platform/andamio-cli/cmd/query/course-instances"
 	globalState "github.com/Andamio-Platform/andamio-cli/cmd/query/global-state"
 	"github.com/Andamio-Platform/andamio-cli/cmd/query/tip"
@@ -17,7 +15,6 @@ var QueryCmd = &cobra.Command{
 	Use:   "query",
 	Short: "Andamio Network queries",
 	Long: `
-
 The Andamio Network is home to valuable, public data that becomes even 
 more valuable when you have tools to make sense of it. Andamio CLI gives 
 developers instant access to helpful queries that allow users to gain 
@@ -31,7 +28,10 @@ The queries provided here serve two purposes:
 
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("query called")
+		if len(args) == 0 {
+			cmd.Help()
+			return
+		}
 	},
 }
 

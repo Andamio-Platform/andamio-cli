@@ -1,8 +1,6 @@
 package course_state
 
 import (
-	"fmt"
-
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -14,15 +12,6 @@ var CourseStateUtxoCmd = &cobra.Command{
 	Short: "",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-		if policy == "" {
-			fmt.Println("Please provide an policy using --policy flag")
-			return
-		}
-		if alias == "" {
-			fmt.Println("Please provide an alias using --alias flag")
-			return
-		}
-
 		client.GetCourseStateUtxo(policy, alias)
 	},
 }
@@ -30,4 +19,7 @@ var CourseStateUtxoCmd = &cobra.Command{
 func init() {
 	CourseStateUtxoCmd.Flags().StringVar(&alias, "alias", "", "")
 	CourseStateUtxoCmd.Flags().StringVar(&policy, "policy", "", "")
+
+	CourseStateUtxoCmd.MarkFlagRequired("alias")
+	CourseStateUtxoCmd.MarkFlagRequired("policy")
 }

@@ -1,8 +1,6 @@
 package assignment_validator
 
 import (
-	"fmt"
-
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -12,15 +10,6 @@ var DecodedAssignmentValidatorUtxoDatum = &cobra.Command{
 	Short: "",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-		if policy == "" {
-			fmt.Println("Please provide an policy using --policy flag")
-			return
-		}
-		if alias == "" {
-			fmt.Println("Please provide an alias using --alias flag")
-			return
-		}
-
 		client.GetDecodedAssignmentValidatorUtxoDatum(policy, alias)
 	},
 }
@@ -28,4 +17,7 @@ var DecodedAssignmentValidatorUtxoDatum = &cobra.Command{
 func init() {
 	DecodedAssignmentValidatorUtxoDatum.Flags().StringVar(&alias, "alias", "", "")
 	DecodedAssignmentValidatorUtxoDatum.Flags().StringVar(&policy, "policy", "", "")
+
+	DecodedAssignmentValidatorUtxoDatum.MarkFlagRequired("alias")
+	DecodedAssignmentValidatorUtxoDatum.MarkFlagRequired("policy")
 }

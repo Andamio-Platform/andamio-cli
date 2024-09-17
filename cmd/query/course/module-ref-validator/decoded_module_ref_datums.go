@@ -1,8 +1,6 @@
 package module_ref_validator
 
 import (
-	"fmt"
-
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -14,15 +12,12 @@ var DecodedModuleRefDatumsCmd = &cobra.Command{
 	Short: "",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-		if policy == "" {
-			fmt.Println("Please provide an policy using --policy flag")
-			return
-		}
-
 		client.GetDecodedModuleRefDatums(policy)
 	},
 }
 
 func init() {
 	DecodedModuleRefDatumsCmd.Flags().StringVar(&policy, "policy", "", "")
+
+	DecodedModuleRefDatumsCmd.MarkFlagRequired("policy")
 }

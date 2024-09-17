@@ -14,10 +14,6 @@ var AliasAvailabilityCmd = &cobra.Command{
 	Short: "Check alias availability",
 	Long:  `Check whether a given alias is available.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if alias == "" {
-			fmt.Println("Please provide an alias using --alias flag")
-			return
-		}
 		fmt.Printf("Checking availability for alias: %s\n", alias)
 		client.GetAliasAvailability(alias)
 	},
@@ -25,4 +21,6 @@ var AliasAvailabilityCmd = &cobra.Command{
 
 func init() {
 	AliasAvailabilityCmd.Flags().StringVar(&alias, "alias", "", "Alias to check availability for")
+
+	AliasAvailabilityCmd.MarkFlagRequired("alias")
 }
