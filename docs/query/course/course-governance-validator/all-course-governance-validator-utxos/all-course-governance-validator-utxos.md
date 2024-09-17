@@ -1,14 +1,19 @@
-## andamio-cli query course course-governance-validator all-course-governance-validator-utxos
-
+# all-course-governance-validator-utxos
 View all course governance utxos
 
+
+
+**Usage:**
 ```
-andamio-cli query course course-governance-validator all-course-governance-validator-utxos [flags]
+andamio-cli query course course-governance-validator all-course-governance-validator-utxos
+
 ```
 
-### Options
+
+
+**Options:**
+```
 
 ```
-  -h, --help   help for all-course-governance-validator-utxos
-```
+
 

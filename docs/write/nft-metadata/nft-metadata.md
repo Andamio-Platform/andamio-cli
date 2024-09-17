@@ -1,8 +1,5 @@
-## andamio-cli write nft-metadata
-
+# nft-metadata
 Write NFT metadata
-
-### Synopsis
 
 
 Utility for writing simple NFT Metadata that adheres to CIP-25 standard.
@@ -18,20 +15,23 @@ andamio-cli write nft-medata
 
 	
 
+**Usage:**
 ```
 andamio-cli write nft-metadata [flags]
-```
-
-### Options
 
 ```
-      --asset-name string    The asset name
+
+
+
+**Options:**
+```
+--asset-name string    The asset name
       --description string   The description
-  -h, --help                 help for nft-metadata
       --image string         The image URL
       --media-type string    The media type
       --name string          The name of the asset
       --out-file string      Output file
       --policyid string      The policy ID
 ```
+
 

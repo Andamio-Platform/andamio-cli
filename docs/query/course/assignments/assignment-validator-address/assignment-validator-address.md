@@ -1,15 +1,19 @@
-## andamio-cli query course assignments assignment-validator-address
-
+# assignment-validator-address
 Get a list of assignment validator addresses for course
 
+
+
+**Usage:**
 ```
 andamio-cli query course assignments assignment-validator-address [flags]
-```
-
-### Options
 
 ```
-  -h, --help            help for assignment-validator-address
-      --policy string   
+
+
+
+**Options:**
 ```
+--policy string
+```
+
 

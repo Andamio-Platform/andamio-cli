@@ -1,16 +1,20 @@
-## andamio-cli query course assignments decoded-assignment-validator-utxo-datum
-
+# decoded-assignment-validator-utxo-datum
 View assignment datum for specified alias in course with specified policy
 
+
+
+**Usage:**
 ```
 andamio-cli query course assignments decoded-assignment-validator-utxo-datum [flags]
-```
-
-### Options
 
 ```
-      --alias string    
-  -h, --help            help for decoded-assignment-validator-utxo-datum
-      --policy string   
+
+
+
+**Options:**
 ```
+--alias string    
+      --policy string
+```
+
 

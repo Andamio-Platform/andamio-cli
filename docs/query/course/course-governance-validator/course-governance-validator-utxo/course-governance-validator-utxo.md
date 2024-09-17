@@ -1,15 +1,19 @@
-## andamio-cli query course course-governance-validator course-governance-validator-utxo
-
+# course-governance-validator-utxo
 View course governance utxo for specified course policy
 
+
+
+**Usage:**
 ```
 andamio-cli query course course-governance-validator course-governance-validator-utxo [flags]
-```
-
-### Options
 
 ```
-  -h, --help            help for course-governance-validator-utxo
-      --policy string   
+
+
+
+**Options:**
 ```
+--policy string
+```
+
 

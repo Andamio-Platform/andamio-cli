@@ -1,8 +1,5 @@
-## andamio-cli transaction student update-assignment
-
+# update-assignment
 Update assginment evidence
-
-### Synopsis
 
 
 About:
@@ -21,16 +18,19 @@ Example:
 
 
 
+**Usage:**
 ```
 andamio-cli transaction student update-assignment [flags]
-```
-
-### Options
 
 ```
-      --assignmentInfo string    Evidence of assignment completion
-  -h, --help                     help for update-assignment
+
+
+
+**Options:**
+```
+--assignmentInfo string    Evidence of assignment completion
       --policy string            Course NFT policy id
       --userAccessToken string   Cardano Asset ID of student access token. The wallet holding this asset must sign the generated transaction.
 ```
+
 

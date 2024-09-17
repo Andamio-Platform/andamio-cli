@@ -1,8 +1,5 @@
-## andamio-cli query
-
+# query
 Andamio Network queries
-
-### Synopsis
 
 
 The Andamio Network is home to valuable, public data that becomes even 
@@ -18,13 +15,25 @@ The queries provided here serve two purposes:
 
 
 
+**Usage:**
 ```
-andamio-cli query [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for query
+andamio-cli query
+andamio-cli query [command]
 ```
 
+
+**Available Commands:**
+
+  course           View course details
+  course-instances List course instances on Andamio Network
+  global-state     List global state UTxOs on Andamio Network
+  network          View Andamio network data
+  tip              Simple query example for Cardano Go PBL course
+
+
+**Options:**
+```
+
+```
+
+Use "andamio-cli query [command] --help" for more information about a command.

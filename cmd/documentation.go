@@ -6,10 +6,35 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/cobra/doc"
 )
+
+const commandTemplate = `# {{ .Name }}
+{{ .Short }}
+
+{{ .Long }}
+
+**Usage:**
+` + "```" + `
+{{ .UseLine }}
+{{ if .HasAvailableSubCommands }}{{ .CommandPath }} [command]{{ end }}
+` + "```" + `
+
+{{ if .HasAvailableSubCommands }}
+**Available Commands:**
+{{ range .Commands }}{{ if (or .IsAvailableCommand (eq .Name "help")) }}
+  {{ rpad .Name .NamePadding }} {{ .Short }}{{ end }}{{ end }}
+{{ end }}
+
+**Options:**
+` + "```" + `
+{{ trimTrailingWhitespaces .LocalFlags.FlagUsages }}
+` + "```" + `
+
+{{ if .HasAvailableSubCommands }}Use "{{ .CommandPath }} [command] --help" for more information about a command.{{ end }}
+`
 
 func GenMarkdownTreeCustom(cmd *cobra.Command, dir string) error {
 	for _, c := range cmd.Commands() {
@@ -17,28 +42,35 @@ func GenMarkdownTreeCustom(cmd *cobra.Command, dir string) error {
 			continue
 		}
 
-		// Create subfolder path
-		// Fix: Use strings.Split to convert CommandPath to a slice
 		cmdPath := strings.Split(c.CommandPath(), " ")
 		subDir := filepath.Join(dir, filepath.Join(cmdPath[1:]...))
 		if err := os.MkdirAll(subDir, 0755); err != nil {
-			return err
+			return fmt.Errorf("failed to create directory %s: %w", subDir, err)
 		}
 
-		// Generate markdown file
-		// Fix: Use a bytes.Buffer to capture the output
-		var buf bytes.Buffer
-		if err := doc.GenMarkdown(c, &buf); err != nil {
-			return err
-		}
-
-		// Write to file
 		filename := filepath.Join(subDir, c.Name()+".md")
-		if err := os.WriteFile(filename, buf.Bytes(), 0644); err != nil {
-			return err
+
+		var buf bytes.Buffer
+		tmpl := template.New("command").Funcs(template.FuncMap{
+			"rpad": func(s string, padding int) string {
+				return fmt.Sprintf("%-*s", padding, s)
+			},
+			"trimTrailingWhitespaces": strings.TrimSpace,
+		})
+
+		tmpl, err := tmpl.Parse(commandTemplate)
+		if err != nil {
+			return fmt.Errorf("failed to parse template: %w", err)
 		}
 
-		// Recursively generate for subcommands
+		if err := tmpl.Execute(&buf, c); err != nil {
+			return fmt.Errorf("failed to execute template for %s: %w", c.Name(), err)
+		}
+
+		if err := os.WriteFile(filename, buf.Bytes(), 0644); err != nil {
+			return fmt.Errorf("failed to write file %s: %w", filename, err)
+		}
+
 		if err := GenMarkdownTreeCustom(c, dir); err != nil {
 			return err
 		}

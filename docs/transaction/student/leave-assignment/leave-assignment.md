@@ -1,8 +1,5 @@
-## andamio-cli transaction student leave-assignment
-
+# leave-assignment
 Cancel assignment commitment
-
-### Synopsis
 
 
 About:
@@ -20,15 +17,18 @@ Example:
 
 
 
+**Usage:**
 ```
 andamio-cli transaction student leave-assignment [flags]
-```
-
-### Options
 
 ```
-  -h, --help                     help for leave-assignment
-      --policy string            Course NFT policy id
+
+
+
+**Options:**
+```
+--policy string            Course NFT policy id
       --userAccessToken string   Cardano Asset ID of student access token. The wallet holding this asset must sign the generated transaction.
 ```
+
 

@@ -1,16 +1,20 @@
-## andamio-cli query course modules list
-
+# list
 View module datum for course with specified policy
 
+
+
+**Usage:**
 ```
 andamio-cli query course modules list [flags]
-```
-
-### Options
 
 ```
-  -h, --help              help for list
-      --out-file string   Optional: specify a JSON file to save the response
-      --policy string     
+
+
+
+**Options:**
 ```
+--out-file string   Optional: specify a JSON file to save the response
+      --policy string
+```
+
 

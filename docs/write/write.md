@@ -1,8 +1,5 @@
-## andamio-cli write
-
+# write
 Write data functions
-
-### Synopsis
 
 
 
@@ -10,13 +7,22 @@ Write data functions
 
 	
 
+**Usage:**
 ```
-andamio-cli write [flags]
-```
-
-### Options
-
-```
-  -h, --help   help for write
+andamio-cli write
+andamio-cli write [command]
 ```
 
+
+**Available Commands:**
+
+  contract-token-datum Andamio Course Contract Token Datum
+  nft-metadata         Write NFT metadata
+
+
+**Options:**
+```
+
+```
+
+Use "andamio-cli write [command] --help" for more information about a command.

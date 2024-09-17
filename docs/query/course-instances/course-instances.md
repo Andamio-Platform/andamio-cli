@@ -1,21 +1,22 @@
-## andamio-cli query course-instances
-
+# course-instances
 List course instances on Andamio Network
-
-### Synopsis
 
 
 On the Andamio Network, a course instance is represented first with a UTxO.
 This query provides quick access to those UTxOs.	
 	
 
+**Usage:**
 ```
-andamio-cli query course-instances [flags]
-```
-
-### Options
+andamio-cli query course-instances
 
 ```
-  -h, --help   help for course-instances
+
+
+
+**Options:**
 ```
+
+```
+
 

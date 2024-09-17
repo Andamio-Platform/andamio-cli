@@ -1,8 +1,5 @@
-## andamio-cli transaction student mint-local-state
-
+# mint-local-state
 Enroll in a course on Andamio network
-
-### Synopsis
 
 
 About:
@@ -20,15 +17,18 @@ Example:
 
 
 
+**Usage:**
 ```
 andamio-cli transaction student mint-local-state [flags]
-```
-
-### Options
 
 ```
-  -h, --help                     help for mint-local-state
-      --policy string            Course NFT policy id
+
+
+
+**Options:**
+```
+--policy string            Course NFT policy id
       --userAccessToken string   Cardano Asset ID of student access token. The wallet holding this asset must sign the generated transaction.
 ```
+
 

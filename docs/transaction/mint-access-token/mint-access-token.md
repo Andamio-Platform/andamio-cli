@@ -1,8 +1,5 @@
-## andamio-cli transaction mint-access-token
-
+# mint-access-token
 Mint an Andamio access token
-
-### Synopsis
 
 
 About:
@@ -18,16 +15,19 @@ Example:
 
   
 
+**Usage:**
 ```
 andamio-cli transaction mint-access-token [flags]
-```
-
-### Options
 
 ```
-      --alias string         Unique access token name
-  -h, --help                 help for mint-access-token
+
+
+
+**Options:**
+```
+--alias string         Unique access token name
       --userAddress string   Preprod wallet address to receive access token. Minting transaction requires a signature from this address.
       --userInfo string      Optional string. (default "new Andamio access token")
 ```
+
 

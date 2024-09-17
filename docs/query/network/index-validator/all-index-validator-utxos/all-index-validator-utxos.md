@@ -1,14 +1,19 @@
-## andamio-cli query network index-validator all-index-validator-utxos
-
+# all-index-validator-utxos
 View all access token alias index utxos
 
+
+
+**Usage:**
 ```
-andamio-cli query network index-validator all-index-validator-utxos [flags]
+andamio-cli query network index-validator all-index-validator-utxos
+
 ```
 
-### Options
+
+
+**Options:**
+```
 
 ```
-  -h, --help   help for all-index-validator-utxos
-```
+
 

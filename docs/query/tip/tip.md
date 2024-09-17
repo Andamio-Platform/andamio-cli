@@ -1,21 +1,22 @@
-## andamio-cli query tip
-
+# tip
 Simple query example for Cardano Go PBL course
-
-### Synopsis
 
 
 Query tip of Cardano Preview network using Demeter example.
 
 	
 
+**Usage:**
 ```
-andamio-cli query tip [flags]
-```
-
-### Options
+andamio-cli query tip
 
 ```
-  -h, --help   help for tip
+
+
+
+**Options:**
 ```
+
+```
+
 

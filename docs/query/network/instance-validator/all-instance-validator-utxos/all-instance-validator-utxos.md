@@ -1,14 +1,19 @@
-## andamio-cli query network instance-validator all-instance-validator-utxos
-
+# all-instance-validator-utxos
 View all instance validator UTxOs
 
+
+
+**Usage:**
 ```
-andamio-cli query network instance-validator all-instance-validator-utxos [flags]
+andamio-cli query network instance-validator all-instance-validator-utxos
+
 ```
 
-### Options
+
+
+**Options:**
+```
 
 ```
-  -h, --help   help for all-instance-validator-utxos
-```
+
 

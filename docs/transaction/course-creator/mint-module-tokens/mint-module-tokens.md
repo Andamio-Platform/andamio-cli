@@ -1,8 +1,5 @@
-## andamio-cli transaction course-creator mint-module-tokens
-
+# mint-module-tokens
 Publish course credential criteria on-chain
-
-### Synopsis
 
 
 About:
@@ -20,16 +17,19 @@ Example:
 
   
 
+**Usage:**
 ```
 andamio-cli transaction course-creator mint-module-tokens [flags]
-```
-
-### Options
 
 ```
-  -h, --help                     help for mint-module-tokens
-      --moduleInfos string       List of course module information. Use andamio-cli write module-info to generate valid module-info
+
+
+
+**Options:**
+```
+--moduleInfos string       List of course module information. Use andamio-cli write module-info to generate valid module-info
       --policy string            Course NFT policy id
       --userAccessToken string   Cardano Asset ID of teacher access token. The wallet holding this asset must sign the generated transaction.
 ```
+
 

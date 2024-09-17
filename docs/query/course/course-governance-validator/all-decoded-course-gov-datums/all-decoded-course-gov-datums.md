@@ -1,14 +1,19 @@
-## andamio-cli query course course-governance-validator all-decoded-course-gov-datums
-
+# all-decoded-course-gov-datums
 View all course governance datums
 
+
+
+**Usage:**
 ```
-andamio-cli query course course-governance-validator all-decoded-course-gov-datums [flags]
+andamio-cli query course course-governance-validator all-decoded-course-gov-datums
+
 ```
 
-### Options
+
+
+**Options:**
+```
 
 ```
-  -h, --help   help for all-decoded-course-gov-datums
-```
+
 

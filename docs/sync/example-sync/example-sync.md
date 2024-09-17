@@ -1,8 +1,5 @@
-## andamio-cli sync example-sync
-
+# example-sync
 Example for Cardano Go PBL
-
-### Synopsis
 
 
 
@@ -11,13 +8,17 @@ https://github.com/blinklabs-io/adder-library-starter-kit
 	
 	
 
+**Usage:**
 ```
-andamio-cli sync example-sync [flags]
-```
-
-### Options
+andamio-cli sync example-sync
 
 ```
-  -h, --help   help for example-sync
+
+
+
+**Options:**
 ```
+
+```
+
 
