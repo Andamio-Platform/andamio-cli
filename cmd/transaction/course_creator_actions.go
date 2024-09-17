@@ -4,16 +4,15 @@ import (
 	"fmt"
 	"os"
 
-	course_creator_actions "github.com/Andamio-Platform/andamio-cli/cmd/build/transaction/course-creator-actions"
+	course_creator_actions "github.com/Andamio-Platform/andamio-cli/cmd/transaction/course-creator-actions"
 	"github.com/spf13/cobra"
 )
 
 var CourseCreatorActionsCmd = &cobra.Command{
-	Use:   "course-creator-actions",
-	Short: "",
+	Use:   "course-creator",
+	Short: "Transactions for course creators",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-
 		// If no arguments are passed, show help
 		if len(args) == 0 {
 			cmd.Help()

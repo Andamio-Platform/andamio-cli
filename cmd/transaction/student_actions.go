@@ -4,16 +4,15 @@ import (
 	"fmt"
 	"os"
 
-	student_actions "github.com/Andamio-Platform/andamio-cli/cmd/build/transaction/student-actions"
+	student_actions "github.com/Andamio-Platform/andamio-cli/cmd/transaction/student-actions"
 	"github.com/spf13/cobra"
 )
 
 var StudentActionsCmd = &cobra.Command{
-	Use:   "student-actions",
-	Short: "",
+	Use:   "student",
+	Short: "Transactions for students",
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-
 		// If no arguments are passed, show help
 		if len(args) == 0 {
 			cmd.Help()
