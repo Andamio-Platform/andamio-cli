@@ -1,35 +1,41 @@
 package student_actions
 
 import (
-	"fmt"
-
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/spf13/cobra"
 )
 
 var UpdateAssignmentCmd = &cobra.Command{
 	Use:   "update-assignment",
-	Short: "Build transaction",
-	Long:  `Build transactions.`,
+	Short: "Update assginment evidence",
+	Long: `
+About:
+A student can update assignment info any time.  
+
+This transaction allows the holder of userAccessToken to update assignmentInfo in the course specified by policy.
+
+The transaction must be signed by the holder of userAccessToken.
+
+Example:
+  andamio-cli transaction student update-assignment \ 
+    --userAccessToken ASSET_ID (POLICY_ID+ASSET_NAME) \
+    --policy POLICY_ID \
+    --assignmentInfo STRING
+
+
+`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if userAccessToken == "" {
-			fmt.Println("Please provide an userAccessToken using --userAccessToken flag")
-			return
-		}
-		if policy == "" {
-			fmt.Println("Please provide an policy using --policy flag")
-			return
-		}
-		if assignmentInfo == "" {
-			fmt.Println("Please provide an assignmentInfo using --assignmentInfo flag")
-			return
-		}
 		client.GetUpdateAssignment(userAccessToken, policy, assignmentInfo)
 	},
 }
 
 func init() {
-	UpdateAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "")
-	UpdateAssignmentCmd.Flags().StringVar(&policy, "policy", "", "")
-	UpdateAssignmentCmd.Flags().StringVar(&assignmentInfo, "assignmentInfo", "", "")
+	UpdateAssignmentCmd.Flags().StringVar(&userAccessToken, "userAccessToken", "", "Cardano Asset ID of student access token. The wallet holding this asset must sign the generated transaction.")
+	UpdateAssignmentCmd.Flags().StringVar(&policy, "policy", "", "Course NFT policy id")
+	UpdateAssignmentCmd.Flags().StringVar(&assignmentInfo, "assignmentInfo", "", "Evidence of assignment completion")
+
+	// Required flags
+	UpdateAssignmentCmd.MarkFlagRequired("userAccessToken")
+	UpdateAssignmentCmd.MarkFlagRequired("policy")
+	UpdateAssignmentCmd.MarkFlagRequired("assignmentInfo")
 }
