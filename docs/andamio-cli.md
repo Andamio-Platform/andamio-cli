@@ -23,7 +23,8 @@ Instant access to Andamio
 
 ### SEE ALSO
 
-* [andamio-cli doc](andamio-cli_doc.md)	 - Generate andamio-cli documentation
+* [andamio-cli docs](andamio-cli_docs.md)	 - Generate documentation in Markdown format organized by subcommands
+* [andamio-cli docs](andamio-cli_docs.md)	 - Generate documentation in Markdown format organized by subcommands
 * [andamio-cli query](andamio-cli_query.md)	 - Andamio Network queries
 * [andamio-cli sync](andamio-cli_sync.md)	 - Sync building commands
 * [andamio-cli transaction](andamio-cli_transaction.md)	 - build transaction

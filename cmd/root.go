@@ -46,7 +46,7 @@ func addSubcommandIslands() {
 	rootCmd.AddCommand(query.QueryCmd)
 	rootCmd.AddCommand(transaction.TransactionCmd)
 	rootCmd.AddCommand(sync.SyncCmd)
-	rootCmd.AddCommand(DocCmd)
+	rootCmd.AddCommand(docCmd)
 }
 
 func init() {
