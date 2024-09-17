@@ -10,6 +10,7 @@ andamio-cli query network global-state global-state-utxo [flags]
 ```
 
 
+```
 
 **Options:**
 ```

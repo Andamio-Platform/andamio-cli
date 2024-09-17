@@ -13,6 +13,7 @@ andamio-cli write contract-token-datum [flags]
 ```
 
 
+```
 
 **Options:**
 ```

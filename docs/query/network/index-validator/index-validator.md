@@ -11,10 +11,12 @@ andamio-cli query network index-validator [command]
 
 
 **Available Commands:**
+```
 
   all-index-validator-utxos View all access token alias index utxos
   input-utxo                Find input utxo for minting a new access token with specified alias
 
+```
 
 **Options:**
 ```

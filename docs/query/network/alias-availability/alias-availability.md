@@ -10,6 +10,7 @@ andamio-cli query network alias-availability [flags]
 ```
 
 
+```
 
 **Options:**
 ```

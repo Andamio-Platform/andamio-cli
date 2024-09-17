@@ -24,6 +24,7 @@ andamio-cli transaction student leave-assignment [flags]
 ```
 
 
+```
 
 **Options:**
 ```

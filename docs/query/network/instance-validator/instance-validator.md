@@ -11,6 +11,7 @@ andamio-cli query network instance-validator [command]
 
 
 **Available Commands:**
+```
 
   all-course-instance-utxos      View all course instance UTxOs
   all-instance-validator-utxos   View all instance validator UTxOs
@@ -22,6 +23,7 @@ andamio-cli query network instance-validator [command]
   module-token-policy-ref-utxo   View the module token minting reference UTxO for course with specified policy
   module-validator-ref-utxo      View the module validator reference UTxO for course with specified policy
 
+```
 
 **Options:**
 ```

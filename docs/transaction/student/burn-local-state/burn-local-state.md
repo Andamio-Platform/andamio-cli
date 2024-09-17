@@ -26,6 +26,7 @@ andamio-cli transaction student burn-local-state [flags]
 ```
 
 
+```
 
 **Options:**
 ```

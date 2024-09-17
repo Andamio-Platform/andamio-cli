@@ -15,10 +15,12 @@ andamio-cli write [command]
 
 
 **Available Commands:**
+```
 
   contract-token-datum Andamio Course Contract Token Datum
   nft-metadata         Write NFT metadata
 
+```
 
 **Options:**
 ```

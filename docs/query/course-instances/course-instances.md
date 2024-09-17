@@ -13,6 +13,7 @@ andamio-cli query course-instances
 ```
 
 
+```
 
 **Options:**
 ```

@@ -22,6 +22,7 @@ andamio-cli write nft-metadata [flags]
 ```
 
 
+```
 
 **Options:**
 ```

@@ -25,6 +25,7 @@ andamio-cli transaction student update-assignment [flags]
 ```
 
 
+```
 
 **Options:**
 ```

@@ -10,6 +10,7 @@ andamio-cli query course course-state course-state-address [flags]
 ```
 
 
+```
 
 **Options:**
 ```

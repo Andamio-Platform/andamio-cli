@@ -10,6 +10,7 @@ andamio-cli query course assignments decoded-assignment-validator-utxo-datum [fl
 ```
 
 
+```
 
 **Options:**
 ```

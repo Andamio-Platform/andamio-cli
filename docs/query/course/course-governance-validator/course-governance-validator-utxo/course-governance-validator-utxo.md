@@ -10,6 +10,7 @@ andamio-cli query course course-governance-validator course-governance-validator
 ```
 
 
+```
 
 **Options:**
 ```

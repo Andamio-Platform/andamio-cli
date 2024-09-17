@@ -11,6 +11,7 @@ andamio-cli query course assignments [command]
 
 
 **Available Commands:**
+```
 
   assignment-validator-address            Get a list of assignment validator addresses for course
   assignment-validator-utxo               View commitment UTxO currently locked at assignment validator address for specified alias
@@ -18,6 +19,7 @@ andamio-cli query course assignments [command]
   current-commitments                     View all current assignment commitments
   decoded-assignment-validator-utxo-datum View assignment datum for specified alias in course with specified policy
 
+```
 
 **Options:**
 ```

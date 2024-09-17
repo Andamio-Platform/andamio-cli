@@ -25,6 +25,7 @@ andamio-cli transaction course-creator accept-assignment [flags]
 ```
 
 
+```
 
 **Options:**
 ```

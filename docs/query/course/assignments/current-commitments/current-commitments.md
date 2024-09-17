@@ -10,6 +10,7 @@ andamio-cli query course assignments current-commitments [flags]
 ```
 
 
+```
 
 **Options:**
 ```

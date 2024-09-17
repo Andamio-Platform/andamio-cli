@@ -15,6 +15,7 @@ andamio-cli sync example-sync
 ```
 
 
+```
 
 **Options:**
 ```

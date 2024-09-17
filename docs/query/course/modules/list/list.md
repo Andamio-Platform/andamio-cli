@@ -10,6 +10,7 @@ andamio-cli query course modules list [flags]
 ```
 
 
+```
 
 **Options:**
 ```

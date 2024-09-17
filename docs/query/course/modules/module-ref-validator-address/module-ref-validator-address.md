@@ -10,6 +10,7 @@ andamio-cli query course modules module-ref-validator-address [flags]
 ```
 
 
+```
 
 **Options:**
 ```

@@ -10,6 +10,7 @@ andamio-cli query course course-state course-state-utxos [flags]
 ```
 
 
+```
 
 **Options:**
 ```

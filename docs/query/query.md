@@ -23,6 +23,7 @@ andamio-cli query [command]
 
 
 **Available Commands:**
+```
 
   course           View course details
   course-instances List course instances on Andamio Network
@@ -30,6 +31,7 @@ andamio-cli query [command]
   network          View Andamio network data
   tip              Simple query example for Cardano Go PBL course
 
+```
 
 **Options:**
 ```

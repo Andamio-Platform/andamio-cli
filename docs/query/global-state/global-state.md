@@ -13,6 +13,7 @@ andamio-cli query global-state [flags]
 ```
 
 
+```
 
 **Options:**
 ```

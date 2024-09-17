@@ -11,6 +11,7 @@ andamio-cli transaction student [command]
 
 
 **Available Commands:**
+```
 
   burn-local-state     Un-enroll in a course
   commit-to-assignment Commit to an assignment
@@ -18,6 +19,7 @@ andamio-cli transaction student [command]
   mint-local-state     Enroll in a course on Andamio network
   update-assignment    Update assginment evidence
 
+```
 
 **Options:**
 ```

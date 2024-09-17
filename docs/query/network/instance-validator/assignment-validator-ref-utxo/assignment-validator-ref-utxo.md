@@ -10,6 +10,7 @@ andamio-cli query network instance-validator assignment-validator-ref-utxo [flag
 ```
 
 
+```
 
 **Options:**
 ```

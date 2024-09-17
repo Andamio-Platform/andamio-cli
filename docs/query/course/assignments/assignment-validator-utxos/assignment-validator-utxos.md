@@ -10,6 +10,7 @@ andamio-cli query course assignments assignment-validator-utxos [flags]
 ```
 
 
+```
 
 **Options:**
 ```

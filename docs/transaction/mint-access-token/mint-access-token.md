@@ -22,6 +22,7 @@ andamio-cli transaction mint-access-token [flags]
 ```
 
 
+```
 
 **Options:**
 ```

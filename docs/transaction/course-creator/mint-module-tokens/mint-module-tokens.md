@@ -24,6 +24,7 @@ andamio-cli transaction course-creator mint-module-tokens [flags]
 ```
 
 
+```
 
 **Options:**
 ```

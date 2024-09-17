@@ -24,6 +24,7 @@ andamio-cli transaction student mint-local-state [flags]
 ```
 
 
+```
 
 **Options:**
 ```

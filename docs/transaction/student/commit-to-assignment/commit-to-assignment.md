@@ -30,6 +30,7 @@ andamio-cli transaction student commit-to-assignment [flags]
 ```
 
 
+```
 
 **Options:**
 ```

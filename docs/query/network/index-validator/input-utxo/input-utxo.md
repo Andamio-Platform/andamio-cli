@@ -10,6 +10,7 @@ andamio-cli query network index-validator input-utxo [flags]
 ```
 
 
+```
 
 **Options:**
 ```
