@@ -1,27 +1,62 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
-	"log"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 )
 
-// gendocCmd represents the Cobra command to generate the documentation in Markdown format
-var docCmd = &cobra.Command{
-	Use:   "docs",
-	Short: "Generate documentation in Markdown format organized by subcommands",
-	Long:  "Generate Markdown documentation for all commands, organized in subfolders based on subcommands.",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		docsDir := "./docs"
-
-		err := doc.GenMarkdownTree(rootCmd, docsDir)
-		if err != nil {
-			log.Fatal(err)
+func GenMarkdownTreeCustom(cmd *cobra.Command, dir string) error {
+	for _, c := range cmd.Commands() {
+		if !c.IsAvailableCommand() || c.IsAdditionalHelpTopicCommand() {
+			continue
 		}
 
-		fmt.Printf("Documentation successfully generated in %s\n", docsDir)
-		return nil
+		// Create subfolder path
+		// Fix: Use strings.Split to convert CommandPath to a slice
+		cmdPath := strings.Split(c.CommandPath(), " ")
+		subDir := filepath.Join(dir, filepath.Join(cmdPath[1:]...))
+		if err := os.MkdirAll(subDir, 0755); err != nil {
+			return err
+		}
+
+		// Generate markdown file
+		// Fix: Use a bytes.Buffer to capture the output
+		var buf bytes.Buffer
+		if err := doc.GenMarkdown(c, &buf); err != nil {
+			return err
+		}
+
+		// Write to file
+		filename := filepath.Join(subDir, c.Name()+".md")
+		if err := os.WriteFile(filename, buf.Bytes(), 0644); err != nil {
+			return err
+		}
+
+		// Recursively generate for subcommands
+		if err := GenMarkdownTreeCustom(c, dir); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+var docCmd = &cobra.Command{
+	Use:   "docs",
+	Short: "Generate Andamio CLI documentation",
+	Long:  ``,
+	Run: func(cmd *cobra.Command, args []string) {
+		err := GenMarkdownTreeCustom(rootCmd, "./docs")
+		if err != nil {
+			fmt.Printf("Error generating documentation: %s\n", err)
+			os.Exit(1)
+
+		}
 	},
 }
