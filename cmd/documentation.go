@@ -26,9 +26,8 @@ const commandTemplate = `# {{ if .HasParent }}{{ .Parent.Name }} {{ end }}{{ .Na
 {{ if .HasAvailableSubCommands }}
 ### Available Commands:
 ` + "```" + `
-{{ range .Commands }}{{ if (or .IsAvailableCommand (eq .Name "help")) }}
-  {{ rpad .Name .NamePadding }} {{ .Short }}{{ end }}{{ end }}
-` + "```" + `
+{{ range .Commands }}{{ if (or .IsAvailableCommand (eq .Name "help")) }}{{ .Name }}{{ if .Short }}{{ "\t" }}{{ .Short }}{{ end }}
+{{ end }}{{ end }}` + "```" + `
 {{ end }}
 ### Options:
 ` + "```" + `
