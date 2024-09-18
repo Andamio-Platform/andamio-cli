@@ -1,20 +1,14 @@
-# module-ref-validator-address
+# modules module-ref-validator-address
 View module reference validator address for course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course modules module-ref-validator-address [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

@@ -1,21 +1,15 @@
-# list
+# modules list
 View module datum for course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course modules list [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --out-file string   Optional: specify a JSON file to save the response
       --policy string
 ```
-
 

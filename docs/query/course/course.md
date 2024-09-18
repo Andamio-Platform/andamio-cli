@@ -1,28 +1,25 @@
-# course
+# query course
 View course details
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course
 andamio-cli query course [command]
 ```
 
-
-**Available Commands:**
+### Available Commands:
 ```
 
   assignments                 View network assignment data
   course-governance-validator View network course governance data
   course-state                View course details
   modules                     View course module credential details
-
 ```
 
-**Options:**
+### Options:
 ```
 
 ```
 
 Use "andamio-cli query course [command] --help" for more information about a command.
+

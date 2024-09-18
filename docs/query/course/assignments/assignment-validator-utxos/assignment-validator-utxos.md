@@ -1,20 +1,14 @@
-# assignment-validator-utxos
+# assignments assignment-validator-utxos
 View all commitment UTxOs currently locked at assignment validator address
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course assignments assignment-validator-utxos [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

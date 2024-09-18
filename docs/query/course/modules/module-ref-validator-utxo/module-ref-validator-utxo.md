@@ -1,21 +1,15 @@
-# module-ref-validator-utxo
+# modules module-ref-validator-utxo
 View module reference utxo for module with specified token-name in course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course modules module-ref-validator-utxo [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string       
       --token-name string
 ```
-
 

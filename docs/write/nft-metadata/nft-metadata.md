@@ -1,4 +1,4 @@
-# nft-metadata
+# write nft-metadata
 Write NFT metadata
 
 
@@ -15,16 +15,13 @@ andamio-cli write nft-medata
 
 	
 
-**Usage:**
+### Usage:
 ```
 andamio-cli write nft-metadata [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --asset-name string    The asset name
       --description string   The description
@@ -34,5 +31,4 @@ andamio-cli write nft-metadata [flags]
       --out-file string      Output file
       --policyid string      The policy ID
 ```
-
 

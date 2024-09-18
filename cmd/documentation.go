@@ -11,31 +11,32 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const commandTemplate = `# {{ .Name }}
+// const commandTemplate = `# {{ $cmd := . }}{{ range $i, $v := .CommandPath }}{{ if and (gt $i 0) (lt $i (sub (len .CommandPath) 1)) }} > {{ end }}{{ if gt $i 0 }}{{ $v }}{{ end }}{{ end }}
+// const commandTemplate = `# {{ $cmd := . }}{{ range $i, $v := .CommandPath }}{{ if $i }} > {{ end }}{{ $v }}{{ end }}
+const commandTemplate = `# {{ if .HasParent }}{{ .Parent.Name }} {{ end }}{{ .Name }}
 {{ .Short }}
-
+{{ if .Long }}
 {{ .Long }}
-
-**Usage:**
+{{ end }}
+### Usage:
 ` + "```" + `
 {{ .UseLine }}
 {{ if .HasAvailableSubCommands }}{{ .CommandPath }} [command]{{ end }}
 ` + "```" + `
-
 {{ if .HasAvailableSubCommands }}
-**Available Commands:**
+### Available Commands:
 ` + "```" + `
 {{ range .Commands }}{{ if (or .IsAvailableCommand (eq .Name "help")) }}
   {{ rpad .Name .NamePadding }} {{ .Short }}{{ end }}{{ end }}
-{{ end }}
 ` + "```" + `
-
-**Options:**
+{{ end }}
+### Options:
 ` + "```" + `
 {{ trimTrailingWhitespaces .LocalFlags.FlagUsages }}
 ` + "```" + `
-
-{{ if .HasAvailableSubCommands }}Use "{{ .CommandPath }} [command] --help" for more information about a command.{{ end }}
+{{ if .HasAvailableSubCommands }}
+Use "{{ .CommandPath }} [command] --help" for more information about a command.
+{{ end }}
 `
 
 func GenMarkdownTreeCustom(cmd *cobra.Command, dir string) error {

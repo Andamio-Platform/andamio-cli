@@ -1,20 +1,14 @@
-# docs
+# andamio-cli docs
 Generate Andamio CLI documentation
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli docs [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 -h, --help   help for docs
 ```
-
 

@@ -1,22 +1,16 @@
-# learner-status
+# course-state learner-status
 View course datum for specified alias in course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course course-state learner-status [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --alias string      
       --out-file string   Optional: specify a JSON file to save the response
       --policy string
 ```
-
 

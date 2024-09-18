@@ -1,4 +1,4 @@
-# contract-token-datum
+# write contract-token-datum
 Andamio Course Contract Token Datum
 
 
@@ -6,18 +6,14 @@ Query the list of courses currently registered on the Andamio Network
 	
 	
 
-**Usage:**
+### Usage:
 ```
 andamio-cli write contract-token-datum [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 -i, --inputFileName string   Name of input file
 ```
-
 

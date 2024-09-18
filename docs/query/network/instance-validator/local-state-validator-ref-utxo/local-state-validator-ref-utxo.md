@@ -1,20 +1,14 @@
-# local-state-validator-ref-utxo
+# instance-validator local-state-validator-ref-utxo
 View the local state validator reference UTxO for course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query network instance-validator local-state-validator-ref-utxo [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

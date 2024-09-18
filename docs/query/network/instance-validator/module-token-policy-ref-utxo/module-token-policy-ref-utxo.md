@@ -1,20 +1,14 @@
-# module-token-policy-ref-utxo
+# instance-validator module-token-policy-ref-utxo
 View the module token minting reference UTxO for course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query network instance-validator module-token-policy-ref-utxo [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

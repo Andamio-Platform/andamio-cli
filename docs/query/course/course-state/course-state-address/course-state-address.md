@@ -1,20 +1,14 @@
-# course-state-address
+# course-state course-state-address
 View course state address for course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course course-state course-state-address [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

@@ -1,20 +1,14 @@
-# assignment-validator-ref-utxo
+# instance-validator assignment-validator-ref-utxo
 View the assignment validator reference UTxOs for course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query network instance-validator assignment-validator-ref-utxo [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

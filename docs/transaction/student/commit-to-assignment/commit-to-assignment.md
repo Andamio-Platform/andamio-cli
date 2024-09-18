@@ -1,4 +1,4 @@
-# commit-to-assignment
+# student commit-to-assignment
 Commit to an assignment
 
 
@@ -23,21 +23,17 @@ Example:
 
 
 
-**Usage:**
+### Usage:
 ```
 andamio-cli transaction student commit-to-assignment [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --assignmentCode string    Identifier for Assignment, corresponding to the asset name of a course module token.
       --assignmentInfo string    Evidence of assignment completion
       --policy string            Course NFT policy id
       --userAccessToken string   Cardano Asset ID of student access token. The wallet holding this asset must sign the generated transaction.
 ```
-
 

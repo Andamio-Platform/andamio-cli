@@ -1,20 +1,16 @@
-# alias-availability
+# network alias-availability
 Check alias availability
 
 Check whether a given alias is available.
 
-**Usage:**
+### Usage:
 ```
 andamio-cli query network alias-availability [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --alias string   Alias to check availability for
 ```
-
 

@@ -1,20 +1,14 @@
-# all-global-state-utxos
+# global-state all-global-state-utxos
 List UTxOs for all access tokens on Andamio Network
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query network global-state all-global-state-utxos
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 
 ```
-
 

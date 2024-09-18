@@ -1,20 +1,14 @@
-# course-policies
+# course-governance-validator course-policies
 View a list of course policies where specified alias has creator access
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course course-governance-validator course-policies [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --alias string
 ```
-
 

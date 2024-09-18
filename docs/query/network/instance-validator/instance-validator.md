@@ -1,16 +1,13 @@
-# instance-validator
+# network instance-validator
 View course instance details
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query network instance-validator
 andamio-cli query network instance-validator [command]
 ```
 
-
-**Available Commands:**
+### Available Commands:
 ```
 
   all-course-instance-utxos      View all course instance UTxOs
@@ -22,12 +19,12 @@ andamio-cli query network instance-validator [command]
   local-state-validator-ref-utxo View the local state validator reference UTxO for course with specified policy
   module-token-policy-ref-utxo   View the module token minting reference UTxO for course with specified policy
   module-validator-ref-utxo      View the module validator reference UTxO for course with specified policy
-
 ```
 
-**Options:**
+### Options:
 ```
 
 ```
 
 Use "andamio-cli query network instance-validator [command] --help" for more information about a command.
+

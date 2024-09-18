@@ -1,20 +1,14 @@
-# module-ref-validator-utxos
+# modules module-ref-validator-utxos
 View all module reference utxos for course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course modules module-ref-validator-utxos [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

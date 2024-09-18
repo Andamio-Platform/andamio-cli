@@ -1,21 +1,15 @@
-# assignment-validator-utxo
+# assignments assignment-validator-utxo
 View commitment UTxO currently locked at assignment validator address for specified alias
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course assignments assignment-validator-utxo [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --alias string    
       --policy string
 ```
-
 

@@ -1,4 +1,4 @@
-# accept-assignment
+# course-creator accept-assignment
 Approve a student commitment to course assignment and issue credential for completion.
 
 
@@ -18,20 +18,16 @@ Example:
 
   
 
-**Usage:**
+### Usage:
 ```
 andamio-cli transaction course-creator accept-assignment [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string            Course NFT policy id
       --studentAlias string      Access token name of student with committed assignment
       --userAccessToken string   Cardano Asset ID of teacher access token. The wallet holding this asset must sign the generated transaction.
 ```
-
 

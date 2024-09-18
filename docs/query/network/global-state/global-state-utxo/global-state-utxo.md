@@ -1,20 +1,14 @@
-# global-state-utxo
+# global-state global-state-utxo
 View global state utxo for specified alias
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query network global-state global-state-utxo [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --alias string
 ```
-
 

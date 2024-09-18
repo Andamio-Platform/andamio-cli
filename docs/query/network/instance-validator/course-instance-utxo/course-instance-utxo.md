@@ -1,20 +1,14 @@
-# course-instance-utxo
+# instance-validator course-instance-utxo
 View the course instance UTxO for course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query network instance-validator course-instance-utxo [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

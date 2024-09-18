@@ -1,20 +1,14 @@
-# current-commitments
+# assignments current-commitments
 View all current assignment commitments
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course assignments current-commitments [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

@@ -1,20 +1,14 @@
-# course-state-utxos
+# course-state course-state-utxos
 View all course state utxos for course with specified policy
 
-
-
-**Usage:**
+### Usage:
 ```
 andamio-cli query course course-state course-state-utxos [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string
 ```
-
 

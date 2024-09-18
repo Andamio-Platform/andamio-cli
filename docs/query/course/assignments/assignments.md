@@ -1,16 +1,15 @@
-# assignments
+# course assignments
 View network assignment data
 
 .
 
-**Usage:**
+### Usage:
 ```
 andamio-cli query course assignments
 andamio-cli query course assignments [command]
 ```
 
-
-**Available Commands:**
+### Available Commands:
 ```
 
   assignment-validator-address            Get a list of assignment validator addresses for course
@@ -18,12 +17,12 @@ andamio-cli query course assignments [command]
   assignment-validator-utxos              View all commitment UTxOs currently locked at assignment validator address
   current-commitments                     View all current assignment commitments
   decoded-assignment-validator-utxo-datum View assignment datum for specified alias in course with specified policy
-
 ```
 
-**Options:**
+### Options:
 ```
 
 ```
 
 Use "andamio-cli query course assignments [command] --help" for more information about a command.
+

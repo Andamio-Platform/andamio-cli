@@ -1,4 +1,4 @@
-# burn-local-state
+# student burn-local-state
 Un-enroll in a course
 
 
@@ -19,19 +19,15 @@ Example:
 
 
 
-**Usage:**
+### Usage:
 ```
 andamio-cli transaction student burn-local-state [flags]
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 --policy string            Course NFT policy id
       --userAccessToken string   Cardano Asset ID of student access token. The wallet holding this asset must sign the generated transaction.
 ```
-
 

@@ -1,4 +1,4 @@
-# andamio-starter-kit
+# sync andamio-starter-kit
 Example for Cardano Go PBL
 
 
@@ -9,18 +9,14 @@ This is a placeholder for an upcoming example.
 
 	
 
-**Usage:**
+### Usage:
 ```
 andamio-cli sync andamio-starter-kit
 
 ```
 
-
-```
-
-**Options:**
+### Options:
 ```
 
 ```
-
 
