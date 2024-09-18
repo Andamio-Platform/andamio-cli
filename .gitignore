@@ -11,3 +11,5 @@ db
 .env
 output
 /andamio-cli
+dist
+scripts
