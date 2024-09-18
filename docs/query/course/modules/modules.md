@@ -12,7 +12,8 @@ andamio-cli query course modules [command]
 list                         View module datum for course with specified policy
 module-ref-validator-address View module reference validator address for course with specified policy
 module-ref-validator-utxo    View module reference utxo for module with specified token-name in course with specified policy
-module-ref-validator-utxos   View all module reference utxos for course with specified policy```
+module-ref-validator-utxos   View all module reference utxos for course with specified policy
+```
 
 ### Options:
 ```

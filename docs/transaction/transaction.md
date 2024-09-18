@@ -24,7 +24,8 @@ andamio-cli transaction [command]
 ```
 course-creator    Transactions for course creators
 mint-access-token Mint an Andamio access token
-student           Transactions for students```
+student           Transactions for students
+```
 
 ### Options:
 ```

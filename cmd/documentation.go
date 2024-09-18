@@ -39,7 +39,8 @@ const commandTemplate = `# {{ if .HasParent }}{{ .Parent.Name }} {{ end }}{{ .Na
     {{- if (or .IsAvailableCommand (eq .Name "help")) }}
 {{ printf "%-*s" $maxLen .Name }} {{ .Short }}
     {{- end }}
-{{- end }}` + "```" + `
+{{- end }}
+` + "```" + `
 {{ end }}
 ### Options:
 ` + "```" + `

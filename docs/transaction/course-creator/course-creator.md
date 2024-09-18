@@ -20,7 +20,8 @@ andamio-cli transaction course-creator [command]
 ```
 accept-assignment  Approve a student commitment to course assignment and issue credential for completion.
 deny-assignment    Deny a student commitment to course assignment
-mint-module-tokens Publish course credential criteria on-chain```
+mint-module-tokens Publish course credential criteria on-chain
+```
 
 ### Options:
 ```

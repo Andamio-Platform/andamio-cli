@@ -10,7 +10,8 @@ andamio-cli sync [command]
 ### Available Commands:
 ```
 andamio-starter-kit Extend the Adder Starter Kit to build your own Andamio Indexer
-example-sync        Run a basic indexer```
+example-sync        Run a basic indexer
+```
 
 ### Options:
 ```

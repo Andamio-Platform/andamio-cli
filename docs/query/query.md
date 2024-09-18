@@ -25,7 +25,8 @@ course           View course details
 course-instances List course instances on Andamio Network
 global-state     List global state UTxOs on Andamio Network
 network          View Andamio network data
-tip              Simple query example for Cardano Go PBL course```
+tip              Simple query example for Cardano Go PBL course
+```
 
 ### Options:
 ```

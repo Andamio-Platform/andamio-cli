@@ -12,7 +12,8 @@ andamio-cli query course [command]
 assignments                 View network assignment data
 course-governance-validator View network course governance data
 course-state                View course details
-modules                     View course module credential details```
+modules                     View course module credential details
+```
 
 ### Options:
 ```
