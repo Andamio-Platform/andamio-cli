@@ -10,13 +10,10 @@ import (
 
 var AndamioStarterKitCmd = &cobra.Command{
 	Use:   "andamio-starter-kit",
-	Short: "Example for Cardano Go PBL",
-	Long: `
+	Short: "Extend the Adder Starter Kit to build your own Andamio Indexer",
+	Long: `In Cardano Go PBL, you can learn how to build and run your own custom Andamio Indexer.
 
-Not yet implemented.
-
-This is a placeholder for an upcoming example.
-
+View the example: https://www.andamio.io/course/gpbl2024
 	`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Starting Andamio network sync...")
