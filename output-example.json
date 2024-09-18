@@ -1,0 +1,34 @@
+[
+  {
+    "moduleId": "101",
+    "slts": [
+      {
+        "sltId": "1",
+        "sltContent": "I can set up a development environment."
+      },
+      {
+        "sltId": "2",
+        "sltContent": "I can compile a validator."
+      }
+    ],
+    "assignmentContent": "101"
+  },
+  {
+    "moduleId": "102",
+    "slts": [
+      {
+        "sltId": "1",
+        "sltContent": "I can build a transaction."
+      },
+      {
+        "sltId": "2",
+        "sltContent": "I can sign a transaction."
+      },
+      {
+        "sltId": "3",
+        "sltContent": "I can submit a transaction."
+      }
+    ],
+    "assignmentContent": "102"
+  }
+]

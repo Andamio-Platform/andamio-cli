@@ -4,9 +4,8 @@ Copyright © 2024 NAME HERE <EMAIL ADDRESS>
 package write
 
 import (
-	"fmt"
-
 	writeContractTokenDatum "github.com/Andamio-Platform/andamio-cli/cmd/write/contractTokenDatum"
+	module_info "github.com/Andamio-Platform/andamio-cli/cmd/write/moduleInfo"
 	"github.com/Andamio-Platform/andamio-cli/cmd/write/nftMetadata"
 	"github.com/spf13/cobra"
 )
@@ -21,11 +20,10 @@ Write data functions
 
 	`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Print(`
-andamio-cli write
-  ( nft-metadata | contract-token-datum )
-
-`)
+		if len(args) == 0 {
+			cmd.Help()
+			return
+		}
 	},
 }
 
@@ -33,6 +31,7 @@ func addWriteSubcommandIslands() {
 	// WriteCmd.AddCommand(playground.PlaygroundCmd)
 	WriteCmd.AddCommand(nftMetadata.NftMetadataCmd)
 	WriteCmd.AddCommand(writeContractTokenDatum.ContractTokenDatumCmd)
+	WriteCmd.AddCommand(module_info.ModuleInfoCmd)
 }
 
 func init() {
