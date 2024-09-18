@@ -1,10 +1,9 @@
-package course
+package assignment_validator
 
 import (
 	"fmt"
 	"os"
 
-	assignment_validator "github.com/Andamio-Platform/andamio-cli/cmd/query/course/assignment-validator"
 	"github.com/spf13/cobra"
 )
 
@@ -27,9 +26,9 @@ var AssignmentValidatorCmd = &cobra.Command{
 }
 
 func init() {
-	AssignmentValidatorCmd.AddCommand(assignment_validator.AssignmentValidatorAddressCmd)
-	AssignmentValidatorCmd.AddCommand(assignment_validator.AssignmentValidatorUtxoCmd)
-	AssignmentValidatorCmd.AddCommand(assignment_validator.AssignmentValidatorUtxosCmd)
-	AssignmentValidatorCmd.AddCommand(assignment_validator.DecodedAssignmentDatums)
-	AssignmentValidatorCmd.AddCommand(assignment_validator.DecodedAssignmentValidatorUtxoDatum)
+	AssignmentValidatorCmd.AddCommand(AssignmentValidatorAddressCmd)
+	AssignmentValidatorCmd.AddCommand(AssignmentValidatorUtxoCmd)
+	AssignmentValidatorCmd.AddCommand(AssignmentValidatorUtxosCmd)
+	AssignmentValidatorCmd.AddCommand(DecodedAssignmentDatums)
+	AssignmentValidatorCmd.AddCommand(DecodedAssignmentValidatorUtxoDatum)
 }

@@ -10,9 +10,17 @@ import (
 var TransactionCmd = &cobra.Command{
 	Use:   "transaction",
 	Short: "build transaction",
-	Long: `Build Andamio transactions. Use subcommands to build specific transactions.
+	Long: `The Andamio Network is home to valuable, public data that becomes even 
+more valuable when you have tools to make sense of it. Andamio CLI gives 
+developers instant access to transactions, making it easier to explore possibilities
+and build new tools on Andamio.
 
-Use andamio-cli
+This release of andamio-cli features transactions for
+1. Minting access tokens
+2. Student interactions
+3. Course creator interactions
+
+Transactions for Andamio contributors will be added in a future release.
   `,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help

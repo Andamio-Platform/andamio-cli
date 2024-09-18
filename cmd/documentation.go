@@ -39,8 +39,7 @@ const commandTemplate = `# {{ if .HasParent }}{{ .Parent.Name }} {{ end }}{{ .Na
     {{- if (or .IsAvailableCommand (eq .Name "help")) }}
 {{ printf "%-*s" $maxLen .Name }} {{ .Short }}
     {{- end }}
-{{- end }}
-` + "```" + `
+{{- end }}` + "```" + `
 {{ end }}
 ### Options:
 ` + "```" + `
@@ -97,7 +96,10 @@ func GenMarkdownTreeCustom(cmd *cobra.Command, dir string) error {
 var docCmd = &cobra.Command{
 	Use:   "docs",
 	Short: "Generate Andamio CLI documentation",
-	Long:  ``,
+	Long: `Write current andamio-cli documentation to new ./docs directory.
+
+  Useful if you fork andamio-cli and want to generate your own documentation.
+  `,
 	Run: func(cmd *cobra.Command, args []string) {
 		err := GenMarkdownTreeCustom(rootCmd, "./docs")
 		if err != nil {

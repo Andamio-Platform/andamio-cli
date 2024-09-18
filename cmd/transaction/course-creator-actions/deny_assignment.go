@@ -16,13 +16,6 @@ This transaction denies the current assignment for the student with studentAlias
 
 The transaction must be signed by the holder of userAccessToken.
 
-Example:
-  andamio-cli transaction course-creator deny-assignment \ 
-    --userAccessToken ASSET_ID (POLICY_ID+ASSET_NAME) \
-    --studentAlias STRING \
-    --policy POLICY_ID
-
-
   `,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetDenyAssignment(userAccessToken, studentAlias, policy)

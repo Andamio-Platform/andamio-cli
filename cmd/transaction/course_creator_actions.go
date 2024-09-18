@@ -11,7 +11,14 @@ import (
 var CourseCreatorActionsCmd = &cobra.Command{
 	Use:   "course-creator",
 	Short: "Transactions for course creators",
-	Long:  ``,
+	Long: `Course creators are responsible for publishing credential criteria and issuing credentials.
+
+mint-module-tokens publishes credential criteria by minting a token 
+on Cardano, accompanied by a list of SLTs and an Assignment reference
+
+After credentials are published, students can commit to assignments. Creators can accept and deny
+student commitments with the transactions included here.
+  `,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help
 		if len(args) == 0 {

@@ -4,8 +4,10 @@ Copyright © 2024 NAME HERE <EMAIL ADDRESS>
 package query
 
 import (
+	"github.com/Andamio-Platform/andamio-cli/cmd/query/course"
 	courseInstances "github.com/Andamio-Platform/andamio-cli/cmd/query/course-instances"
 	globalState "github.com/Andamio-Platform/andamio-cli/cmd/query/global-state"
+	"github.com/Andamio-Platform/andamio-cli/cmd/query/network"
 	"github.com/Andamio-Platform/andamio-cli/cmd/query/tip"
 	"github.com/spf13/cobra"
 )
@@ -17,10 +19,8 @@ var QueryCmd = &cobra.Command{
 	Long: `
 The Andamio Network is home to valuable, public data that becomes even 
 more valuable when you have tools to make sense of it. Andamio CLI gives 
-developers instant access to helpful queries that allow users to gain 
-insights about the network. In this phase of Andamio CLI development, we 
-will focus on making it easy for anyone to make useful queries to the 
-Andamio network.
+developers instant access to queries and transactions, making it easier 
+to build new tools on Andamio.
 
 The queries provided here serve two purposes:
  1. Opening access to Andamio network data
@@ -40,8 +40,8 @@ func addQuerySubcommandIslands() {
 	QueryCmd.AddCommand(tip.TipCmd)
 	QueryCmd.AddCommand(globalState.GlobalStateCmd)
 	QueryCmd.AddCommand(courseInstances.CourseInstanceCmd)
-	QueryCmd.AddCommand(CourseCmd)
-	QueryCmd.AddCommand(NetworkCmd)
+	QueryCmd.AddCommand(course.CourseCmd)
+	QueryCmd.AddCommand(network.NetworkCmd)
 }
 
 func init() {

@@ -1,10 +1,9 @@
-package course
+package module_ref_validator
 
 import (
 	"fmt"
 	"os"
 
-	module_ref_validator "github.com/Andamio-Platform/andamio-cli/cmd/query/course/modules"
 	"github.com/spf13/cobra"
 )
 
@@ -27,8 +26,8 @@ var ModuleRefValidatorCmd = &cobra.Command{
 }
 
 func init() {
-	ModuleRefValidatorCmd.AddCommand(module_ref_validator.DecodedModuleRefDatumsCmd)
-	ModuleRefValidatorCmd.AddCommand(module_ref_validator.ModuleRefValidatorAddressCmd)
-	ModuleRefValidatorCmd.AddCommand(module_ref_validator.ModuleRefValidatorUtxoCmd)
-	ModuleRefValidatorCmd.AddCommand(module_ref_validator.ModuleRefValidatorUtxosCmd)
+	ModuleRefValidatorCmd.AddCommand(DecodedModuleRefDatumsCmd)
+	ModuleRefValidatorCmd.AddCommand(ModuleRefValidatorAddressCmd)
+	ModuleRefValidatorCmd.AddCommand(ModuleRefValidatorUtxoCmd)
+	ModuleRefValidatorCmd.AddCommand(ModuleRefValidatorUtxosCmd)
 }

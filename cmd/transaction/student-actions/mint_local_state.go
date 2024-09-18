@@ -16,12 +16,6 @@ This transaction enrolls userAccessToken in the course specified by policy.
 
 The transaction must be signed by the holder of userAccessToken.
 
-Example:
-  andamio-cli transaction student mint-local-state \ 
-    --userAccessToken ASSET_ID (POLICY_ID+ASSET_NAME) \
-    --policy POLICY_ID
-
-
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetMintLocalState(userAccessToken, policy)

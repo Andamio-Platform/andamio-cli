@@ -1,10 +1,9 @@
-package network
+package global_state
 
 import (
 	"fmt"
 	"os"
 
-	global_state "github.com/Andamio-Platform/andamio-cli/cmd/query/network/global-state"
 	"github.com/spf13/cobra"
 )
 
@@ -27,7 +26,7 @@ var GlobalStateCmd = &cobra.Command{
 }
 
 func init() {
-	GlobalStateCmd.AddCommand(global_state.AllGlobalStateUtxosCmd)
-	GlobalStateCmd.AddCommand(global_state.GlobalStateUtxoCmd)
-	GlobalStateCmd.AddCommand(global_state.DecodedGlobalStateDatumCmd)
+	GlobalStateCmd.AddCommand(AllGlobalStateUtxosCmd)
+	GlobalStateCmd.AddCommand(GlobalStateUtxoCmd)
+	GlobalStateCmd.AddCommand(DecodedGlobalStateDatumCmd)
 }

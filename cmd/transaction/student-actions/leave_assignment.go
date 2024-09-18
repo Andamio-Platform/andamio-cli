@@ -16,12 +16,6 @@ This transaction cancels the current commitment of userAccessToken in the course
 
 The transaction must be signed by the holder of userAccessToken.
 
-Example:
-  andamio-cli transaction student leave-assignment \ 
-    --userAccessToken ASSET_ID (POLICY_ID+ASSET_NAME) \
-    --policy POLICY_ID
-
-
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetLeaveAssignment(userAccessToken, policy)

@@ -20,12 +20,6 @@ An access token is required to interact with Andamio.
 
 This transaction mints a unique Andamio access token. This transaction will fail if access token name is already minted.
 
-Example:
-  andamio-cli transaction mint-access-token \ 
-    --userAddress PREPROD_ADDRESS \ 
-    --alias STRING \
-
-
   `,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetMintAccessToken(userAddress, alias, userInfo)

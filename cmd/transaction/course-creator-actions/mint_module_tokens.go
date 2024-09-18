@@ -18,12 +18,6 @@ This transaction mints course module tokens specifying Student Learning Targets 
 
 The transaction must be signed by the holder of userAccessToken.
 
-Example:
-  andamio-cli transaction course-creator mint-module-tokens \ 
-    --userAccessToken ASSET_ID \
-    --policy POLICY_ID \
-    --moduleInfos STRING 
-
   `,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetMintModuleTokens(userAccessToken, policy, moduleInfos)

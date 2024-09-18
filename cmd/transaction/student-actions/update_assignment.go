@@ -16,13 +16,6 @@ This transaction allows the holder of userAccessToken to update assignmentInfo i
 
 The transaction must be signed by the holder of userAccessToken.
 
-Example:
-  andamio-cli transaction student update-assignment \ 
-    --userAccessToken ASSET_ID (POLICY_ID+ASSET_NAME) \
-    --policy POLICY_ID \
-    --assignmentInfo STRING
-
-
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetUpdateAssignment(userAccessToken, policy, assignmentInfo)

@@ -25,14 +25,6 @@ The transaction must be signed by the holder of userAccessToken.
 
 To view valid assigmentCodes, use andamio-cli query course module decoded-module-ref-datums 
 
-Example:
-  andamio-cli transaction student commit-to-assignment \ 
-    --userAccessToken ASSET_ID (POLICY_ID+ASSET_NAME) \
-    --policy POLICY_ID \
-    --assignmentCode STRING \
-    --assignmentInfo STRING
-
-
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetCommitToAssignment(userAccessToken, policy, assignmentCode, assignmentInfo)

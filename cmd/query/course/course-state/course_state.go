@@ -1,10 +1,9 @@
-package course
+package course_state
 
 import (
 	"fmt"
 	"os"
 
-	course_state "github.com/Andamio-Platform/andamio-cli/cmd/query/course/course-state"
 	"github.com/spf13/cobra"
 )
 
@@ -27,8 +26,8 @@ var CourseStateCmd = &cobra.Command{
 }
 
 func init() {
-	CourseStateCmd.AddCommand(course_state.CourseStateAddressCmd)
-	CourseStateCmd.AddCommand(course_state.CourseStateUtxoCmd)
-	CourseStateCmd.AddCommand(course_state.CourseStateUtxosCmd)
-	CourseStateCmd.AddCommand(course_state.DecodedCourseStateDatumCmd)
+	CourseStateCmd.AddCommand(CourseStateAddressCmd)
+	CourseStateCmd.AddCommand(CourseStateUtxoCmd)
+	CourseStateCmd.AddCommand(CourseStateUtxosCmd)
+	CourseStateCmd.AddCommand(DecodedCourseStateDatumCmd)
 }

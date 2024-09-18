@@ -11,7 +11,12 @@ import (
 var StudentActionsCmd = &cobra.Command{
 	Use:   "student",
 	Short: "Transactions for students",
-	Long:  ``,
+	Long: `Students can enroll in courses, complete assignments, and earn credentials.
+
+These transactions provide endpoints to each feature.
+- Course enrollment: mint-local-state and burn-local-state
+- Assignments and Credentials: commit, update, and leave assignments
+  `,
 	Run: func(cmd *cobra.Command, args []string) {
 		// If no arguments are passed, show help
 		if len(args) == 0 {

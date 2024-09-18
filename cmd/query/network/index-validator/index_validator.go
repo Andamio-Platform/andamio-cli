@@ -1,10 +1,9 @@
-package network
+package index_validator
 
 import (
 	"fmt"
 	"os"
 
-	index_validator "github.com/Andamio-Platform/andamio-cli/cmd/query/network/index-validator"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +26,6 @@ var IndexValidatorCmd = &cobra.Command{
 }
 
 func init() {
-	IndexValidatorCmd.AddCommand(index_validator.AllIndexValidatorUtxosCmd)
-	IndexValidatorCmd.AddCommand(index_validator.InputUtxoCmd)
+	IndexValidatorCmd.AddCommand(AllIndexValidatorUtxosCmd)
+	IndexValidatorCmd.AddCommand(InputUtxoCmd)
 }

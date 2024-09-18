@@ -1,10 +1,12 @@
-package query
+package network
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/Andamio-Platform/andamio-cli/cmd/query/network"
+	global_state "github.com/Andamio-Platform/andamio-cli/cmd/query/network/global-state"
+	index_validator "github.com/Andamio-Platform/andamio-cli/cmd/query/network/index-validator"
+	instance_validator "github.com/Andamio-Platform/andamio-cli/cmd/query/network/instance-validator"
 	"github.com/spf13/cobra"
 )
 
@@ -27,8 +29,8 @@ var NetworkCmd = &cobra.Command{
 }
 
 func init() {
-	NetworkCmd.AddCommand(network.AliasAvailabilityCmd)
-	NetworkCmd.AddCommand(network.GlobalStateCmd)
-	NetworkCmd.AddCommand(network.IndexValidatorCmd)
-	NetworkCmd.AddCommand(network.InstanceValidatorCmd)
+	NetworkCmd.AddCommand(AliasAvailabilityCmd)
+	NetworkCmd.AddCommand(global_state.GlobalStateCmd)
+	NetworkCmd.AddCommand(index_validator.IndexValidatorCmd)
+	NetworkCmd.AddCommand(instance_validator.InstanceValidatorCmd)
 }

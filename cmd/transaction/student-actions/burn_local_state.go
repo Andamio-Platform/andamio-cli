@@ -23,12 +23,6 @@ In this transaction, any earned course credentials are moved to the access token
 
 The transaction must be signed by the holder of userAccessToken.
 
-Example:
-  andamio-cli transaction student burn-local-state \ 
-    --userAccessToken ASSET_ID (POLICY_ID+ASSET_NAME) \
-    --policy POLICY_ID
-
-
 `,
 	Run: func(cmd *cobra.Command, args []string) {
 		client.GetBurnLocalState(userAccessToken, policy)

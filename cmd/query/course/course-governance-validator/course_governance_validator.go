@@ -1,10 +1,9 @@
-package course
+package course_governance_validator
 
 import (
 	"fmt"
 	"os"
 
-	course_governance_validator "github.com/Andamio-Platform/andamio-cli/cmd/query/course/course-governance-validator"
 	"github.com/spf13/cobra"
 )
 
@@ -27,8 +26,8 @@ var CourseGovernanceValidatorCmd = &cobra.Command{
 }
 
 func init() {
-	CourseGovernanceValidatorCmd.AddCommand(course_governance_validator.AllCourseGovernanceValidatorUtxosCmd)
-	CourseGovernanceValidatorCmd.AddCommand(course_governance_validator.AllDecodedCourseGovDatumsCmd)
-	CourseGovernanceValidatorCmd.AddCommand(course_governance_validator.CourseGovernanceValidatorUtxoCmd)
-	CourseGovernanceValidatorCmd.AddCommand(course_governance_validator.CoursePoliciesCmd)
+	CourseGovernanceValidatorCmd.AddCommand(AllCourseGovernanceValidatorUtxosCmd)
+	CourseGovernanceValidatorCmd.AddCommand(AllDecodedCourseGovDatumsCmd)
+	CourseGovernanceValidatorCmd.AddCommand(CourseGovernanceValidatorUtxoCmd)
+	CourseGovernanceValidatorCmd.AddCommand(CoursePoliciesCmd)
 }
