@@ -2,7 +2,7 @@
 
 ### About
 
-Andamio CLI provides quick access to Andamio with a set of command-line tools, so that developers can build upon Andamio. 9a509de0-edd2-499e-8e5a-abf958e14b67
+Andamio CLI provides quick access to Andamio with a set of command-line tools, so that developers can build upon Andamio.
 
 Developers can:
 
