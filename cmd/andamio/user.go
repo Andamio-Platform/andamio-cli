@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -360,7 +360,7 @@ func authSuccessHTML(alias string) string {
     <p>Welcome, <strong>%s</strong>!</p>
     <p>You can close this window and return to the terminal.</p>
 </body>
-</html>`, alias)
+</html>`, html.EscapeString(alias))
 }
 
 // authFailureHTML returns HTML for failed authentication
@@ -382,34 +382,7 @@ func authFailureHTML(errMsg string) string {
     <p>%s</p>
     <p>Please close this window and try again.</p>
 </body>
-</html>`, errMsg)
-}
-
-// parseJWTExpiry extracts the expiry time from a JWT (without verifying signature)
-func parseJWTExpiry(jwt string) (time.Time, error) {
-	parts := strings.Split(jwt, ".")
-	if len(parts) != 3 {
-		return time.Time{}, fmt.Errorf("invalid JWT format")
-	}
-
-	// Decode payload (second part)
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to decode JWT payload: %w", err)
-	}
-
-	var claims struct {
-		Exp int64 `json:"exp"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse JWT claims: %w", err)
-	}
-
-	if claims.Exp == 0 {
-		return time.Time{}, fmt.Errorf("no expiry in JWT")
-	}
-
-	return time.Unix(claims.Exp, 0), nil
+</html>`, html.EscapeString(errMsg))
 }
 
 func min(a, b int) int {
