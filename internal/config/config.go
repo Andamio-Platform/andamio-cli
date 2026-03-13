@@ -13,7 +13,7 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	return &Config{
-		BaseURL: "https://api.andamio.io",
+		BaseURL: "https://preprod.api.andamio.io",
 	}
 }
 

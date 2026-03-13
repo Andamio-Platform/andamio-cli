@@ -1,6 +1,9 @@
 # Binary
 andamio
 
+# Fetched spec
+openapi.json
+
 # IDE
 .idea/
 .vscode/
