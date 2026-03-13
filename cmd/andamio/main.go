@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
 )
+
+var outputFormat string
 
 var rootCmd = &cobra.Command{
 	Use:   "andamio",
@@ -13,6 +16,13 @@ var rootCmd = &cobra.Command{
 	Long: `Andamio CLI provides commands for interacting with the Andamio Protocol.
 
 Query courses, credentials, and more from the command line.`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		return output.SetFormat(outputFormat)
+	},
+}
+
+func init() {
+	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "text", "Output format: text, json, csv, markdown")
 }
 
 func main() {
