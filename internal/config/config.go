@@ -7,8 +7,25 @@ import (
 )
 
 type Config struct {
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url"`
+	APIKey       string `json:"api_key"`
+	BaseURL      string `json:"base_url"`
+	UserJWT      string `json:"user_jwt,omitempty"`
+	JWTExpiresAt string `json:"jwt_expires_at,omitempty"`
+	UserAlias    string `json:"user_alias,omitempty"`
+	UserID       string `json:"user_id,omitempty"`
+}
+
+// ClearUserAuth removes all user authentication fields from the config.
+func (c *Config) ClearUserAuth() {
+	c.UserJWT = ""
+	c.JWTExpiresAt = ""
+	c.UserAlias = ""
+	c.UserID = ""
+}
+
+// HasUserAuth returns true if the config has a user JWT stored.
+func (c *Config) HasUserAuth() bool {
+	return c.UserJWT != ""
 }
 
 func DefaultConfig() *Config {
