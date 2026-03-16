@@ -71,10 +71,10 @@ After login, verify JWT is sent with requests:
 ./andamio user logout
 ```
 
-- [ ] Prints "Logged out successfully (was: {alias})"
-- [ ] `./andamio user status` shows "User: not authenticated"
-- [ ] `~/.andamio/config.json` no longer has `user_jwt`, `user_alias`, `user_id`
-- [ ] API key remains intact after logout
+- [x] Prints "Logged out successfully (was: {alias})"
+- [x] `./andamio user status` shows "User: not authenticated"
+- [x] `~/.andamio/config.json` no longer has `user_jwt`, `user_alias`, `user_id`
+- [x] API key remains intact after logout
 
 ### 4. Already Authenticated Guard
 
@@ -83,9 +83,9 @@ After login, verify JWT is sent with requests:
 ./andamio user login   # second login attempt
 ```
 
-- [ ] Second attempt prints "Already authenticated as: {alias}"
-- [ ] Does not open browser again
-- [ ] Suggests running `andamio user logout` first
+- [x] Second attempt prints "Already authenticated as: {alias}"
+- [x] Does not open browser again
+- [x] Suggests running `andamio user logout` first
 
 ### 5. User Cancels in Browser
 
