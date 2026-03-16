@@ -365,11 +365,20 @@ func convertLessonToMarkdown(lesson map[string]interface{}) (string, []string) {
 
 func convertContentToMarkdown(resp map[string]interface{}) (string, []string) {
 	// Handle introduction/assignment response structure
+	// API returns: { "data": { "content": { "content_json": {...} } } }
 	var contentJSON map[string]interface{}
 
 	if data, ok := resp["data"].(map[string]interface{}); ok {
-		if cj, ok := data["content_json"].(map[string]interface{}); ok {
-			contentJSON = cj
+		if content, ok := data["content"].(map[string]interface{}); ok {
+			if cj, ok := content["content_json"].(map[string]interface{}); ok {
+				contentJSON = cj
+			}
+		}
+		// Fallback: try direct content_json on data (in case API changes)
+		if contentJSON == nil {
+			if cj, ok := data["content_json"].(map[string]interface{}); ok {
+				contentJSON = cj
+			}
 		}
 	}
 
