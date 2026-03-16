@@ -16,6 +16,7 @@ go install github.com/Andamio-Platform/andamio-cli/cmd/andamio@latest
 
 Verify installation:
 ```bash
+andamio --version
 andamio --help
 ```
 
@@ -36,22 +37,6 @@ andamio user status
 andamio course list
 ```
 
-## Quick Start
-
-```bash
-# Set up API key (for read access)
-andamio auth login --api-key <your-api-key>
-
-# Authenticate with wallet (for edit access)
-andamio user login
-
-# List courses
-andamio course list
-
-# Get course details
-andamio course get <course-id>
-```
-
 ## Authentication
 
 The CLI supports two authentication methods:
@@ -62,8 +47,6 @@ The CLI supports two authentication methods:
 | **User JWT** | Edit courses/projects you own | `andamio user login` |
 
 ### Getting a User JWT (Wallet Authentication)
-
-> **Note:** Wallet authentication requires [andamio-app-v2#439](https://github.com/Andamio-Platform/andamio-app-v2/issues/439) to be deployed.
 
 To edit courses or projects, authenticate with your Cardano wallet:
 
@@ -113,8 +96,8 @@ andamio user logout
 - `course lesson <course-id> <module-code> <slt-index>` — Get lesson content
 - `course assignment <course-id> <module-code>` — Get assignment
 - `course intro <course-id> <module-code>` — Get module introduction
-- `course export <course-id> <module-code>` — Export module to local directory (requires user login)
-- `course import <path> --course-id <id>` — Import module from local directory (requires user login)
+- `course export <course-id> <module-code>` — Export module to local directory
+- `course import <path> --course-id <id>` — Import module from local directory
 
 ### `andamio project`
 
@@ -153,16 +136,32 @@ andamio course export <course-id> <module-code>
 
 # Export to a custom directory
 andamio course export <course-id> <module-code> --output-dir ./my-courses
+
+# Force overwrite existing export
+andamio course export <course-id> <module-code> --force
+
+# JSON output (for scripting)
+andamio course export <course-id> <module-code> --output json
 ```
+
+Export works for modules in any status (DRAFT, APPROVED, ON_CHAIN).
 
 ### Import
 
 ```bash
 # Import a locally-edited module back to the platform
 andamio course import ./compiled/my-course/101 --course-id <course-id>
+
+# JSON output
+andamio course import ./compiled/my-course/101 --course-id <id> --output json
 ```
 
-> **Note:** Image upload is not yet supported. Local images in `assets/` will be skipped with a warning. External image URLs (http/https) are preserved.
+Import automatically:
+- Extracts `# H1` headings as titles for lessons, introduction, and assignment
+- Uploads new images to the CDN (PNG, JPG, GIF, WebP — max 5MB each)
+- Preserves existing CDN image URLs via the image manifest
+- Preserves existing metadata (description, image_url, video_url) not present in markdown
+- Skips SLT updates for approved/published modules (SLTs are locked after approval)
 
 ### Directory Structure
 
@@ -171,13 +170,69 @@ Both commands use this structure (compatible with lesson-coach `/compile` skill)
 ```
 compiled/<course-slug>/<module-code>/
 ├── outline.md          # YAML frontmatter (title, code) + SLT list
-├── introduction.md     # Module introduction (if exists)
+├── introduction.md     # Module introduction (optional)
 ├── lesson-1.md         # Lesson for SLT 1
 ├── lesson-2.md         # Lesson for SLT 2
 ├── ...
-├── assignment.md       # Module assignment (if exists)
+├── assignment.md       # Module assignment (optional)
 └── assets/             # Images referenced in content
-    └── *.png
+    ├── *.png
+    └── .image-manifest.json  # Maps filenames to CDN URLs
+```
+
+### File Format
+
+**outline.md** — YAML frontmatter with `title` and `code`, plus numbered SLT list:
+```markdown
+---
+title: "Introduction to Cardano"
+code: "101"
+---
+
+# Introduction to Cardano
+
+## SLTs
+
+1. Understand blockchain fundamentals
+2. Set up a Cardano wallet
+```
+
+**lesson-N.md** — First `# H1` becomes the lesson title, rest is content:
+```markdown
+# Understanding Blockchain
+
+A blockchain is a distributed ledger...
+
+## Key Concepts
+
+- Decentralization
+- Immutability
+```
+
+**introduction.md** / **assignment.md** — Same format as lessons (H1 = title).
+
+### Image Handling
+
+**Exported images:** Downloaded to `assets/` with a `.image-manifest.json` mapping filenames to their original CDN URLs. On re-import, the manifest restores the original URLs — no re-upload needed.
+
+**New images:** Place new images in `assets/` and reference them in markdown as `![alt](assets/filename.png)`. On import, new images (not in the manifest) are automatically uploaded to the CDN via the app server. The manifest is updated on disk so future imports don't re-upload.
+
+**Supported formats:** PNG, JPEG, GIF, WebP (max 5MB per image).
+
+### Round-Trip Workflow
+
+```bash
+# 1. Export
+andamio course export <course-id> <module-code>
+
+# 2. Edit locally
+vim compiled/my-course/101/lesson-1.md
+
+# 3. Add new images (optional)
+cp diagram.png compiled/my-course/101/assets/
+
+# 4. Import back
+andamio course import compiled/my-course/101 --course-id <course-id>
 ```
 
 ### Use Cases
@@ -186,6 +241,18 @@ compiled/<course-slug>/<module-code>/
 - **Version control:** Track course materials in git
 - **Round-trip editing:** Export → modify → import
 - **Lesson coach integration:** Import modules compiled by lesson-coach
+- **Bulk content updates:** Edit multiple lessons at once, import all changes atomically
+
+## Output Formats
+
+All commands support `--output` (`-o`) flag:
+
+```bash
+andamio course list                  # Default text output
+andamio course list -o json          # JSON (for scripting/piping)
+andamio course list -o csv           # CSV
+andamio course list -o markdown      # Markdown table
+```
 
 ## Configuration
 
@@ -214,9 +281,13 @@ Available environments:
 # Build
 go build -o andamio ./cmd/andamio
 
+# Build with version info
+go build -ldflags "-X main.version=0.1.0 -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o andamio ./cmd/andamio
+
 # Fetch latest API spec
 ./andamio spec fetch
 
 # Run locally
 ./andamio --help
+./andamio --version
 ```

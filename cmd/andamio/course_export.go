@@ -16,6 +16,7 @@ import (
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -55,9 +56,23 @@ func init() {
 	courseExportCmd.Flags().Bool("force", false, "Overwrite existing directory")
 }
 
+// ExportResult holds the result of an export operation for structured output
+type ExportResult struct {
+	CourseID   string   `json:"course_id"`
+	CourseSlug string   `json:"course_slug"`
+	ModuleCode string   `json:"module_code"`
+	Title      string   `json:"title"`
+	Status     string   `json:"status"`
+	OutputDir  string   `json:"output_dir"`
+	Files      []string `json:"files"`
+	Images     int      `json:"images"`
+	SLTs       []string `json:"slts"`
+}
+
 func runCourseExport(cmd *cobra.Command, args []string) error {
 	courseID := args[0]
 	moduleCode := args[1]
+	isJSON := output.GetFormat() == output.FormatJSON
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -66,23 +81,19 @@ func runCourseExport(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 
-	// Fetch course info to get slug
-	fmt.Printf("Fetching course %s...\n", courseID)
-	var courseResp map[string]interface{}
-	if err := c.Get("/api/v2/course/user/course/get/"+url.PathEscape(courseID), &courseResp); err != nil {
-		return fmt.Errorf("failed to fetch course: %w", err)
+	// Single teacher endpoint fetches everything
+	if !isJSON {
+		fmt.Printf("Fetching module %s from course %s...\n", moduleCode, courseID)
 	}
-
-	// Extract course slug from response
-	courseSlug := extractCourseSlug(courseResp)
-	if courseSlug == "" {
-		courseSlug = courseID // Fallback to ID if no slug
+	moduleData, err := fetchModuleData(c, courseID, moduleCode)
+	if err != nil {
+		return err
 	}
 
 	// Determine output directory
 	outputDir, _ := cmd.Flags().GetString("output-dir")
 	if outputDir == "" {
-		outputDir = filepath.Join("compiled", courseSlug, moduleCode)
+		outputDir = filepath.Join("compiled", moduleData.CourseSlug, moduleCode)
 	}
 
 	// Check if output directory exists
@@ -91,31 +102,63 @@ func runCourseExport(cmd *cobra.Command, args []string) error {
 		if !force {
 			return fmt.Errorf("output directory exists: %s. Use --force to overwrite", outputDir)
 		}
-		fmt.Printf("Warning: overwriting existing directory %s\n", outputDir)
+		if !isJSON {
+			fmt.Printf("Warning: overwriting existing directory %s\n", outputDir)
+		}
 	}
 
-	// Fetch module data
-	fmt.Printf("Fetching module %s...\n", moduleCode)
-	moduleData, err := fetchModuleData(c, courseID, moduleCode)
+	// Write compiled module
+	result, err := writeCompiledModule(outputDir, moduleData)
 	if err != nil {
 		return err
 	}
 
-	// Write compiled module
-	fmt.Printf("Writing to %s...\n", outputDir)
-	if err := writeCompiledModule(outputDir, moduleData); err != nil {
-		return err
+	// Build structured result
+	sltTexts := make([]string, len(moduleData.SLTs))
+	for i, slt := range moduleData.SLTs {
+		sltTexts[i] = slt.Text
 	}
 
-	fmt.Printf("Exported module %s to %s\n", moduleCode, outputDir)
+	exportResult := ExportResult{
+		CourseID:   courseID,
+		CourseSlug: moduleData.CourseSlug,
+		ModuleCode: moduleCode,
+		Title:      moduleData.Title,
+		Status:     moduleData.Status,
+		OutputDir:  outputDir,
+		Files:      result.Files,
+		Images:     result.Images,
+		SLTs:       sltTexts,
+	}
+
+	if isJSON {
+		return output.PrintJSON(exportResult)
+	}
+
+	// Text TUI output
+	fmt.Println()
+	fmt.Printf("  Module:  %s (%s)\n", moduleData.Title, moduleCode)
+	fmt.Printf("  Status:  %s\n", moduleData.Status)
+	fmt.Printf("  Path:    %s\n", outputDir)
+	fmt.Println()
+	fmt.Println("  Files:")
+	for _, f := range result.Files {
+		fmt.Printf("    %s\n", f)
+	}
+	if result.Images > 0 {
+		fmt.Printf("\n  Images:  %d downloaded to assets/\n", result.Images)
+	}
+	fmt.Println()
 	return nil
 }
 
 // ModuleData holds all the data for a module export
 type ModuleData struct {
 	CourseID     string
+	CourseSlug   string
 	ModuleCode   string
 	Title        string
+	Status       string
 	SLTs         []SLTData
 	Introduction map[string]interface{}
 	Assignment   map[string]interface{}
@@ -129,26 +172,11 @@ type SLTData struct {
 	Lesson map[string]interface{}
 }
 
-func extractCourseSlug(courseResp map[string]interface{}) string {
-	// Try to get slug from response - adjust based on actual API response structure
-	if content, ok := courseResp["content"].(map[string]interface{}); ok {
-		if slug, ok := content["slug"].(string); ok {
-			return slug
-		}
-		if title, ok := content["title"].(string); ok {
-			// Convert title to slug
-			return slugify(title)
-		}
-	}
-	if slug, ok := courseResp["slug"].(string); ok {
-		return slug
-	}
-	return ""
-}
+var slugifyRe = regexp.MustCompile(`[^a-z0-9]+`)
 
 func slugify(s string) string {
 	s = strings.ToLower(s)
-	s = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(s, "-")
+	s = slugifyRe.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	return s
 }
@@ -159,48 +187,73 @@ func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData
 		ModuleCode: moduleCode,
 	}
 
-	// Fetch module list to get module title
-	var modulesResp map[string]interface{}
-	if err := c.Get("/api/v2/course/user/modules/"+url.PathEscape(courseID), &modulesResp); err != nil {
-		return nil, fmt.Errorf("failed to fetch modules: %w", err)
-	}
-	if modules, ok := modulesResp["data"].([]interface{}); ok {
-		for _, m := range modules {
-			mod, ok := m.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			if content, ok := mod["content"].(map[string]interface{}); ok {
-				if code, ok := content["course_module_code"].(string); ok && code == moduleCode {
-					if title, ok := content["title"].(string); ok {
-						data.Title = title
+	// Fetch course slug from teacher courses list
+	var coursesResp map[string]interface{}
+	if err := c.Post("/api/v2/course/teacher/courses/list", nil, &coursesResp); err == nil {
+		if courses, ok := coursesResp["data"].([]interface{}); ok {
+			for _, course := range courses {
+				courseMap, ok := course.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if id, ok := courseMap["course_id"].(string); ok && id == courseID {
+					if content, ok := courseMap["content"].(map[string]interface{}); ok {
+						if title, ok := content["title"].(string); ok {
+							data.CourseSlug = slugify(title)
+						}
 					}
 					break
 				}
 			}
 		}
 	}
-
-	// Fetch SLTs with embedded lessons
-	var sltsResp map[string]interface{}
-	if err := c.Get("/api/v2/course/user/slts/"+url.PathEscape(courseID)+"/"+url.PathEscape(moduleCode), &sltsResp); err != nil {
-		return nil, fmt.Errorf("failed to fetch SLTs: %w", err)
+	if data.CourseSlug == "" {
+		data.CourseSlug = courseID
 	}
 
-	// Extract data wrapper - response is { "data": { "slts": [...] } }
-	dataWrapper, ok := sltsResp["data"].(map[string]interface{})
+	// Fetch all modules with full content (draft + on-chain) in one call
+	var modulesResp map[string]interface{}
+	reqBody := map[string]string{"course_id": courseID}
+	if err := c.Post("/api/v2/course/teacher/course-modules/list", reqBody, &modulesResp); err != nil {
+		return nil, fmt.Errorf("failed to fetch modules: %w", err)
+	}
+
+	// Find the target module in the response
+	modules, ok := modulesResp["data"].([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("unexpected response format: missing data wrapper")
+		return nil, fmt.Errorf("unexpected response format: missing data array")
 	}
 
-	// Extract SLTs array from data.slts
-	sltsData, ok := dataWrapper["slts"].([]interface{})
-	if !ok {
-		sltsData = []interface{}{}
+	var moduleContent map[string]interface{}
+	for _, m := range modules {
+		mod, ok := m.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		content, ok := mod["content"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if code, ok := content["course_module_code"].(string); ok && code == moduleCode {
+			moduleContent = content
+			break
+		}
 	}
 
-	// SLTs and lessons are embedded in the response - no separate fetch needed
-	fmt.Printf("Processing %d lessons...\n", len(sltsData))
+	if moduleContent == nil {
+		return nil, fmt.Errorf("module '%s' not found in course '%s'", moduleCode, courseID)
+	}
+
+	// Extract title and status
+	if title, ok := moduleContent["title"].(string); ok {
+		data.Title = title
+	}
+	if status, ok := moduleContent["module_status"].(string); ok {
+		data.Status = status
+	}
+
+	// Extract SLTs with embedded lessons from content.slts[]
+	sltsData, _ := moduleContent["slts"].([]interface{})
 	data.SLTs = make([]SLTData, len(sltsData))
 
 	for i, sltItem := range sltsData {
@@ -215,7 +268,7 @@ func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData
 			sltText = text
 		}
 
-		// Extract embedded lesson content - lessons are already in SLT response
+		// Extract embedded lesson content (LessonV2 with content_json)
 		var lessonContent map[string]interface{}
 		if lesson, ok := sltMap["lesson"].(map[string]interface{}); ok {
 			if contentJSON, ok := lesson["content_json"].(map[string]interface{}); ok {
@@ -230,31 +283,54 @@ func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData
 		}
 	}
 
-	// Fetch introduction (optional - may 404)
-	var introResp map[string]interface{}
-	if err := c.Get("/api/v2/course/user/introduction/"+url.PathEscape(courseID)+"/"+url.PathEscape(moduleCode), &introResp); err == nil {
-		data.Introduction = introResp
+	// Extract introduction from module content (already inline)
+	if intro, ok := moduleContent["introduction"].(map[string]interface{}); ok {
+		if contentJSON, ok := intro["content_json"].(map[string]interface{}); ok {
+			// Wrap in the structure convertContentToMarkdown expects
+			data.Introduction = map[string]interface{}{
+				"data": map[string]interface{}{
+					"content": map[string]interface{}{
+						"content_json": contentJSON,
+					},
+				},
+			}
+		}
 	}
 
-	// Fetch assignment (optional - may 404)
-	var assignResp map[string]interface{}
-	if err := c.Get("/api/v2/course/user/assignment/"+url.PathEscape(courseID)+"/"+url.PathEscape(moduleCode), &assignResp); err == nil {
-		data.Assignment = assignResp
+	// Extract assignment from module content (already inline)
+	if assign, ok := moduleContent["assignment"].(map[string]interface{}); ok {
+		if contentJSON, ok := assign["content_json"].(map[string]interface{}); ok {
+			data.Assignment = map[string]interface{}{
+				"data": map[string]interface{}{
+					"content": map[string]interface{}{
+						"content_json": contentJSON,
+					},
+				},
+			}
+		}
 	}
 
 	return data, nil
 }
 
-func writeCompiledModule(outputDir string, data *ModuleData) error {
+// WriteResult tracks what was written during export
+type WriteResult struct {
+	Files  []string
+	Images int
+}
+
+func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, error) {
+	result := &WriteResult{}
+
 	// Validate output directory path
 	absDir, err := filepath.Abs(outputDir)
 	if err != nil {
-		return fmt.Errorf("invalid output directory: %w", err)
+		return nil, fmt.Errorf("invalid output directory: %w", err)
 	}
 
 	// Create output directory
 	if err := os.MkdirAll(absDir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
+		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	// Collect image URLs for downloading
@@ -264,8 +340,9 @@ func writeCompiledModule(outputDir string, data *ModuleData) error {
 	outlinePath := filepath.Join(absDir, "outline.md")
 	outlineContent := generateOutline(data)
 	if err := writeFileAtomic(outlinePath, []byte(outlineContent)); err != nil {
-		return fmt.Errorf("failed to write outline.md: %w", err)
+		return nil, fmt.Errorf("failed to write outline.md: %w", err)
 	}
+	result.Files = append(result.Files, "outline.md")
 
 	// Write lesson files
 	for _, slt := range data.SLTs {
@@ -273,13 +350,15 @@ func writeCompiledModule(outputDir string, data *ModuleData) error {
 			continue
 		}
 
-		lessonPath := filepath.Join(absDir, fmt.Sprintf("lesson-%d.md", slt.Index))
+		filename := fmt.Sprintf("lesson-%d.md", slt.Index)
+		lessonPath := filepath.Join(absDir, filename)
 		lessonContent, urls := convertLessonToMarkdown(slt.Lesson)
 		imageURLs = append(imageURLs, urls...)
 
 		if err := writeFileAtomic(lessonPath, []byte(lessonContent)); err != nil {
-			return fmt.Errorf("failed to write lesson-%d.md: %w", slt.Index, err)
+			return nil, fmt.Errorf("failed to write %s: %w", filename, err)
 		}
+		result.Files = append(result.Files, filename)
 	}
 
 	// Write introduction.md if present
@@ -289,8 +368,9 @@ func writeCompiledModule(outputDir string, data *ModuleData) error {
 		imageURLs = append(imageURLs, urls...)
 
 		if err := writeFileAtomic(introPath, []byte(introContent)); err != nil {
-			return fmt.Errorf("failed to write introduction.md: %w", err)
+			return nil, fmt.Errorf("failed to write introduction.md: %w", err)
 		}
+		result.Files = append(result.Files, "introduction.md")
 	}
 
 	// Write assignment.md if present
@@ -300,29 +380,39 @@ func writeCompiledModule(outputDir string, data *ModuleData) error {
 		imageURLs = append(imageURLs, urls...)
 
 		if err := writeFileAtomic(assignPath, []byte(assignContent)); err != nil {
-			return fmt.Errorf("failed to write assignment.md: %w", err)
+			return nil, fmt.Errorf("failed to write assignment.md: %w", err)
 		}
+		result.Files = append(result.Files, "assignment.md")
 	}
 
 	// Download images if any
 	if len(imageURLs) > 0 {
 		assetsDir := filepath.Join(absDir, "assets")
 		if err := os.MkdirAll(assetsDir, 0755); err != nil {
-			return fmt.Errorf("failed to create assets directory: %w", err)
+			return nil, fmt.Errorf("failed to create assets directory: %w", err)
 		}
 
 		if err := downloadImages(assetsDir, imageURLs); err != nil {
-			// Log warning but don't fail
-			fmt.Printf("Warning: some images failed to download: %v\n", err)
+			if output.GetFormat() != output.FormatJSON {
+				fmt.Printf("Warning: some images failed to download: %v\n", err)
+			}
 		}
 
-		// Write image manifest mapping filenames to original URLs
 		if err := writeImageManifest(assetsDir, imageURLs); err != nil {
-			fmt.Printf("Warning: failed to write image manifest: %v\n", err)
+			if output.GetFormat() != output.FormatJSON {
+				fmt.Printf("Warning: failed to write image manifest: %v\n", err)
+			}
 		}
+
+		// Count unique images
+		seen := make(map[string]bool)
+		for _, u := range imageURLs {
+			seen[u] = true
+		}
+		result.Images = len(seen)
 	}
 
-	return nil
+	return result, nil
 }
 
 // writeImageManifest writes a .image-manifest.json mapping local filenames to original URLs.
@@ -356,8 +446,8 @@ func generateOutline(data *ModuleData) string {
 
 	// YAML frontmatter
 	buf.WriteString("---\n")
-	buf.WriteString(fmt.Sprintf("title: %s\n", data.Title))
-	buf.WriteString(fmt.Sprintf("code: %s\n", data.ModuleCode))
+	buf.WriteString(fmt.Sprintf("title: %q\n", data.Title))
+	buf.WriteString(fmt.Sprintf("code: %q\n", data.ModuleCode))
 	buf.WriteString("---\n\n")
 
 	// Title heading
@@ -735,7 +825,9 @@ func downloadImages(assetsDir string, urls []string) error {
 		return nil
 	}
 
-	fmt.Printf("Downloading %d images...\n", len(uniqueURLs))
+	if output.GetFormat() != output.FormatJSON {
+		fmt.Printf("Downloading %d images...\n", len(uniqueURLs))
+	}
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 3) // 3 concurrent downloads
@@ -747,11 +839,15 @@ func downloadImages(assetsDir string, urls []string) error {
 		// Validate URL (HTTPS only for security)
 		parsed, err := url.Parse(imgURL)
 		if err != nil {
-			fmt.Printf("Warning: invalid image URL: %s\n", imgURL)
+			if output.GetFormat() != output.FormatJSON {
+				fmt.Printf("Warning: invalid image URL: %s\n", imgURL)
+			}
 			continue
 		}
 		if parsed.Scheme != "https" && parsed.Scheme != "http" {
-			fmt.Printf("Warning: skipping non-HTTP URL: %s\n", imgURL)
+			if output.GetFormat() != output.FormatJSON {
+				fmt.Printf("Warning: skipping non-HTTP URL: %s\n", imgURL)
+			}
 			continue
 		}
 
@@ -793,7 +889,9 @@ func downloadImages(assetsDir string, urls []string) error {
 				return
 			}
 
-			fmt.Printf("  Downloaded %s\n", filename)
+			if output.GetFormat() != output.FormatJSON {
+				fmt.Printf("  Downloaded %s\n", filename)
+			}
 		}(imgURL)
 	}
 
