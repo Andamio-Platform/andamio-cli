@@ -17,22 +17,29 @@ var configSetURLCmd = &cobra.Command{
 	Short: "Set the API base URL",
 	Long: `Set the API base URL. Common values:
   - https://preprod.api.andamio.io (preprod, default)
-  - https://mainnet.api.andamio.io (mainnet)`,
+  - https://mainnet.api.andamio.io (mainnet)
+
+Set ANDAMIO_ALLOW_ANY_URL=1 to allow non-andamio.io URLs for testing.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		url := args[0]
+		rawURL := args[0]
+
+		// Use shared URL validation (supports ANDAMIO_ALLOW_ANY_URL override)
+		if err := config.ValidateBaseURL(rawURL); err != nil {
+			return err
+		}
 
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
 
-		cfg.BaseURL = url
+		cfg.BaseURL = rawURL
 		if err := config.Save(cfg); err != nil {
 			return err
 		}
 
-		fmt.Printf("Base URL set to: %s\n", url)
+		fmt.Printf("Base URL set to: %s\n", rawURL)
 		return nil
 	},
 }
@@ -48,7 +55,7 @@ var configShowCmd = &cobra.Command{
 
 		fmt.Printf("Base URL: %s\n", cfg.BaseURL)
 		if cfg.APIKey != "" {
-			fmt.Printf("API Key:  %s...\n", cfg.APIKey[:8])
+			fmt.Println("API Key:  ****... (configured)")
 		} else {
 			fmt.Println("API Key:  (not set)")
 		}
