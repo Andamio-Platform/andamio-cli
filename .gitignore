@@ -10,3 +10,6 @@ openapi.json
 
 # OS
 .DS_Store
+
+# Export output
+compiled/
