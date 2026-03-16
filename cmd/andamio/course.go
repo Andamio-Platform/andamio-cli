@@ -19,31 +19,7 @@ var courseListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available courses",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-
-		c := client.New(cfg)
-		var response map[string]interface{}
-		if err := c.Get("/api/v2/course/user/courses/list", &response); err != nil {
-			return err
-		}
-
-		data, ok := response["data"].([]interface{})
-		if !ok || len(data) == 0 {
-			fmt.Println("No courses found.")
-			return nil
-		}
-
-		items := make([]map[string]interface{}, 0, len(data))
-		for _, item := range data {
-			if course, ok := item.(map[string]interface{}); ok {
-				items = append(items, course)
-			}
-		}
-
-		return output.PrintList(items, "content.title", "course_id")
+		return printList("/api/v2/course/user/courses/list", "No courses found.", "content.title", "course_id", false)
 	},
 }
 
@@ -142,4 +118,39 @@ func postJSON(path string) error {
 	}
 
 	return output.PrintJSON(result)
+}
+
+// printList fetches a list endpoint and prints using PrintList
+func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	c := client.New(cfg)
+	var response map[string]interface{}
+	var reqErr error
+	if usePost {
+		reqErr = c.Post(path, nil, &response)
+	} else {
+		reqErr = c.Get(path, &response)
+	}
+	if reqErr != nil {
+		return reqErr
+	}
+
+	data, ok := response["data"].([]interface{})
+	if !ok || len(data) == 0 {
+		fmt.Println(emptyMsg)
+		return nil
+	}
+
+	items := make([]map[string]interface{}, 0, len(data))
+	for _, item := range data {
+		if m, ok := item.(map[string]interface{}); ok {
+			items = append(items, m)
+		}
+	}
+
+	return output.PrintList(items, titleKey, idKey)
 }

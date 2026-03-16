@@ -4,8 +4,36 @@ CLI for interacting with the Andamio Protocol.
 
 ## Installation
 
+### Requirements
+
+- Go 1.21+ ([install Go](https://go.dev/doc/install))
+
+### Install
+
 ```bash
 go install github.com/Andamio-Platform/andamio-cli/cmd/andamio@latest
+```
+
+Verify installation:
+```bash
+andamio --help
+```
+
+## Quick Start (Andamio Pioneers)
+
+```bash
+# 1. Install the CLI
+go install github.com/Andamio-Platform/andamio-cli/cmd/andamio@latest
+
+# 2. Configure your API key (get one from your Andamio dashboard)
+andamio auth login --api-key <your-api-key>
+
+# 3. Authenticate with your wallet (for editing courses/projects)
+andamio user login
+
+# 4. Verify everything works
+andamio user status
+andamio course list
 ```
 
 ## Quick Start
