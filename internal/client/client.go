@@ -6,8 +6,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
+)
+
+const (
+	// httpTimeout is the default timeout for HTTP requests
+	httpTimeout = 30 * time.Second
+	// maxErrorBodySize limits error response body to prevent log flooding
+	maxErrorBodySize = 500
 )
 
 type Client struct {
@@ -22,7 +30,7 @@ func New(cfg *config.Config) *Client {
 		baseURL:    cfg.BaseURL,
 		apiKey:     cfg.APIKey,
 		userJWT:    cfg.UserJWT,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: httpTimeout},
 	}
 }
 
@@ -49,7 +57,7 @@ func (c *Client) Get(path string, result interface{}) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("API error %d: %s", resp.StatusCode, truncateErrorBody(body))
 	}
 
 	return json.NewDecoder(resp.Body).Decode(result)
@@ -97,7 +105,7 @@ func (c *Client) Post(path string, body interface{}, result interface{}) error {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("API error %d: %s", resp.StatusCode, truncateErrorBody(respBody))
 	}
 
 	if result != nil {
@@ -137,11 +145,20 @@ func (c *Client) Put(path string, body interface{}, result interface{}) error {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("API error %d: %s", resp.StatusCode, truncateErrorBody(respBody))
 	}
 
 	if result != nil {
 		return json.NewDecoder(resp.Body).Decode(result)
 	}
 	return nil
+}
+
+// truncateErrorBody limits error message size to prevent log flooding and info leakage
+func truncateErrorBody(body []byte) string {
+	s := string(body)
+	if len(s) > maxErrorBodySize {
+		return s[:maxErrorBodySize] + "... (truncated)"
+	}
+	return s
 }

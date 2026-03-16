@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -51,7 +52,7 @@ var projectGetCmd = &cobra.Command{
 	Short: "Get project details",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/project/user/project/" + args[0])
+		return getJSON("/api/v2/project/user/project/" + url.PathEscape(args[0]))
 	},
 }
 

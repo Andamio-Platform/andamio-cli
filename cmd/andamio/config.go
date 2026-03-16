@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -20,19 +22,36 @@ var configSetURLCmd = &cobra.Command{
   - https://mainnet.api.andamio.io (mainnet)`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		url := args[0]
+		rawURL := args[0]
+
+		// Validate URL
+		parsed, err := url.Parse(rawURL)
+		if err != nil {
+			return fmt.Errorf("invalid URL: %w", err)
+		}
+
+		// Require HTTPS except for localhost
+		isLocalhost := parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1"
+		if parsed.Scheme != "https" && !isLocalhost {
+			return fmt.Errorf("URL must use HTTPS (got %s)", parsed.Scheme)
+		}
+
+		// Validate domain - must be andamio.io or localhost
+		if !isLocalhost && !strings.HasSuffix(parsed.Hostname(), ".andamio.io") {
+			return fmt.Errorf("URL must be an andamio.io domain or localhost (got %s)", parsed.Hostname())
+		}
 
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
 
-		cfg.BaseURL = url
+		cfg.BaseURL = rawURL
 		if err := config.Save(cfg); err != nil {
 			return err
 		}
 
-		fmt.Printf("Base URL set to: %s\n", url)
+		fmt.Printf("Base URL set to: %s\n", rawURL)
 		return nil
 	},
 }
@@ -48,7 +67,7 @@ var configShowCmd = &cobra.Command{
 
 		fmt.Printf("Base URL: %s\n", cfg.BaseURL)
 		if cfg.APIKey != "" {
-			fmt.Printf("API Key:  %s...\n", cfg.APIKey[:8])
+			fmt.Println("API Key:  ****... (configured)")
 		} else {
 			fmt.Println("API Key:  (not set)")
 		}

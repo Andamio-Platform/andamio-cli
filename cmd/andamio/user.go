@@ -26,7 +26,7 @@ var userMeCmd = &cobra.Command{
 	Use:   "me",
 	Short: "Get current user info",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v1/user/me")
+		return getJSON("/api/v2/apikey/developer/profile/get")
 	},
 }
 
@@ -34,7 +34,7 @@ var userUsageCmd = &cobra.Command{
 	Use:   "usage",
 	Short: "Get user usage stats",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v1/user/usage")
+		return getJSON("/api/v2/apikey/developer/usage/get")
 	},
 }
 
@@ -43,7 +43,7 @@ var userExistsCmd = &cobra.Command{
 	Short: "Check if user exists by alias",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/user/exists/" + args[0])
+		return getJSON("/api/v2/user/exists/" + url.PathEscape(args[0]))
 	},
 }
 
@@ -137,6 +137,12 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 	// Set up callback handler
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		// Only accept GET requests
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
 		result := authCallbackResult{}
 
 		// Check for error
@@ -271,7 +277,7 @@ func runUserStatus(cmd *cobra.Command, args []string) error {
 
 	// API Key status
 	if cfg.APIKey != "" {
-		fmt.Printf("API Key: %s... (configured)\n", cfg.APIKey[:min(8, len(cfg.APIKey))])
+		fmt.Println("API Key: ****... (configured)")
 	} else {
 		fmt.Println("API Key: not configured")
 	}
@@ -383,11 +389,4 @@ func authFailureHTML(errMsg string) string {
     <p>Please close this window and try again.</p>
 </body>
 </html>`, html.EscapeString(errMsg))
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

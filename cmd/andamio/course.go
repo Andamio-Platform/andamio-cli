@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -51,7 +52,7 @@ var courseGetCmd = &cobra.Command{
 	Short: "Get course details",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/course/user/course/get/" + args[0])
+		return getJSON("/api/v2/course/user/course/get/" + url.PathEscape(args[0]))
 	},
 }
 
@@ -60,7 +61,7 @@ var courseModulesCmd = &cobra.Command{
 	Short: "List modules for a course",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/course/user/modules/" + args[0])
+		return getJSON("/api/v2/course/user/modules/" + url.PathEscape(args[0]))
 	},
 }
 
@@ -69,7 +70,7 @@ var courseSltsCmd = &cobra.Command{
 	Short: "List SLTs for a course module",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/course/user/slts/" + args[0] + "/" + args[1])
+		return getJSON("/api/v2/course/user/slts/" + url.PathEscape(args[0]) + "/" + url.PathEscape(args[1]))
 	},
 }
 
@@ -78,7 +79,7 @@ var courseLessonCmd = &cobra.Command{
 	Short: "Get lesson content",
 	Args:  cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/course/user/lesson/" + args[0] + "/" + args[1] + "/" + args[2])
+		return getJSON("/api/v2/course/user/lesson/" + url.PathEscape(args[0]) + "/" + url.PathEscape(args[1]) + "/" + url.PathEscape(args[2]))
 	},
 }
 
@@ -87,7 +88,7 @@ var courseAssignmentCmd = &cobra.Command{
 	Short: "Get assignment for a course module",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/course/user/assignment/" + args[0] + "/" + args[1])
+		return getJSON("/api/v2/course/user/assignment/" + url.PathEscape(args[0]) + "/" + url.PathEscape(args[1]))
 	},
 }
 
@@ -96,7 +97,7 @@ var courseIntroCmd = &cobra.Command{
 	Short: "Get introduction for a course module",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/course/user/introduction/" + args[0] + "/" + args[1])
+		return getJSON("/api/v2/course/user/introduction/" + url.PathEscape(args[0]) + "/" + url.PathEscape(args[1]))
 	},
 }
 
@@ -121,6 +122,22 @@ func getJSON(path string) error {
 	c := client.New(cfg)
 	var result map[string]interface{}
 	if err := c.Get(path, &result); err != nil {
+		return err
+	}
+
+	return output.PrintJSON(result)
+}
+
+// postJSON is a helper for simple POST endpoints that return JSON (no body)
+func postJSON(path string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	c := client.New(cfg)
+	var result map[string]interface{}
+	if err := c.Post(path, nil, &result); err != nil {
 		return err
 	}
 
