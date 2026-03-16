@@ -271,6 +271,29 @@ andamio course import compiled/my-course/101 --course-id <course-id>
 - **Lesson coach integration:** Import modules compiled by lesson-coach
 - **Bulk content updates:** Edit multiple lessons at once, import all changes atomically
 
+## Networks
+
+The CLI works with two Cardano networks. Start on preprod for development.
+
+| | Preprod (default) | Mainnet |
+|---|---|---|
+| API | `https://preprod.api.andamio.io` | `https://mainnet.api.andamio.io` |
+| App | [preprod.app.andamio.io](https://preprod.app.andamio.io) | [app.andamio.io](https://app.andamio.io) |
+| API key | [preprod.app.andamio.io/api-setup](https://preprod.app.andamio.io/api-setup) | [app.andamio.io/api-setup](https://app.andamio.io/api-setup) |
+| Access Token | Free (test ADA) | Requires real ADA |
+
+Switch networks:
+
+```bash
+andamio config set-url https://mainnet.api.andamio.io
+```
+
+**Important:**
+- API keys are network-specific — a preprod key won't work on mainnet
+- Wallet auth (`user login`) connects to the app matching your current network
+- You need a separate Access Token on each network
+- When switching networks, re-authenticate: `andamio auth login --api-key <mainnet-key>`
+
 ## Output Formats
 
 All commands support `--output` (`-o`) flag:
