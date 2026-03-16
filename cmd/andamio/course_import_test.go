@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -337,68 +338,54 @@ func TestMarkdownToTiptapEmptyInput(t *testing.T) {
 	}
 }
 
-func TestResolveImageURL(t *testing.T) {
+func TestResolveManifestPaths(t *testing.T) {
 	manifest := map[string]string{
 		"diagram.png":    "https://cdn.andamio.io/images/abc/diagram.png",
 		"screenshot.png": "https://cdn.andamio.io/images/abc/screenshot.png",
 	}
 
 	tests := []struct {
-		name    string
-		src     string
-		want    string
-		wantOK  bool
+		name string
+		md   string
+		want string
 	}{
 		{
-			name:   "external URL passes through",
-			src:    "https://example.com/image.png",
-			want:   "https://example.com/image.png",
-			wantOK: true,
+			name: "replaces local asset path",
+			md:   "![A diagram](assets/diagram.png)",
+			want: "![A diagram](https://cdn.andamio.io/images/abc/diagram.png)",
 		},
 		{
-			name:   "local asset resolved via manifest",
-			src:    "assets/diagram.png",
-			want:   "https://cdn.andamio.io/images/abc/diagram.png",
-			wantOK: true,
+			name: "leaves external URLs unchanged",
+			md:   "![img](https://example.com/img.png)",
+			want: "![img](https://example.com/img.png)",
 		},
 		{
-			name:   "local asset not in manifest",
-			src:    "assets/new-image.png",
-			want:   "",
-			wantOK: false,
+			name: "leaves unknown assets unchanged",
+			md:   "![new](assets/new-image.png)",
+			want: "![new](assets/new-image.png)",
 		},
 		{
-			name:   "http URL passes through",
-			src:    "http://example.com/image.png",
-			want:   "http://example.com/image.png",
-			wantOK: true,
+			name: "replaces multiple occurrences",
+			md:   "![a](assets/diagram.png)\n\n![b](assets/screenshot.png)",
+			want: "![a](https://cdn.andamio.io/images/abc/diagram.png)\n\n![b](https://cdn.andamio.io/images/abc/screenshot.png)",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveImageURL(tt.src, "alt", manifest)
-			if tt.wantOK && got != tt.want {
-				t.Errorf("resolveImageURL() = %q, want %q", got, tt.want)
-			}
-			if !tt.wantOK && got != "" {
-				t.Errorf("resolveImageURL() = %q, want empty string", got)
+			got := resolveManifestPaths(tt.md, manifest)
+			if got != tt.want {
+				t.Errorf("resolveManifestPaths() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestResolveImageURLNilManifest(t *testing.T) {
-	// External URLs should still work with nil manifest
-	got := resolveImageURL("https://example.com/img.png", "alt", nil)
-	if got != "https://example.com/img.png" {
-		t.Errorf("resolveImageURL() with nil manifest = %q, want external URL", got)
-	}
-
-	// Local paths should return empty with nil manifest
-	got = resolveImageURL("assets/img.png", "alt", nil)
-	if got != "" {
-		t.Errorf("resolveImageURL() local with nil manifest = %q, want empty", got)
+func TestResolveManifestPathsNilManifest(t *testing.T) {
+	md := "![img](assets/img.png)"
+	got := resolveManifestPaths(md, nil)
+	if got != md {
+		t.Errorf("resolveManifestPaths() with nil manifest changed input: %q", got)
 	}
 }
 
@@ -492,5 +479,89 @@ func TestLoadImageManifestInvalidJSON(t *testing.T) {
 	manifest := loadImageManifest(dir)
 	if len(manifest) != 0 {
 		t.Errorf("expected empty manifest for invalid JSON, got %d entries", len(manifest))
+	}
+}
+
+func TestLoadImageManifestURLValidation(t *testing.T) {
+	dir := t.TempDir()
+	manifestData := []byte(`{
+		"good.png": "https://cdn.example.com/good.png",
+		"evil.png": "javascript:alert(1)",
+		"data.png": "data:image/png;base64,abc",
+		"http.png": "http://cdn.example.com/http.png"
+	}`)
+	if err := os.WriteFile(dir+"/.image-manifest.json", manifestData, 0644); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	manifest := loadImageManifest(dir)
+
+	// Only http/https URLs should be accepted
+	if _, ok := manifest["good.png"]; !ok {
+		t.Error("expected https URL to be accepted")
+	}
+	if _, ok := manifest["http.png"]; !ok {
+		t.Error("expected http URL to be accepted")
+	}
+	if _, ok := manifest["evil.png"]; ok {
+		t.Error("expected javascript: URL to be rejected")
+	}
+	if _, ok := manifest["data.png"]; ok {
+		t.Error("expected data: URL to be rejected")
+	}
+}
+
+func TestReadCompiledModuleWithManifest(t *testing.T) {
+	// Integration test: create a full compiled module directory with manifest
+	// and verify that readCompiledModule resolves image URLs correctly
+	dir := t.TempDir()
+
+	// Write outline.md
+	outline := "---\ntitle: Test Module\ncode: \"101\"\n---\n\n# Test Module\n\n## SLTs\n\n1. Learn about images\n"
+	if err := os.WriteFile(dir+"/outline.md", []byte(outline), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write lesson with local image reference
+	lesson := "# Lesson 1\n\nHere is an image:\n\n![A diagram](assets/diagram.png)\n"
+	if err := os.WriteFile(dir+"/lesson-1.md", []byte(lesson), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write manifest
+	if err := os.MkdirAll(dir+"/assets", 0755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"diagram.png": "https://cdn.andamio.io/images/abc/diagram.png"}`
+	if err := os.WriteFile(dir+"/assets/.image-manifest.json", []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := readCompiledModule(dir)
+	if err != nil {
+		t.Fatalf("readCompiledModule() error = %v", err)
+	}
+
+	// Verify the lesson's Tiptap JSON contains the resolved CDN URL, not a placeholder
+	if len(data.Lessons) != 1 {
+		t.Fatalf("expected 1 lesson, got %d", len(data.Lessons))
+	}
+
+	lessonJSON, err := json.Marshal(data.Lessons[0].TiptapJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lessonStr := string(lessonJSON)
+
+	if !strings.Contains(lessonStr, "https://cdn.andamio.io/images/abc/diagram.png") {
+		t.Errorf("expected resolved CDN URL in lesson Tiptap JSON, got: %s", lessonStr)
+	}
+	if strings.Contains(lessonStr, "[Image:") {
+		t.Errorf("found placeholder text instead of resolved image, got: %s", lessonStr)
+	}
+
+	// Verify no image warnings (diagram.png is in manifest)
+	if len(data.ImageWarnings) != 0 {
+		t.Errorf("expected no image warnings, got: %v", data.ImageWarnings)
 	}
 }

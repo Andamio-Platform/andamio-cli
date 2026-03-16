@@ -163,6 +163,23 @@ func readCompiledModule(dir string) (*ImportData, error) {
 	// Parse SLTs from outline content
 	data.SLTs = parseSLTsFromOutline(string(content))
 
+	// Load image manifest BEFORE converting any content
+	assetsDir := filepath.Join(dir, "assets")
+	data.ImageManifest = loadImageManifest(assetsDir)
+
+	// Check for images in assets/ that are NOT in the manifest (new images)
+	if info, err := os.Stat(assetsDir); err == nil && info.IsDir() {
+		files, _ := os.ReadDir(assetsDir)
+		for _, f := range files {
+			if f.IsDir() || f.Name() == ".image-manifest.json" {
+				continue
+			}
+			if _, inManifest := data.ImageManifest[f.Name()]; !inManifest {
+				data.ImageWarnings = append(data.ImageWarnings, f.Name())
+			}
+		}
+	}
+
 	// Read lesson files
 	lessonFiles, err := filepath.Glob(filepath.Join(dir, "lesson-*.md"))
 	if err != nil {
@@ -219,38 +236,36 @@ func readCompiledModule(dir string) (*ImportData, error) {
 		data.Assignment = tiptap
 	}
 
-	// Load image manifest if it exists
-	assetsDir := filepath.Join(dir, "assets")
-	data.ImageManifest = loadImageManifest(assetsDir)
-
-	// Check for images in assets/ that are NOT in the manifest (new images)
-	if info, err := os.Stat(assetsDir); err == nil && info.IsDir() {
-		files, _ := os.ReadDir(assetsDir)
-		for _, f := range files {
-			if f.IsDir() || f.Name() == ".image-manifest.json" {
-				continue
-			}
-			if _, inManifest := data.ImageManifest[f.Name()]; !inManifest {
-				data.ImageWarnings = append(data.ImageWarnings, f.Name())
-			}
-		}
-	}
-
 	return data, nil
 }
 
 // loadImageManifest reads .image-manifest.json from the assets directory.
-// Returns an empty map if the file doesn't exist or can't be parsed.
+// Returns an empty map if the file doesn't exist.
+// Warns on parse errors rather than silently degrading.
 func loadImageManifest(assetsDir string) map[string]string {
 	manifestPath := filepath.Join(assetsDir, ".image-manifest.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Printf("Warning: could not read image manifest: %v\n", err)
+		}
 		return make(map[string]string)
 	}
 
-	var manifest map[string]string
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	var raw map[string]string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		fmt.Printf("Warning: could not parse image manifest: %v\n", err)
 		return make(map[string]string)
+	}
+
+	// Validate manifest URLs — only trust http/https schemes
+	manifest := make(map[string]string, len(raw))
+	for filename, url := range raw {
+		if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
+			manifest[filename] = url
+		} else {
+			fmt.Printf("Warning: skipping manifest entry with invalid URL scheme: %s\n", filename)
+		}
 	}
 
 	return manifest
@@ -300,8 +315,13 @@ func extractLessonNumber(path string) int {
 }
 
 // markdownToTiptap converts Markdown to Tiptap JSON using goldmark.
-// The manifest maps local image filenames to their original CDN URLs.
+// The manifest maps local image filenames (e.g. "diagram.png") to their original CDN URLs.
+// Manifest URLs are resolved via string replacement before parsing, so the AST converter
+// only ever sees fully-qualified URLs.
 func markdownToTiptap(md string, manifest map[string]string) (map[string]interface{}, error) {
+	// Pre-process: replace local asset paths with original CDN URLs from manifest
+	md = resolveManifestPaths(md, manifest)
+
 	// Create goldmark parser with GFM extensions
 	gm := goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
@@ -314,7 +334,7 @@ func markdownToTiptap(md string, manifest map[string]string) (map[string]interfa
 	doc := gm.Parser().Parse(reader)
 
 	// Convert AST to Tiptap
-	content := convertNode(doc, []byte(md), manifest)
+	content := convertNode(doc, []byte(md))
 
 	return map[string]interface{}{
 		"type":    "doc",
@@ -322,11 +342,23 @@ func markdownToTiptap(md string, manifest map[string]string) (map[string]interfa
 	}, nil
 }
 
-func convertNode(n ast.Node, source []byte, manifest map[string]string) []interface{} {
+// resolveManifestPaths replaces local asset references with original CDN URLs.
+// e.g. "assets/diagram.png" → "https://cdn.andamio.io/images/abc/diagram.png"
+func resolveManifestPaths(md string, manifest map[string]string) string {
+	if len(manifest) == 0 {
+		return md
+	}
+	for filename, url := range manifest {
+		md = strings.ReplaceAll(md, "assets/"+filename, url)
+	}
+	return md
+}
+
+func convertNode(n ast.Node, source []byte) []interface{} {
 	var result []interface{}
 
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		node := convertSingleNode(child, source, manifest)
+		node := convertSingleNode(child, source)
 		if node != nil {
 			result = append(result, node)
 		}
@@ -335,10 +367,10 @@ func convertNode(n ast.Node, source []byte, manifest map[string]string) []interf
 	return result
 }
 
-func convertSingleNode(n ast.Node, source []byte, manifest map[string]string) map[string]interface{} {
+func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 	switch node := n.(type) {
 	case *ast.Paragraph:
-		content := convertInlineContent(node, source, manifest)
+		content := convertInlineContent(node, source)
 		if len(content) == 0 {
 			return nil
 		}
@@ -348,7 +380,7 @@ func convertSingleNode(n ast.Node, source []byte, manifest map[string]string) ma
 		}
 
 	case *ast.Heading:
-		content := convertInlineContent(node, source, manifest)
+		content := convertInlineContent(node, source)
 		return map[string]interface{}{
 			"type": "heading",
 			"attrs": map[string]interface{}{
@@ -362,7 +394,7 @@ func convertSingleNode(n ast.Node, source []byte, manifest map[string]string) ma
 		if node.IsOrdered() {
 			listType = "orderedList"
 		}
-		items := convertNode(node, source, manifest)
+		items := convertNode(node, source)
 		return map[string]interface{}{
 			"type":    listType,
 			"content": items,
@@ -370,7 +402,7 @@ func convertSingleNode(n ast.Node, source []byte, manifest map[string]string) ma
 
 	case *ast.ListItem:
 		// List items contain paragraphs and possibly nested lists
-		content := convertNode(node, source, manifest)
+		content := convertNode(node, source)
 		return map[string]interface{}{
 			"type":    "listItem",
 			"content": content,
@@ -416,7 +448,7 @@ func convertSingleNode(n ast.Node, source []byte, manifest map[string]string) ma
 		}
 
 	case *ast.Blockquote:
-		content := convertNode(node, source, manifest)
+		content := convertNode(node, source)
 		return map[string]interface{}{
 			"type":    "blockquote",
 			"content": content,
@@ -431,13 +463,12 @@ func convertSingleNode(n ast.Node, source []byte, manifest map[string]string) ma
 		src := string(node.Destination)
 		alt := string(node.Text(source))
 
-		// Resolve image URL: check manifest for local assets, pass through external URLs
-		resolvedURL := resolveImageURL(src, alt, manifest)
-		if resolvedURL != "" {
+		// External URLs (including manifest-resolved ones) → proper image node
+		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
 			return map[string]interface{}{
 				"type": "image",
 				"attrs": map[string]interface{}{
-					"src": resolvedURL,
+					"src": src,
 					"alt": alt,
 				},
 			}
@@ -460,7 +491,7 @@ func convertSingleNode(n ast.Node, source []byte, manifest map[string]string) ma
 	default:
 		// For unhandled block nodes, try to convert children
 		if n.HasChildren() {
-			content := convertNode(n, source, manifest)
+			content := convertNode(n, source)
 			if len(content) > 0 {
 				return content[0].(map[string]interface{})
 			}
@@ -470,18 +501,18 @@ func convertSingleNode(n ast.Node, source []byte, manifest map[string]string) ma
 	return nil
 }
 
-func convertInlineContent(n ast.Node, source []byte, manifest map[string]string) []interface{} {
+func convertInlineContent(n ast.Node, source []byte) []interface{} {
 	var result []interface{}
 
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		nodes := convertInlineNode(child, source, manifest)
+		nodes := convertInlineNode(child, source)
 		result = append(result, nodes...)
 	}
 
 	return result
 }
 
-func convertInlineNode(n ast.Node, source []byte, manifest map[string]string) []interface{} {
+func convertInlineNode(n ast.Node, source []byte) []interface{} {
 	switch node := n.(type) {
 	case *ast.Text:
 		text := string(node.Segment.Value(source))
@@ -526,7 +557,7 @@ func convertInlineNode(n ast.Node, source []byte, manifest map[string]string) []
 		// Collect child text with marks
 		var children []interface{}
 		for child := node.FirstChild(); child != nil; child = child.NextSibling() {
-			nodes := convertInlineNode(child, source, manifest)
+			nodes := convertInlineNode(child, source)
 			children = append(children, nodes...)
 		}
 
@@ -550,7 +581,7 @@ func convertInlineNode(n ast.Node, source []byte, manifest map[string]string) []
 		// Collect child text with strike mark
 		var children []interface{}
 		for child := node.FirstChild(); child != nil; child = child.NextSibling() {
-			nodes := convertInlineNode(child, source, manifest)
+			nodes := convertInlineNode(child, source)
 			children = append(children, nodes...)
 		}
 
@@ -611,14 +642,13 @@ func convertInlineNode(n ast.Node, source []byte, manifest map[string]string) []
 		src := string(node.Destination)
 		alt := string(node.Text(source))
 
-		// Resolve image URL: check manifest for local assets, pass through external URLs
-		resolvedURL := resolveImageURL(src, alt, manifest)
-		if resolvedURL != "" {
+		// External URLs (including manifest-resolved ones) → proper image node
+		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
 			return []interface{}{
 				map[string]interface{}{
 					"type": "image",
 					"attrs": map[string]interface{}{
-						"src": resolvedURL,
+						"src": src,
 						"alt": alt,
 					},
 				},
@@ -642,7 +672,7 @@ func convertInlineNode(n ast.Node, source []byte, manifest map[string]string) []
 		if n.HasChildren() {
 			var result []interface{}
 			for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-				nodes := convertInlineNode(child, source, manifest)
+				nodes := convertInlineNode(child, source)
 				result = append(result, nodes...)
 			}
 			return result
@@ -650,25 +680,6 @@ func convertInlineNode(n ast.Node, source []byte, manifest map[string]string) []
 	}
 
 	return nil
-}
-
-// resolveImageURL resolves an image source to a URL suitable for Tiptap JSON.
-// For external URLs (http/https), returns the URL as-is.
-// For local paths (assets/filename.png), looks up the original URL in the manifest.
-// Returns "" if the image cannot be resolved.
-func resolveImageURL(src, alt string, manifest map[string]string) string {
-	// External URLs pass through directly
-	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		return src
-	}
-
-	// Local path — check manifest for original URL
-	filename := filepath.Base(src)
-	if url, ok := manifest[filename]; ok {
-		return url
-	}
-
-	return ""
 }
 
 func updateModuleContent(c *client.Client, courseID string, data *ImportData) error {
