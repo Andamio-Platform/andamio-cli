@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,12 +51,11 @@ Requires user authentication via 'andamio user login'.`,
 
 // ModuleImportSummary holds the result of importing one module
 type ModuleImportSummary struct {
-	Dir        string        `json:"dir"`
-	Code       string        `json:"code"`
-	Title      string        `json:"title"`
-	Result     *ImportResult `json:"result,omitempty"`
-	Error      string        `json:"error,omitempty"`
-	Skipped    bool          `json:"skipped,omitempty"`
+	Dir    string        `json:"dir"`
+	Code   string        `json:"code"`
+	Title  string        `json:"title"`
+	Result *ImportResult `json:"result,omitempty"`
+	Error  string        `json:"error,omitempty"`
 }
 
 func runImportAll(cmd *cobra.Command, args []string) error {
@@ -173,91 +170,31 @@ func importSingleModule(c *client.Client, cfg *config.Config, moduleDir, courseI
 		fmt.Printf("Importing %s...\n", filepath.Base(moduleDir))
 	}
 
-	// Read and parse
-	data, err := readCompiledModule(moduleDir)
+	// Read outline metadata for summary (lightweight — no lesson parsing)
+	title, code, err := readOutlineMetadata(moduleDir)
 	if err != nil {
 		summary.Error = err.Error()
 		return summary
 	}
-	summary.Code = data.ModuleCode
-	summary.Title = data.Title
+	summary.Code = code
+	summary.Title = title
 
-	// Upload new images
-	var imagesUploaded int
-	if len(data.ImageWarnings) > 0 {
-		assetsDir := filepath.Join(moduleDir, "assets")
-		var failed []string
-		imagesUploaded, failed = uploadNewImages(cfg, assetsDir, data.ImageWarnings, data.ImageManifest)
-		if imagesUploaded > 0 {
-			manifestData, _ := json.MarshalIndent(data.ImageManifest, "", "  ")
-			os.WriteFile(filepath.Join(assetsDir, ".image-manifest.json"), manifestData, 0644)
-			data, err = readCompiledModule(moduleDir)
-			if err != nil {
-				summary.Error = err.Error()
-				return summary
-			}
-		}
-		data.ImageWarnings = failed
-	}
-
-	// Fetch existing or create
-	existing, err := fetchExistingModule(c, courseID, data.ModuleCode)
-	if err != nil {
-		if createMode && errors.Is(err, errModuleNotFound) {
-			if !isJSON {
-				fmt.Printf("  Module %s not found — creating...\n", data.ModuleCode)
-			}
-			createPayload := map[string]interface{}{
-				"course_id":          courseID,
-				"course_module_code": data.ModuleCode,
-				"title":              data.Title,
-				"sort_order":         sortOrder,
-			}
-			var createResp map[string]interface{}
-			if err := c.Post("/api/v2/course/teacher/course-module/create", createPayload, &createResp); err != nil {
-				summary.Error = fmt.Sprintf("failed to create module: %v", err)
-				return summary
-			}
-			existing, err = fetchExistingModule(c, courseID, data.ModuleCode)
-			if err != nil {
-				summary.Error = fmt.Sprintf("failed to fetch created module: %v", err)
-				return summary
-			}
-		} else {
-			summary.Error = err.Error()
-			return summary
-		}
-	}
-
-	sltsLocked := existing.Status != "DRAFT"
-
-	// Update
-	resp, err := updateModuleContent(c, courseID, data, existing, sltsLocked, dryRun)
+	// Delegate to shared import orchestration
+	result, err := importModule(ImportParams{
+		Client:     c,
+		Config:     cfg,
+		ModuleDir:  moduleDir,
+		CourseID:   courseID,
+		CreateMode: createMode,
+		DryRun:     dryRun,
+		SortOrder:  sortOrder,
+		Quiet:      isJSON,
+	})
 	if err != nil {
 		summary.Error = err.Error()
 		return summary
 	}
 
-	changes, _ := resp["changes"].(map[string]interface{})
-	if changes == nil {
-		changes = map[string]interface{}{}
-	}
-
-	summary.Result = &ImportResult{
-		CourseID:       courseID,
-		ModuleCode:     data.ModuleCode,
-		Title:          data.Title,
-		ModuleStatus:   existing.Status,
-		SLTsLocked:     sltsLocked,
-		SLTCount:       len(data.SLTs),
-		LessonCount:    len(data.Lessons),
-		HasIntro:       data.Introduction != nil,
-		HasAssignment:  data.Assignment != nil,
-		ManifestUsed:   len(data.ImageManifest),
-		ImagesUploaded: imagesUploaded,
-		DryRun:         dryRun,
-		Changes:        changes,
-	}
-
+	summary.Result = result
 	return summary
 }
