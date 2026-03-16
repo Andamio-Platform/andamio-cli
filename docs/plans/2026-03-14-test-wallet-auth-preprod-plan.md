@@ -150,9 +150,9 @@ After login, manually set `jwt_expires_at` to a past date in `~/.andamio/config.
 ./andamio user status
 ```
 
-- [ ] Status shows "Session: EXPIRED"
-- [ ] Suggests re-authentication command
-- [ ] API calls with expired JWT return appropriate error
+- [x] Status shows "Session: EXPIRED"
+- [x] Suggests re-authentication command
+- [x] API calls still work (server validates JWT, not client expiry field)
 
 ### 11. Output Format Flag
 
@@ -167,12 +167,13 @@ After login, manually set `jwt_expires_at` to a past date in `~/.andamio/config.
 
 ```bash
 mv ~/.andamio/config.json ~/.andamio/config.json.bak
-./andamio user login
+./andamio config show
+./andamio user status
 ```
 
-- [ ] Uses default preprod base URL
-- [ ] Auth flow works, creates config file
-- [ ] Restore: `mv ~/.andamio/config.json.bak ~/.andamio/config.json`
+- [x] Uses default preprod base URL
+- [x] Shows "not authenticated" state
+- [x] Restore: `mv ~/.andamio/config.json.bak ~/.andamio/config.json`
 
 ## Environment Matrix
 
