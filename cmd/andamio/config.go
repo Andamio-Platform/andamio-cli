@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net/url"
-	"strings"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -19,26 +17,16 @@ var configSetURLCmd = &cobra.Command{
 	Short: "Set the API base URL",
 	Long: `Set the API base URL. Common values:
   - https://preprod.api.andamio.io (preprod, default)
-  - https://mainnet.api.andamio.io (mainnet)`,
+  - https://mainnet.api.andamio.io (mainnet)
+
+Set ANDAMIO_ALLOW_ANY_URL=1 to allow non-andamio.io URLs for testing.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		rawURL := args[0]
 
-		// Validate URL
-		parsed, err := url.Parse(rawURL)
-		if err != nil {
-			return fmt.Errorf("invalid URL: %w", err)
-		}
-
-		// Require HTTPS except for localhost
-		isLocalhost := parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1"
-		if parsed.Scheme != "https" && !isLocalhost {
-			return fmt.Errorf("URL must use HTTPS (got %s)", parsed.Scheme)
-		}
-
-		// Validate domain - must be andamio.io or localhost
-		if !isLocalhost && !strings.HasSuffix(parsed.Hostname(), ".andamio.io") {
-			return fmt.Errorf("URL must be an andamio.io domain or localhost (got %s)", parsed.Hostname())
+		// Use shared URL validation (supports ANDAMIO_ALLOW_ANY_URL override)
+		if err := config.ValidateBaseURL(rawURL); err != nil {
+			return err
 		}
 
 		cfg, err := config.Load()

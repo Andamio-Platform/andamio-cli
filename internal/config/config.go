@@ -2,8 +2,11 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -34,6 +37,42 @@ func DefaultConfig() *Config {
 	}
 }
 
+// ValidateBaseURL checks if the URL is safe to use.
+// Returns nil if valid, error if invalid.
+// Set ANDAMIO_ALLOW_ANY_URL=1 to bypass validation for automation/testing.
+func ValidateBaseURL(rawURL string) error {
+	// Allow bypass for automation/CI scenarios
+	if os.Getenv("ANDAMIO_ALLOW_ANY_URL") == "1" {
+		return nil
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	hostname := parsed.Hostname()
+
+	// Allow localhost for development (including IPv6)
+	isLocalhost := hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1"
+	if isLocalhost {
+		return nil
+	}
+
+	// Require HTTPS for non-localhost
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("URL must use HTTPS (got %s)", parsed.Scheme)
+	}
+
+	// Validate domain - must be andamio.io or a subdomain of it
+	// Check for exact match OR subdomain (with leading dot to prevent lookalikes)
+	if hostname != "andamio.io" && !strings.HasSuffix(hostname, ".andamio.io") {
+		return fmt.Errorf("URL must be an andamio.io domain or localhost (got %s)", hostname)
+	}
+
+	return nil
+}
+
 func ConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -60,6 +99,14 @@ func Load() (*Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+
+	// Validate base URL on load to catch config file tampering
+	if cfg.BaseURL != "" {
+		if err := ValidateBaseURL(cfg.BaseURL); err != nil {
+			return nil, fmt.Errorf("invalid base URL in config: %w (set ANDAMIO_ALLOW_ANY_URL=1 to override)", err)
+		}
+	}
+
 	return &cfg, nil
 }
 

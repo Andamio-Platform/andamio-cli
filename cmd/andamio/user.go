@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
@@ -24,18 +26,8 @@ var userCmd = &cobra.Command{
 
 var userMeCmd = &cobra.Command{
 	Use:   "me",
-	Short: "Get current user info",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/apikey/developer/profile/get")
-	},
-}
-
-var userUsageCmd = &cobra.Command{
-	Use:   "usage",
-	Short: "Get user usage stats",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/apikey/developer/usage/get")
-	},
+	Short: "Get current user dashboard",
+	RunE:  runUserMe,
 }
 
 var userExistsCmd = &cobra.Command{
@@ -77,7 +69,6 @@ var userStatusCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(userCmd)
 	userCmd.AddCommand(userMeCmd)
-	userCmd.AddCommand(userUsageCmd)
 	userCmd.AddCommand(userExistsCmd)
 	userCmd.AddCommand(userLoginCmd)
 	userCmd.AddCommand(userLogoutCmd)
@@ -315,6 +306,155 @@ func runUserStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func runUserMe(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	c := client.New(cfg)
+	var result map[string]interface{}
+	if err := c.Post("/api/v2/user/dashboard", nil, &result); err != nil {
+		return err
+	}
+
+	// If JSON output requested, print raw JSON
+	if output.GetFormat() == output.FormatJSON {
+		return output.PrintJSON(result)
+	}
+
+	// Extract data from envelope
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
+		return output.PrintJSON(result)
+	}
+
+	// Print formatted dashboard
+	printDashboard(data)
+	return nil
+}
+
+// ANSI color codes
+const (
+	cReset      = "\033[0m"
+	cBold       = "\033[1m"
+	cDim        = "\033[2m"
+	cCyan       = "\033[36m"
+	cGreen      = "\033[32m"
+	cYellow     = "\033[33m"
+	cMagenta    = "\033[35m"
+	cBlue       = "\033[34m"
+	cWhite      = "\033[97m"
+	cBrightCyan = "\033[96m"
+)
+
+func printDashboard(data map[string]interface{}) {
+	// Andamio ASCII logo with gradient effect
+	fmt.Println()
+	fmt.Printf("%s%s    ╔═══╗%s\n", cBold, cCyan, cReset)
+	fmt.Printf("%s%s   ╔╝   ╚╗%s\n", cBold, cCyan, cReset)
+	fmt.Printf("%s%s  ╔╝ ▄▄▄ ╚╗%s   %s%sANDAMIO%s\n", cBold, cBrightCyan, cReset, cBold, cWhite, cReset)
+	fmt.Printf("%s%s ╔╝ ╔═══╗ ╚╗%s  %s%sDashboard%s\n", cBold, cBrightCyan, cReset, cDim, cWhite, cReset)
+	fmt.Printf("%s%s╔╝  ╚═══╝  ╚╗%s\n", cBold, cCyan, cReset)
+	fmt.Printf("%s%s╚═══════════╝%s\n", cBold, cCyan, cReset)
+	fmt.Println()
+
+	// User info
+	if user, ok := data["user"].(map[string]interface{}); ok {
+		alias := getStr(user, "alias")
+		fmt.Printf("%s%s◆ %s%s\n", cBold, cGreen, alias, cReset)
+		fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", cDim, cCyan, cReset)
+	}
+
+	// Counts summary
+	if counts, ok := data["counts"].(map[string]interface{}); ok {
+		fmt.Printf("\n%s%s📊 Summary%s\n", cBold, cYellow, cReset)
+		enrolled := getInt(counts, "enrolled_courses")
+		completed := getInt(counts, "completed_courses")
+		teaching := getInt(counts, "teaching_courses")
+		managing := getInt(counts, "managing_projects")
+		contributing := getInt(counts, "contributing_projects")
+		credentials := getInt(counts, "total_credentials")
+
+		fmt.Printf("   %sCourses%s     %s%d%s enrolled  %s%d%s completed  %s%d%s teaching\n",
+			cDim, cReset, cBold, enrolled, cReset, cBold, completed, cReset, cBold, teaching, cReset)
+		fmt.Printf("   %sProjects%s    %s%d%s managing  %s%d%s contributing\n",
+			cDim, cReset, cBold, managing, cReset, cBold, contributing, cReset)
+		fmt.Printf("   %sCredentials%s %s%d%s earned\n",
+			cDim, cReset, cBold, credentials, cReset)
+	}
+
+	// Teacher section
+	if teacher, ok := data["teacher"].(map[string]interface{}); ok {
+		if courses, ok := teacher["courses"].([]interface{}); ok && len(courses) > 0 {
+			fmt.Printf("\n%s%s📚 Teaching%s\n", cBold, cMagenta, cReset)
+			for _, c := range courses {
+				if course, ok := c.(map[string]interface{}); ok {
+					title := getStr(course, "title")
+					if title == "" {
+						title = "(untitled)"
+					}
+					fmt.Printf("   %s▸%s %s\n", cMagenta, cReset, title)
+				}
+			}
+		}
+		if pending := getInt(teacher, "total_pending_reviews"); pending > 0 {
+			fmt.Printf("   %s%s⚠ %d pending reviews%s\n", cBold, cYellow, pending, cReset)
+		}
+	}
+
+	// Student section
+	if student, ok := data["student"].(map[string]interface{}); ok {
+		if enrolled, ok := student["enrolled_courses"].([]interface{}); ok && len(enrolled) > 0 {
+			fmt.Printf("\n%s%s🎓 Learning%s\n", cBold, cGreen, cReset)
+			for _, c := range enrolled {
+				if course, ok := c.(map[string]interface{}); ok {
+					title := getStr(course, "title")
+					if title == "" {
+						title = "(untitled)"
+					}
+					fmt.Printf("   %s▸%s %s\n", cGreen, cReset, title)
+				}
+			}
+		}
+	}
+
+	// Projects section
+	if projects, ok := data["projects"].(map[string]interface{}); ok {
+		if managing, ok := projects["managing"].([]interface{}); ok && len(managing) > 0 {
+			fmt.Printf("\n%s%s🔧 Managing%s\n", cBold, cBlue, cReset)
+			for _, p := range managing {
+				if proj, ok := p.(map[string]interface{}); ok {
+					title := getStr(proj, "title")
+					if title == "" {
+						title = "(untitled)"
+					}
+					fmt.Printf("   %s▸%s %s\n", cBlue, cReset, title)
+				}
+			}
+		}
+		if pending := getInt(projects, "total_pending_assessments"); pending > 0 {
+			fmt.Printf("   %s%s⚠ %d pending assessments%s\n", cBold, cYellow, pending, cReset)
+		}
+	}
+
+	fmt.Println()
+}
+
+func getStr(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func getInt(m map[string]interface{}, key string) int {
+	if v, ok := m[key].(float64); ok {
+		return int(v)
+	}
+	return 0
 }
 
 // buildAuthURL constructs the authentication URL for the app's CLI auth page
