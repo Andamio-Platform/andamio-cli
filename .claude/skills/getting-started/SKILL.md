@@ -1,101 +1,150 @@
 # Getting Started with Andamio CLI
 
-Walk a developer through the Andamio CLI capabilities and how to extend it with skills.
+Walk a developer through installing and using the Andamio CLI.
 
 ## Interactive Walkthrough
 
-Guide the user step-by-step through the following. Pause after each section and ask if they want to continue or skip ahead.
+Guide the user step-by-step. Pause after each section and ask if they want to continue or skip ahead.
 
-### 1. Check Setup
+### 1. Install & Verify
 
-First, verify the CLI is built and configured:
-
-```bash
-./andamio --help
-./andamio config show
-```
-
-If not built, run: `go build -o andamio ./cmd/andamio`
-
-If no API key is set, tell them to get one from the Andamio platform and run:
-```bash
-./andamio auth login --api-key <their-key>
-```
-
-### 2. Explore Available Commands
-
-Show the main command groups:
-
-- **config** - Switch between preprod/mainnet environments
-- **auth** - Manage API key authentication
-- **spec** - Fetch and explore the OpenAPI spec
-- **course** - List courses, modules, lessons, assignments
-- **project** - List projects and details
-- **user** - Current user info and usage
-- **tx** - Transaction status and types
-- **apikey** - API key usage stats
-
-Demo a few commands:
-```bash
-./andamio course list
-./andamio tx types
-./andamio spec paths --filter course
-```
-
-### 3. Discover API Endpoints
-
-Show how to use the spec commands to discover what's available:
+Check if the CLI is installed:
 
 ```bash
-./andamio spec fetch                    # Download latest OpenAPI spec
-./andamio spec paths                    # List all endpoints
-./andamio spec paths --filter project   # Filter by keyword
+andamio --version
 ```
 
-Explain that all GET endpoints from the API are implemented as CLI commands.
+If not installed, offer two paths:
 
-### 4. Switch Environments
+**Download a release** (no Go required):
+```bash
+# Check latest version at https://github.com/Andamio-Platform/andamio-cli/releases/latest
+VERSION=0.1.0
+curl -sLO "https://github.com/Andamio-Platform/andamio-cli/releases/download/v${VERSION}/andamio_${VERSION}_darwin_arm64.tar.gz"
+tar xzf "andamio_${VERSION}_darwin_arm64.tar.gz"
+sudo mv andamio /usr/local/bin/
+```
 
-Show how to switch between preprod and mainnet:
+**Build from source** (requires Go 1.21+):
+```bash
+go install github.com/Andamio-Platform/andamio-cli/cmd/andamio@latest
+```
+
+Or build locally in this repo:
+```bash
+go build -o andamio ./cmd/andamio
+```
+
+### 2. Configure Authentication
+
+The CLI supports two auth methods. Start with an API key for read access:
 
 ```bash
-./andamio config show
-./andamio config set-url https://mainnet.api.andamio.io
-./andamio config show
-./andamio config set-url https://preprod.api.andamio.io  # switch back
+# Get an API key from https://preprod.app.andamio.io/api-setup
+andamio auth login --api-key <your-api-key>
+andamio auth status
 ```
 
-### 5. Skills Integration
+For edit access (course/project owners), authenticate with your Cardano wallet:
 
-Explain that this CLI integrates with Claude Code skills:
-
-- **/getting-started** (this skill) - Interactive walkthrough
-- Skills can automate common workflows
-- Developers can create custom skills in `.claude/skills/`
-
-Show the skill structure:
-```
-.claude/skills/
-  getting-started/
-    SKILL.md      # This file - defines the skill behavior
+```bash
+andamio user login
+# Opens browser → connect wallet → sign message → JWT stored automatically
+andamio user status   # Shows both API key and JWT status
 ```
 
-### 6. Next Steps
+### 3. Check Configuration
 
-Suggest next steps based on their role:
+```bash
+andamio config show
+```
 
-**For Course Creators:**
-- `./andamio course list` to see existing courses
-- `./andamio course get <id>` for course details
-- `./andamio course modules <id>` to see structure
+Default environment is preprod. To switch:
+```bash
+andamio config set-url https://mainnet.api.andamio.io  # mainnet
+andamio config set-url https://preprod.api.andamio.io  # back to preprod
+```
 
-**For Project Contributors:**
-- `./andamio project list` to find projects
-- `./andamio project get <id>` for project details
+Config is stored at `~/.andamio/config.json`.
 
-**For Developers extending the CLI:**
-- `./andamio spec fetch` to get the latest API spec
-- Add new commands following the pattern in `cmd/andamio/course.go`
-- Use `getJSON()` helper for simple GET endpoints
+### 4. Explore Courses
 
-Ask if they want to dive deeper into any area.
+Walk through the course hierarchy:
+
+```bash
+# List all courses you have access to
+andamio course list
+
+# Get details on a specific course
+andamio course get <course-id>
+
+# See the modules in a course
+andamio course modules <course-id>
+
+# Drill into a module's SLTs (Student Learning Targets)
+andamio course slts <course-id> <module-code>
+
+# Read a specific lesson
+andamio course lesson <course-id> <module-code> <slt-index>
+
+# Read module introduction and assignment
+andamio course intro <course-id> <module-code>
+andamio course assignment <course-id> <module-code>
+```
+
+### 5. Output Formats
+
+Every command supports multiple output formats via the `-o` flag:
+
+```bash
+andamio course list                # Default text: "- Title (ID)"
+andamio course list -o json        # Raw JSON for scripting
+andamio course list -o csv         # CSV for spreadsheets
+andamio course list -o markdown    # Markdown tables for docs
+```
+
+This makes the CLI useful for both interactive use and piping to other tools.
+
+### 6. Discover API Endpoints
+
+Use the spec commands to see what the API offers:
+
+```bash
+andamio spec fetch                    # Download OpenAPI spec
+andamio spec paths                    # List all endpoints
+andamio spec paths --filter course    # Filter by keyword
+andamio spec paths --filter project
+```
+
+### 7. Projects & Transactions
+
+```bash
+# Browse projects
+andamio project list
+andamio project get <project-id>
+
+# Check transaction status
+andamio tx types
+andamio tx pending
+andamio tx status <tx-hash>
+```
+
+### 8. Next Steps
+
+Based on the developer's role, suggest next steps:
+
+**Course creators:**
+- Explore existing course content with the commands above
+- Content sync is coming — `sync pull` / `sync push` for local editing (see `docs/PLAN-content-sync.md`)
+
+**App builders:**
+- Fork the [app template](https://github.com/Andamio-Platform/andamio-app-template) for a UI
+- Use CLI alongside the template for quick data checks
+
+**CLI contributors:**
+- `andamio spec paths --filter <keyword>` to find unimplemented endpoints
+- Add commands following the pattern in `cmd/andamio/course.go`
+- See CLAUDE.md for architecture and command patterns
+
+**Documentation:**
+- Full CLI docs at [andamio-docs](https://docs.andamio.io/docs/guides/developers/cli)

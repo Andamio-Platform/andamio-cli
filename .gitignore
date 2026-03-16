@@ -1,6 +1,9 @@
 # Binary
 /andamio
 
+# GoReleaser
+dist/
+
 # Fetched spec
 openapi.json
 

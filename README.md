@@ -4,23 +4,40 @@ CLI for interacting with the Andamio Protocol.
 
 ## Installation
 
-### Requirements
+### Download a release
 
-- Go 1.21+ ([install Go](https://go.dev/doc/install))
+Prebuilt binaries for macOS, Linux, and Windows are available on the [Releases page](https://github.com/Andamio-Platform/andamio-cli/releases/latest).
 
-### Install
+Download the archive for your platform, extract it, and move the binary to your PATH:
+
+```bash
+# Example: macOS Apple Silicon, replace VERSION with the latest release
+VERSION=0.1.0
+curl -sLO "https://github.com/Andamio-Platform/andamio-cli/releases/download/v${VERSION}/andamio_${VERSION}_darwin_arm64.tar.gz"
+curl -sLO "https://github.com/Andamio-Platform/andamio-cli/releases/download/v${VERSION}/checksums.txt"
+shasum -a 256 --check --ignore-missing checksums.txt
+tar xzf "andamio_${VERSION}_darwin_arm64.tar.gz"
+sudo mv andamio /usr/local/bin/
+```
+
+Available platforms: `darwin_arm64`, `darwin_amd64`, `linux_amd64`, `linux_arm64`, `windows_amd64`, `windows_arm64`.
+
+### Build from source
+
+Requires Go 1.21+.
 
 ```bash
 go install github.com/Andamio-Platform/andamio-cli/cmd/andamio@latest
 ```
 
-Verify installation:
+### Verify
+
 ```bash
 andamio --version
 andamio --help
 ```
 
-## Quick Start (Andamio Pioneers)
+## Quick Start
 
 ```bash
 # 1. Install the CLI
@@ -68,6 +85,17 @@ andamio user status
 Log out when done:
 ```bash
 andamio user logout
+```
+
+## Output Formats
+
+All commands support multiple output formats via the `-o` flag:
+
+```bash
+andamio course list                # Default text
+andamio course list -o json        # JSON for scripting
+andamio course list -o csv         # CSV for spreadsheets
+andamio course list -o markdown    # Markdown tables
 ```
 
 ## Commands
@@ -291,3 +319,20 @@ go build -ldflags "-X main.version=0.1.0 -X main.commit=$(git rev-parse --short 
 ./andamio --help
 ./andamio --version
 ```
+
+### Releasing
+
+```bash
+./scripts/release.sh          # Auto-bump patch version
+./scripts/release.sh 0.2.0    # Specific version
+```
+
+See [CLAUDE.md](CLAUDE.md) for architecture details, command patterns, and how to add new endpoints.
+
+## Documentation
+
+Full documentation: [docs.andamio.io/docs/guides/developers/cli](https://docs.andamio.io/docs/guides/developers/cli)
+
+## License
+
+MIT

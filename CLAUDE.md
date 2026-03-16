@@ -1,12 +1,13 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with code in this repository.
 
 ## Build & Run
 
 ```bash
 go build -o andamio ./cmd/andamio
 ./andamio --help
+./andamio --version
 ```
 
 Versioned release build:
@@ -21,22 +22,36 @@ cp andamio /usr/local/bin/andamio
 
 No linter configuration. Tests exist for export/import conversion functions.
 
+## Release
+
+```bash
+# Release with auto-bumped patch version
+./scripts/release.sh
+
+# Release specific version
+./scripts/release.sh 0.2.0
+```
+
+The script runs preflight checks (clean tree, on main, synced with origin, build passes), then tags and pushes. GitHub Actions runs GoReleaser to cross-compile and publish binaries to GitHub Releases.
+
+Version is injected via ldflags: `-X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}`
+
 ## Architecture
 
 Go CLI using Cobra for the Andamio Protocol. Dependencies: Cobra (CLI), `pkg/browser` (OAuth flow), goldmark (Markdown parsing), adrg/frontmatter (YAML frontmatter).
 
 ### Package Layout
 
-- `cmd/andamio/` - All command definitions live here as top-level files (one per command group). `main.go` defines `rootCmd` with a global `--output` flag and versioning via ldflags.
-- `internal/config/` - Config management. Single `Config` struct serialized to `~/.andamio/config.json`. Holds API key, base URL, and user JWT fields.
-- `internal/client/` - HTTP client wrapping `net/http`. Supports GET/POST/PUT. Automatically sets `X-API-Key` and `Authorization: Bearer` headers from config.
-- `internal/output/` - Multi-format output (text, json, csv, markdown). Global format set via `--output` flag in `PersistentPreRunE`.
+- `cmd/andamio/` — All command definitions, one file per command group. `main.go` defines `rootCmd` with global `--output` flag and version info.
+- `internal/config/` — Config management. Single `Config` struct serialized to `~/.andamio/config.json`. Holds API key, base URL, user JWT fields. Permissions: 0600.
+- `internal/client/` — HTTP client wrapping `net/http`. GET/POST/PUT. Automatically sets `X-API-Key` and `Authorization: Bearer` headers from config.
+- `internal/output/` — Multi-format output (text, json, csv, markdown). Global format set via `--output` flag in `PersistentPreRunE`. Supports nested key access with dot notation.
 
 ### Command Pattern
 
-Commands register to `rootCmd` via `init()` functions in each file. Most commands follow one of two patterns:
+Commands register to `rootCmd` via `init()` functions in each file. Two patterns:
 
-1. **Simple GET** — use `getJSON("/api/v2/...")` helper (defined in `course.go`). Loads config, creates client, GETs path, prints via `output.PrintJSON()`.
+1. **Simple GET** — `getJSON("/api/v2/...")` helper (defined in `course.go`). Loads config, creates client, GETs path, prints via `output.PrintJSON()`.
 2. **List with formatting** — load config, create client, GET, extract `data` array, call `output.PrintList(items, titleKey, idKey)` with dot-notation keys for nested fields.
 
 ### Export/Import Pattern (complex commands)
@@ -56,17 +71,82 @@ Export and import are the two complex commands. They follow a different pattern:
 ### Auth Flow
 
 Two auth methods coexist in config:
-- **API Key** (`auth login --api-key`) — stored in `config.api_key`, sent as `X-API-Key` header
-- **User JWT** (`user login`) — browser-based OAuth-like flow: starts ephemeral local HTTP server, opens browser to `{appURL}/auth/cli?redirect_uri=...&state=...`, receives JWT via callback query params. CSRF protection via random state parameter.
+- **API Key** (`auth login --api-key`) — stored in `config.api_key`, sent as `X-API-Key` header. Read-only access.
+- **User JWT** (`user login`) — browser-based wallet signing flow: starts ephemeral local HTTP server, opens browser to `{appURL}/auth/cli?redirect_uri=...&state=...`, user connects Cardano wallet and signs nonce, receives JWT via callback. CSRF protection via random state parameter. Required for edit operations.
 
 The app URL is derived from the API URL by replacing `.api.` with `.app.` in the hostname.
+
+## Complete Command Reference
+
+### Global Flags
+- `-o, --output` — Output format: text (default), json, csv, markdown
+- `-h, --help` — Help for any command
+- `--version` — Print version with commit hash and build date
+
+### auth — API key management
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `auth login --api-key <key>` | local | none | Store API key |
+| `auth status` | local | none | Check API key status |
+
+### config — CLI configuration
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `config show` | local | none | Show current config |
+| `config set-url <url>` | local | none | Switch environment |
+
+### user — Wallet auth and user info
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `user login` | browser flow | wallet | Authenticate via browser wallet signing, stores JWT |
+| `user logout` | local | none | Clear stored JWT |
+| `user status` | local | none | Show auth status (API key + JWT + session remaining) |
+| `user me` | `/api/v1/user/me` | either | Current user info |
+| `user usage` | `/api/v1/user/usage` | either | User usage stats |
+| `user exists <alias>` | `/api/v2/user/exists/{alias}` | none | Check if alias is taken |
+
+### course — Course content
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `course list` | `/api/v2/course/user/courses/list` | either | List courses |
+| `course get <id>` | `/api/v2/course/user/course/get/{id}` | either | Course details |
+| `course modules <id>` | `/api/v2/course/user/modules/{id}` | either | List modules |
+| `course slts <id> <module>` | `/api/v2/course/user/slts/{id}/{module}` | either | List SLTs in module |
+| `course lesson <id> <module> <slt>` | `/api/v2/course/user/lesson/{id}/{module}/{slt}` | either | Lesson content |
+| `course assignment <id> <module>` | `/api/v2/course/user/assignment/{id}/{module}` | either | Module assignment |
+| `course intro <id> <module>` | `/api/v2/course/user/introduction/{id}/{module}` | either | Module introduction |
+
+### project — Project data
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `project list` | `/api/v2/project/user/projects/list` | either | List projects |
+| `project get <id>` | `/api/v2/project/user/project/{id}` | either | Project details |
+
+### tx — Transactions
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `tx pending` | `/api/v2/tx/pending` | either | Pending transactions |
+| `tx types` | `/api/v2/tx/types` | either | Transaction types |
+| `tx status <hash>` | `/api/v2/tx/status/{hash}` | either | Transaction status |
+
+### apikey — API key info
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `apikey usage` | `/api/v2/apikey/developer/usage/get` | api-key | Key usage stats |
+| `apikey profile` | `/api/v2/apikey/developer/profile/get` | api-key | Key profile |
+
+### spec — OpenAPI spec
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `spec fetch` | `/api/v1/docs/doc.json` | none | Download OpenAPI spec to openapi.json |
+| `spec paths [--filter <pattern>]` | local/remote | none | List API endpoints |
 
 ## API
 
 - Base URLs: `https://preprod.api.andamio.io` (default), `https://mainnet.api.andamio.io`
 - All paths start with `/api/v1/` or `/api/v2/`
 - Auth via `X-API-Key` header (read access) and/or `Authorization: Bearer <jwt>` (edit access)
-- OpenAPI spec: `./andamio spec fetch` downloads to `openapi.json`
+- OpenAPI spec: `andamio spec fetch` downloads to `openapi.json`
 
 ### Key Endpoints for Export/Import
 
@@ -93,10 +173,29 @@ Omitted top-level fields = unchanged. But array items (lessons, slts) replace th
 
 ## Adding Endpoints
 
-1. Check available paths: `./andamio spec paths --filter <keyword>`
+1. Check available paths: `andamio spec paths --filter <keyword>`
 2. Add command using `getJSON("/api/v2/...")` pattern for simple GETs, or the full config→client→output pattern for lists or POST/PUT
 3. Register in `init()`
 
+## Planned Features
+
+- **Content Sync** (`sync pull`/`sync push`/`sync status`) — Bidirectional course content sync with conflict detection. Design in `docs/PLAN-content-sync.md`.
+- **Import/Export** — Export module content to local files, edit, reimport. Documented in andamio-docs CLI section.
+
+## Cross-Repo Context
+
+This CLI is part of the Andamio developer toolchain:
+
+| Repo | Relationship |
+|------|-------------|
+| **andamio-docs** (`andamio-docs`) | CLI docs live at `content/docs/guides/developers/cli/`. 6 pages covering install, auth, courses, import/export. |
+| **andamio-lesson-coach-v2** (`andamio-lesson-coach-v2`) | Creates course content that this CLI reads and will eventually sync. Compiles modules to import-ready format. |
+| **andamio-app-template** (`andamio-app-template`) | Forkable Next.js starter. CLI and template are parallel developer entry points — CLI for terminal users, template for UI builders. |
+| **andamio-api** (`andamio-api`) | Go gateway that serves all endpoints this CLI consumes. Base URLs: preprod.api.andamio.io, mainnet.api.andamio.io. |
+
+The developer journey: get API key → install CLI or fork template → explore courses → use coach to create content → push back via CLI.
+
 ## Skills
 
-- `/getting-started` - Interactive walkthrough of CLI capabilities
+- `/getting-started` — Interactive walkthrough of CLI capabilities for new developers
+- `/release` — Cut a new release with preflight checks
