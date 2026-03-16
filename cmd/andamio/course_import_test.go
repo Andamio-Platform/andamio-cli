@@ -282,18 +282,14 @@ func TestMarkdownToTiptapImage(t *testing.T) {
 	}
 
 	content := got["content"].([]interface{})
-	para := content[0].(map[string]interface{})
-	paraContent := para["content"].([]interface{})
+	imgBlock := content[0].(map[string]interface{})
 
-	// Find image node
+	// Solo image in paragraph becomes an imageBlock (matches app behavior)
 	found := false
-	for _, node := range paraContent {
-		nodeMap := node.(map[string]interface{})
-		if nodeMap["type"] == "image" {
-			attrs := nodeMap["attrs"].(map[string]interface{})
-			if attrs["src"] == "https://example.com/image.png" && attrs["alt"] == "alt text" {
-				found = true
-			}
+	if imgBlock["type"] == "imageBlock" {
+		attrs := imgBlock["attrs"].(map[string]interface{})
+		if attrs["src"] == "https://example.com/image.png" && attrs["alt"] == "alt text" {
+			found = true
 		}
 	}
 
@@ -401,22 +397,19 @@ func TestMarkdownToTiptapImageWithManifest(t *testing.T) {
 	}
 
 	content := got["content"].([]interface{})
-	para := content[0].(map[string]interface{})
-	paraContent := para["content"].([]interface{})
+	imgBlock := content[0].(map[string]interface{})
 
+	// Solo image with manifest-resolved URL becomes an imageBlock
 	found := false
-	for _, node := range paraContent {
-		nodeMap := node.(map[string]interface{})
-		if nodeMap["type"] == "image" {
-			attrs := nodeMap["attrs"].(map[string]interface{})
-			if attrs["src"] == "https://cdn.andamio.io/images/abc/diagram.png" {
-				found = true
-			}
+	if imgBlock["type"] == "imageBlock" {
+		attrs := imgBlock["attrs"].(map[string]interface{})
+		if attrs["src"] == "https://cdn.andamio.io/images/abc/diagram.png" {
+			found = true
 		}
 	}
 
 	if !found {
-		t.Errorf("expected image with resolved CDN URL, got %v", content)
+		t.Errorf("expected imageBlock with resolved CDN URL, got %v", content)
 	}
 }
 

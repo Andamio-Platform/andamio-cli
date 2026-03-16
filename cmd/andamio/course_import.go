@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -30,14 +31,18 @@ import (
 )
 
 var (
-	sltLineRe   = regexp.MustCompile(`^\d+[\.\)]\s+(.+)$`)
-	lessonNumRe = regexp.MustCompile(`lesson-(\d+)\.md`)
+	sltLineRe          = regexp.MustCompile(`^\d+[\.\)]\s+(.+)$`)
+	lessonNumRe        = regexp.MustCompile(`lesson-(\d+)\.md`)
+	errModuleNotFound  = errors.New("module not found")
 )
 
 func init() {
 	courseCmd.AddCommand(courseImportCmd)
 	courseImportCmd.Flags().String("course-id", "", "Course ID to import into (required)")
 	courseImportCmd.MarkFlagRequired("course-id")
+	courseImportCmd.Flags().Bool("dry-run", false, "Show the API payload without sending it")
+	courseImportCmd.Flags().Bool("create", false, "Create the module if it doesn't exist")
+	courseImportCmd.Flags().Int("sort-order", 0, "Sort order when creating a new module (used with --create)")
 }
 
 var courseImportCmd = &cobra.Command{
@@ -54,7 +59,8 @@ The directory should contain:
 Example:
   andamio course import ./compiled/my-course/101 --course-id abc123
 
-Note: Image upload is not yet supported. Images in assets/ will be skipped with a warning.
+New images in assets/ are automatically uploaded to the CDN.
+Previously uploaded images are preserved via .image-manifest.json.
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.ExactArgs(1),
@@ -116,12 +122,16 @@ type ImportResult struct {
 	ManifestUsed   int                    `json:"manifest_images"`
 	ImagesUploaded int                    `json:"images_uploaded,omitempty"`
 	FailedImages   []string               `json:"failed_images,omitempty"`
+	DryRun         bool                   `json:"dry_run,omitempty"`
 	Changes        map[string]interface{} `json:"changes"`
 }
 
 func runCourseImport(cmd *cobra.Command, args []string) error {
 	moduleDir := args[0]
 	courseID, _ := cmd.Flags().GetString("course-id")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	createMode, _ := cmd.Flags().GetBool("create")
+	sortOrder, _ := cmd.Flags().GetInt("sort-order")
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Validate directory exists
@@ -161,7 +171,8 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Uploading %d new image(s)...\n", len(data.ImageWarnings))
 		}
 		assetsDir := filepath.Join(moduleDir, "assets")
-		imagesUploaded, failed := uploadNewImages(cfg, assetsDir, data.ImageWarnings, data.ImageManifest)
+		var failed []string
+		imagesUploaded, failed = uploadNewImages(cfg, assetsDir, data.ImageWarnings, data.ImageManifest)
 
 		if !isJSON {
 			if imagesUploaded > 0 {
@@ -190,15 +201,40 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 	// Fetch current module state to determine SLT lock status and preserve metadata
 	existing, err := fetchExistingModule(c, courseID, data.ModuleCode)
 	if err != nil {
-		return err
+		// Only trigger creation for "not found" errors, not auth/network failures
+		if createMode && errors.Is(err, errModuleNotFound) {
+			if !isJSON {
+				fmt.Printf("Module %s not found — creating...\n", data.ModuleCode)
+			}
+			createPayload := map[string]interface{}{
+				"course_id":          courseID,
+				"course_module_code": data.ModuleCode,
+				"title":              data.Title,
+				"sort_order":         sortOrder,
+			}
+			var createResp map[string]interface{}
+			if err := c.Post("/api/v2/course/teacher/course-module/create", createPayload, &createResp); err != nil {
+				return fmt.Errorf("failed to create module: %w", err)
+			}
+			if !isJSON {
+				fmt.Printf("Created module: %s (%s)\n", data.Title, data.ModuleCode)
+			}
+			// Re-fetch the newly created module
+			existing, err = fetchExistingModule(c, courseID, data.ModuleCode)
+			if err != nil {
+				return fmt.Errorf("failed to fetch newly created module: %w", err)
+			}
+		} else {
+			return err
+		}
 	}
 	sltsLocked := existing.Status != "DRAFT"
 	if !isJSON && sltsLocked {
 		fmt.Printf("Module status is %s — SLTs are locked, updating content only\n", existing.Status)
 	}
 
-	// Update the module via API, merging with existing metadata
-	resp, err := updateModuleContent(c, courseID, data, existing, sltsLocked)
+	// Update the module via API (or dump payload in dry-run mode)
+	resp, err := updateModuleContent(c, courseID, data, existing, sltsLocked, dryRun)
 	if err != nil {
 		return err
 	}
@@ -222,6 +258,7 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 		ManifestUsed:   len(data.ImageManifest),
 		ImagesUploaded: imagesUploaded,
 		FailedImages:   data.ImageWarnings,
+		DryRun:         dryRun,
 		Changes:        changes,
 	}
 
@@ -295,6 +332,23 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	return nil
+}
+
+// readOutlineMetadata reads only the title and code from outline.md frontmatter.
+// Use this when you don't need lesson content (e.g., create-module command).
+func readOutlineMetadata(dir string) (title, code string, err error) {
+	outlineBytes, err := os.ReadFile(filepath.Join(dir, "outline.md"))
+	if err != nil {
+		return "", "", fmt.Errorf("missing outline.md: %w", err)
+	}
+	var fm OutlineFrontmatter
+	if _, err := frontmatter.Parse(bytes.NewReader(outlineBytes), &fm); err != nil {
+		return "", "", fmt.Errorf("invalid outline.md frontmatter: %w", err)
+	}
+	if fm.Code == "" {
+		return "", "", fmt.Errorf("outline.md missing 'code' in frontmatter")
+	}
+	return fm.Title, fm.Code, nil
 }
 
 func readCompiledModule(dir string) (*ImportData, error) {
@@ -374,9 +428,14 @@ func readCompiledModule(dir string) (*ImportData, error) {
 		})
 	}
 
-	// Verify lesson count matches SLT count
-	if len(data.Lessons) != len(data.SLTs) {
-		return nil, fmt.Errorf("found %d lesson files but outline lists %d SLTs", len(data.Lessons), len(data.SLTs))
+	// Warn if lesson count doesn't match SLT count (lessons are optional per format guide)
+	if len(data.Lessons) > len(data.SLTs) {
+		return nil, fmt.Errorf("found %d lesson files but outline only lists %d SLTs", len(data.Lessons), len(data.SLTs))
+	}
+	if len(data.Lessons) < len(data.SLTs) && len(data.Lessons) > 0 {
+		if output.GetFormat() != output.FormatJSON {
+			fmt.Printf("Note: %d lesson files for %d SLTs (lessons are optional)\n", len(data.Lessons), len(data.SLTs))
+		}
 	}
 
 	// Read introduction.md if exists — H1 → title, rest → content_json
@@ -481,8 +540,9 @@ func parseSLTsFromOutline(content string) []string {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		// Look for ## SLTs heading
-		if strings.HasPrefix(trimmed, "## SLT") {
+		// Look for ## SLTs or ## SLT heading (case-insensitive, exact match per format guide)
+		lower := strings.ToLower(trimmed)
+		if lower == "## slts" || lower == "## slt" {
 			inSLTSection = true
 			continue
 		}
@@ -907,6 +967,7 @@ func convertInlineNode(n ast.Node, source []byte) []interface{} {
 // ExistingModuleData holds the current state of the module from the API
 type ExistingModuleData struct {
 	Status       string
+	SLTCount     int                            // number of existing SLTs
 	Lessons      map[int]map[string]interface{} // slt_index → lesson fields
 	Introduction map[string]interface{}
 	Assignment   map[string]interface{}
@@ -949,8 +1010,9 @@ func fetchExistingModule(c *client.Client, courseID, moduleCode string) (*Existi
 			existing.Status = status
 		}
 
-		// Extract existing lesson metadata keyed by slt_index
+		// Extract existing SLT count and lesson metadata keyed by slt_index
 		if slts, ok := content["slts"].([]interface{}); ok {
+			existing.SLTCount = len(slts)
 			for i, slt := range slts {
 				sltMap, ok := slt.(map[string]interface{})
 				if !ok {
@@ -975,10 +1037,10 @@ func fetchExistingModule(c *client.Client, courseID, moduleCode string) (*Existi
 		return existing, nil
 	}
 
-	return nil, fmt.Errorf("module '%s' not found in course '%s'", moduleCode, courseID)
+	return nil, fmt.Errorf("%w: '%s' in course '%s'", errModuleNotFound, moduleCode, courseID)
 }
 
-func updateModuleContent(c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool) (map[string]interface{}, error) {
+func updateModuleContent(c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool, dryRun bool) (map[string]interface{}, error) {
 	// Build lessons payload with H1-extracted titles
 	lessons := make([]map[string]interface{}, len(data.Lessons))
 	for i, lesson := range data.Lessons {
@@ -1012,17 +1074,26 @@ func updateModuleContent(c *client.Client, courseID string, data *ImportData, ex
 		"course_id":          courseID,
 		"course_module_code": data.ModuleCode,
 		"title":              data.Title,
-		"lessons":            lessons,
+	}
+
+	// Only include lessons if files were provided (omitting = preserve existing per API contract)
+	if len(lessons) > 0 {
+		payload["lessons"] = lessons
 	}
 
 	// Only include SLTs if they're not locked (module is in DRAFT status)
 	if !sltsLocked {
 		slts := make([]map[string]interface{}, len(data.SLTs))
 		for i, sltText := range data.SLTs {
-			slts[i] = map[string]interface{}{
-				"slt_index": i + 1,
-				"slt_text":  sltText,
+			slt := map[string]interface{}{
+				"slt_text": sltText,
 			}
+			// Include slt_index only when updating existing SLTs.
+			// Omitting slt_index triggers creation (API contract).
+			if existing.SLTCount > 0 {
+				slt["slt_index"] = i + 1
+			}
+			slts[i] = slt
 		}
 		payload["slts"] = slts
 	}
@@ -1069,6 +1140,23 @@ func updateModuleContent(c *client.Client, courseID string, data *ImportData, ex
 			}
 		}
 		payload["assignment"] = assign
+	}
+
+	// Dry-run: dump payload as JSON instead of sending
+	if dryRun {
+		payloadJSON, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal payload: %w", err)
+		}
+		if output.GetFormat() != output.FormatJSON {
+			fmt.Println("Dry-run payload (not sent):")
+			fmt.Println(string(payloadJSON))
+		}
+		return map[string]interface{}{
+			"dry_run": true,
+			"payload": payload,
+			"changes": map[string]interface{}{},
+		}, nil
 	}
 
 	var resp map[string]interface{}

@@ -268,29 +268,35 @@ func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData
 			sltText = text
 		}
 
-		// Extract embedded lesson content (LessonV2 with content_json)
+		// Extract embedded lesson content (LessonV2 with content_json + title)
 		var lessonContent map[string]interface{}
+		var lessonTitle string
 		if lesson, ok := sltMap["lesson"].(map[string]interface{}); ok {
 			if contentJSON, ok := lesson["content_json"].(map[string]interface{}); ok {
 				lessonContent = contentJSON
+			}
+			if t, ok := lesson["title"].(string); ok {
+				lessonTitle = t
 			}
 		}
 
 		data.SLTs[i] = SLTData{
 			Index:  sltIndex,
 			Text:   sltText,
-			Lesson: map[string]interface{}{"content_json": lessonContent},
+			Lesson: map[string]interface{}{"content_json": lessonContent, "title": lessonTitle},
 		}
 	}
 
 	// Extract introduction from module content (already inline)
 	if intro, ok := moduleContent["introduction"].(map[string]interface{}); ok {
 		if contentJSON, ok := intro["content_json"].(map[string]interface{}); ok {
+			introTitle, _ := intro["title"].(string)
 			// Wrap in the structure convertContentToMarkdown expects
 			data.Introduction = map[string]interface{}{
 				"data": map[string]interface{}{
 					"content": map[string]interface{}{
 						"content_json": contentJSON,
+						"title":        introTitle,
 					},
 				},
 			}
@@ -300,10 +306,12 @@ func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData
 	// Extract assignment from module content (already inline)
 	if assign, ok := moduleContent["assignment"].(map[string]interface{}); ok {
 		if contentJSON, ok := assign["content_json"].(map[string]interface{}); ok {
+			assignTitle, _ := assign["title"].(string)
 			data.Assignment = map[string]interface{}{
 				"data": map[string]interface{}{
 					"content": map[string]interface{}{
 						"content_json": contentJSON,
+						"title":        assignTitle,
 					},
 				},
 			}
@@ -482,18 +490,37 @@ func convertLessonToMarkdown(lesson map[string]interface{}) (string, []string) {
 		return "", nil
 	}
 
-	return tiptapToMarkdown(contentJSON)
+	md, urls := tiptapToMarkdown(contentJSON)
+
+	// Prepend title as H1 (import expects this per format guide)
+	if title, ok := lesson["title"].(string); ok && title != "" {
+		md = "# " + sanitizeTitle(title) + "\n\n" + md
+	}
+
+	return md, urls
+}
+
+// sanitizeTitle strips newlines and trims whitespace from a title string.
+// Prevents markdown structure breakout when embedding titles as H1 headings.
+func sanitizeTitle(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return strings.TrimSpace(s)
 }
 
 func convertContentToMarkdown(resp map[string]interface{}) (string, []string) {
 	// Handle introduction/assignment response structure
-	// API returns: { "data": { "content": { "content_json": {...} } } }
+	// API returns: { "data": { "content": { "content_json": {...}, "title": "..." } } }
 	var contentJSON map[string]interface{}
+	var title string
 
 	if data, ok := resp["data"].(map[string]interface{}); ok {
 		if content, ok := data["content"].(map[string]interface{}); ok {
 			if cj, ok := content["content_json"].(map[string]interface{}); ok {
 				contentJSON = cj
+			}
+			if t, ok := content["title"].(string); ok {
+				title = t
 			}
 		}
 		// Fallback: try direct content_json on data (in case API changes)
@@ -508,7 +535,14 @@ func convertContentToMarkdown(resp map[string]interface{}) (string, []string) {
 		return "", nil
 	}
 
-	return tiptapToMarkdown(contentJSON)
+	md, urls := tiptapToMarkdown(contentJSON)
+
+	// Prepend title as H1 (import expects this per format guide)
+	if title != "" {
+		md = "# " + sanitizeTitle(title) + "\n\n" + md
+	}
+
+	return md, urls
 }
 
 // tiptapToMarkdown converts Tiptap JSON to Markdown
