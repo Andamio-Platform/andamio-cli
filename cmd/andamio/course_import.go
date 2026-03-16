@@ -416,6 +416,9 @@ func readCompiledModule(dir string) (*ImportData, error) {
 
 		// Extract H1 as title, convert remaining body to Tiptap (matches app behavior)
 		title, body := extractH1Title(string(content))
+		if title == "" && output.GetFormat() != output.FormatJSON {
+			fmt.Printf("Warning: %s has no # title heading — lesson will import without a title\n", filepath.Base(lessonFile))
+		}
 		tiptap, err := markdownToTiptap(body, data.ImageManifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert %s: %w", filepath.Base(lessonFile), err)
@@ -442,6 +445,9 @@ func readCompiledModule(dir string) (*ImportData, error) {
 	introPath := filepath.Join(dir, "introduction.md")
 	if introBytes, err := os.ReadFile(introPath); err == nil && len(introBytes) > 0 {
 		title, body := extractH1Title(string(introBytes))
+		if title == "" && output.GetFormat() != output.FormatJSON {
+			fmt.Printf("Warning: introduction.md has no # title heading\n")
+		}
 		tiptap, err := markdownToTiptap(body, data.ImageManifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert introduction.md: %w", err)
@@ -453,6 +459,9 @@ func readCompiledModule(dir string) (*ImportData, error) {
 	assignPath := filepath.Join(dir, "assignment.md")
 	if assignBytes, err := os.ReadFile(assignPath); err == nil && len(assignBytes) > 0 {
 		title, body := extractH1Title(string(assignBytes))
+		if title == "" && output.GetFormat() != output.FormatJSON {
+			fmt.Printf("Warning: assignment.md has no # title heading\n")
+		}
 		tiptap, err := markdownToTiptap(body, data.ImageManifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert assignment.md: %w", err)

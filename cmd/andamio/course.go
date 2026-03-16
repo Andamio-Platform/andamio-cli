@@ -36,9 +36,7 @@ var courseModulesCmd = &cobra.Command{
 	Use:   "modules <course-id>",
 	Short: "List modules for a course",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/course/user/modules/" + url.PathEscape(args[0]))
-	},
+	RunE:  runCourseModules,
 }
 
 var courseSltsCmd = &cobra.Command{
@@ -153,4 +151,89 @@ func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
 	}
 
 	return output.PrintList(items, titleKey, idKey)
+}
+
+func runCourseModules(cmd *cobra.Command, args []string) error {
+	courseID := args[0]
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// Use teacher endpoint for richer data when teacher auth is available
+	if cfg.HasUserAuth() {
+		return runCourseModulesTeacher(cfg, courseID)
+	}
+
+	// Fall back to user endpoint
+	return getJSON("/api/v2/course/user/modules/" + url.PathEscape(courseID))
+}
+
+func runCourseModulesTeacher(cfg *config.Config, courseID string) error {
+	c := client.New(cfg)
+
+	var resp map[string]interface{}
+	reqBody := map[string]string{"course_id": courseID}
+	if err := c.Post("/api/v2/course/teacher/course-modules/list", reqBody, &resp); err != nil {
+		return err
+	}
+
+	modules, ok := resp["data"].([]interface{})
+	if !ok || len(modules) == 0 {
+		fmt.Println("No modules found.")
+		return nil
+	}
+
+	if output.GetFormat() == output.FormatJSON {
+		return output.PrintJSON(resp)
+	}
+
+	// Print table header
+	fmt.Printf("%-8s %-40s %-12s %5s %7s %10s\n", "Code", "Title", "Status", "SLTs", "Lessons", "Assignment")
+	fmt.Printf("%-8s %-40s %-12s %5s %7s %10s\n", "----", "-----", "------", "----", "-------", "----------")
+
+	for _, m := range modules {
+		mod, ok := m.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		content, ok := mod["content"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		code, _ := content["course_module_code"].(string)
+		title, _ := content["title"].(string)
+		status, _ := content["module_status"].(string)
+
+		sltCount := 0
+		lessonCount := 0
+		if slts, ok := content["slts"].([]interface{}); ok {
+			sltCount = len(slts)
+			for _, slt := range slts {
+				sltMap, ok := slt.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if _, hasLesson := sltMap["lesson"].(map[string]interface{}); hasLesson {
+					lessonCount++
+				}
+			}
+		}
+
+		hasAssignment := "No"
+		if _, ok := content["assignment"].(map[string]interface{}); ok {
+			hasAssignment = "Yes"
+		}
+
+		// Truncate long titles
+		if len(title) > 38 {
+			title = title[:35] + "..."
+		}
+
+		fmt.Printf("%-8s %-40s %-12s %5d %7d %10s\n", code, title, status, sltCount, lessonCount, hasAssignment)
+	}
+
+	return nil
 }
