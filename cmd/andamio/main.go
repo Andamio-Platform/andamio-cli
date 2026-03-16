@@ -9,21 +9,26 @@ import (
 )
 
 var (
+	version      = "dev"
+	commit       = "none"
+	date         = "unknown"
 	outputFormat string
-
-	// Set via ldflags at build time
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
 )
+
+func versionString() string {
+	if commit == "none" {
+		return version
+	}
+	return version + " (" + commit[:7] + " " + date + ")"
+}
 
 var rootCmd = &cobra.Command{
 	Use:     "andamio",
 	Short:   "CLI for interacting with the Andamio Protocol",
-	Long:    `Andamio CLI provides commands for interacting with the Andamio Protocol.
+	Version: versionString(),
+	Long: `Andamio CLI provides commands for interacting with the Andamio Protocol.
 
 Query courses, credentials, and more from the command line.`,
-	Version: version,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		return output.SetFormat(outputFormat)
 	},
