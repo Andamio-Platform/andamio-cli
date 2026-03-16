@@ -70,7 +70,7 @@ func TestMarkdownToTiptap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := markdownToTiptap(tt.markdown)
+			got, err := markdownToTiptap(tt.markdown, nil)
 			if err != nil {
 				t.Fatalf("markdownToTiptap() error = %v", err)
 			}
@@ -105,7 +105,7 @@ func TestMarkdownToTiptapHeadings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.markdown, func(t *testing.T) {
-			got, err := markdownToTiptap(tt.markdown)
+			got, err := markdownToTiptap(tt.markdown, nil)
 			if err != nil {
 				t.Fatalf("markdownToTiptap() error = %v", err)
 			}
@@ -139,7 +139,7 @@ func TestMarkdownToTiptapInlineMarks(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := markdownToTiptap(tt.markdown)
+			got, err := markdownToTiptap(tt.markdown, nil)
 			if err != nil {
 				t.Fatalf("markdownToTiptap() error = %v", err)
 			}
@@ -172,7 +172,7 @@ func TestMarkdownToTiptapInlineMarks(t *testing.T) {
 
 func TestMarkdownToTiptapLink(t *testing.T) {
 	markdown := "[link text](https://example.com)"
-	got, err := markdownToTiptap(markdown)
+	got, err := markdownToTiptap(markdown, nil)
 	if err != nil {
 		t.Fatalf("markdownToTiptap() error = %v", err)
 	}
@@ -205,7 +205,7 @@ func TestMarkdownToTiptapLink(t *testing.T) {
 
 func TestMarkdownToTiptapCodeBlock(t *testing.T) {
 	markdown := "```python\nprint('hello')\n```"
-	got, err := markdownToTiptap(markdown)
+	got, err := markdownToTiptap(markdown, nil)
 	if err != nil {
 		t.Fatalf("markdownToTiptap() error = %v", err)
 	}
@@ -226,7 +226,7 @@ func TestMarkdownToTiptapCodeBlock(t *testing.T) {
 func TestMarkdownToTiptapLists(t *testing.T) {
 	t.Run("bullet list", func(t *testing.T) {
 		markdown := "- item 1\n- item 2"
-		got, err := markdownToTiptap(markdown)
+		got, err := markdownToTiptap(markdown, nil)
 		if err != nil {
 			t.Fatalf("markdownToTiptap() error = %v", err)
 		}
@@ -253,7 +253,7 @@ func TestMarkdownToTiptapLists(t *testing.T) {
 
 	t.Run("ordered list", func(t *testing.T) {
 		markdown := "1. first\n2. second\n3. third"
-		got, err := markdownToTiptap(markdown)
+		got, err := markdownToTiptap(markdown, nil)
 		if err != nil {
 			t.Fatalf("markdownToTiptap() error = %v", err)
 		}
@@ -274,7 +274,7 @@ func TestMarkdownToTiptapLists(t *testing.T) {
 
 func TestMarkdownToTiptapImage(t *testing.T) {
 	markdown := "![alt text](https://example.com/image.png)"
-	got, err := markdownToTiptap(markdown)
+	got, err := markdownToTiptap(markdown, nil)
 	if err != nil {
 		t.Fatalf("markdownToTiptap() error = %v", err)
 	}
@@ -303,7 +303,7 @@ func TestMarkdownToTiptapImage(t *testing.T) {
 func TestMarkdownToTiptapJSON(t *testing.T) {
 	// Verify that output is valid JSON
 	markdown := "# Test\n\nHello **world**\n\n- item 1\n- item 2"
-	got, err := markdownToTiptap(markdown)
+	got, err := markdownToTiptap(markdown, nil)
 	if err != nil {
 		t.Fatalf("markdownToTiptap() error = %v", err)
 	}
@@ -321,7 +321,7 @@ func TestMarkdownToTiptapJSON(t *testing.T) {
 }
 
 func TestMarkdownToTiptapEmptyInput(t *testing.T) {
-	got, err := markdownToTiptap("")
+	got, err := markdownToTiptap("", nil)
 	if err != nil {
 		t.Fatalf("markdownToTiptap() error = %v", err)
 	}

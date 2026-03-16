@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,6 +69,7 @@ type ImportData struct {
 	Introduction  map[string]interface{}
 	Assignment    map[string]interface{}
 	ImageWarnings []string
+	ImageManifest map[string]string // filename → original URL from .image-manifest.json
 }
 
 // LessonImport holds a single lesson's data
@@ -103,9 +105,14 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Warn about images
+	// Report manifest usage
+	if len(data.ImageManifest) > 0 {
+		fmt.Printf("Found image manifest: %d image(s) will use original URLs\n", len(data.ImageManifest))
+	}
+
+	// Warn about new images not in manifest
 	if len(data.ImageWarnings) > 0 {
-		fmt.Printf("Warning: %d image(s) in assets/ cannot be uploaded (not yet supported):\n", len(data.ImageWarnings))
+		fmt.Printf("Warning: %d new image(s) in assets/ cannot be uploaded (not yet supported):\n", len(data.ImageWarnings))
 		for _, img := range data.ImageWarnings {
 			fmt.Printf("  - %s\n", img)
 		}
@@ -176,7 +183,7 @@ func readCompiledModule(dir string) (*ImportData, error) {
 			return nil, fmt.Errorf("failed to read %s: %w", filepath.Base(lessonFile), err)
 		}
 
-		tiptap, err := markdownToTiptap(string(content))
+		tiptap, err := markdownToTiptap(string(content), data.ImageManifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert %s: %w", filepath.Base(lessonFile), err)
 		}
@@ -195,7 +202,7 @@ func readCompiledModule(dir string) (*ImportData, error) {
 	// Read introduction.md if exists
 	introPath := filepath.Join(dir, "introduction.md")
 	if introBytes, err := os.ReadFile(introPath); err == nil && len(introBytes) > 0 {
-		tiptap, err := markdownToTiptap(string(introBytes))
+		tiptap, err := markdownToTiptap(string(introBytes), data.ImageManifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert introduction.md: %w", err)
 		}
@@ -205,25 +212,48 @@ func readCompiledModule(dir string) (*ImportData, error) {
 	// Read assignment.md if exists
 	assignPath := filepath.Join(dir, "assignment.md")
 	if assignBytes, err := os.ReadFile(assignPath); err == nil && len(assignBytes) > 0 {
-		tiptap, err := markdownToTiptap(string(assignBytes))
+		tiptap, err := markdownToTiptap(string(assignBytes), data.ImageManifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert assignment.md: %w", err)
 		}
 		data.Assignment = tiptap
 	}
 
-	// Check for images in assets/
+	// Load image manifest if it exists
 	assetsDir := filepath.Join(dir, "assets")
+	data.ImageManifest = loadImageManifest(assetsDir)
+
+	// Check for images in assets/ that are NOT in the manifest (new images)
 	if info, err := os.Stat(assetsDir); err == nil && info.IsDir() {
 		files, _ := os.ReadDir(assetsDir)
 		for _, f := range files {
-			if !f.IsDir() {
+			if f.IsDir() || f.Name() == ".image-manifest.json" {
+				continue
+			}
+			if _, inManifest := data.ImageManifest[f.Name()]; !inManifest {
 				data.ImageWarnings = append(data.ImageWarnings, f.Name())
 			}
 		}
 	}
 
 	return data, nil
+}
+
+// loadImageManifest reads .image-manifest.json from the assets directory.
+// Returns an empty map if the file doesn't exist or can't be parsed.
+func loadImageManifest(assetsDir string) map[string]string {
+	manifestPath := filepath.Join(assetsDir, ".image-manifest.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return make(map[string]string)
+	}
+
+	var manifest map[string]string
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return make(map[string]string)
+	}
+
+	return manifest
 }
 
 func parseSLTsFromOutline(content string) []string {
@@ -269,8 +299,9 @@ func extractLessonNumber(path string) int {
 	return 0
 }
 
-// markdownToTiptap converts Markdown to Tiptap JSON using goldmark
-func markdownToTiptap(md string) (map[string]interface{}, error) {
+// markdownToTiptap converts Markdown to Tiptap JSON using goldmark.
+// The manifest maps local image filenames to their original CDN URLs.
+func markdownToTiptap(md string, manifest map[string]string) (map[string]interface{}, error) {
 	// Create goldmark parser with GFM extensions
 	gm := goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
@@ -283,7 +314,7 @@ func markdownToTiptap(md string) (map[string]interface{}, error) {
 	doc := gm.Parser().Parse(reader)
 
 	// Convert AST to Tiptap
-	content := convertNode(doc, []byte(md))
+	content := convertNode(doc, []byte(md), manifest)
 
 	return map[string]interface{}{
 		"type":    "doc",
@@ -291,11 +322,11 @@ func markdownToTiptap(md string) (map[string]interface{}, error) {
 	}, nil
 }
 
-func convertNode(n ast.Node, source []byte) []interface{} {
+func convertNode(n ast.Node, source []byte, manifest map[string]string) []interface{} {
 	var result []interface{}
 
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		node := convertSingleNode(child, source)
+		node := convertSingleNode(child, source, manifest)
 		if node != nil {
 			result = append(result, node)
 		}
@@ -304,10 +335,10 @@ func convertNode(n ast.Node, source []byte) []interface{} {
 	return result
 }
 
-func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
+func convertSingleNode(n ast.Node, source []byte, manifest map[string]string) map[string]interface{} {
 	switch node := n.(type) {
 	case *ast.Paragraph:
-		content := convertInlineContent(node, source)
+		content := convertInlineContent(node, source, manifest)
 		if len(content) == 0 {
 			return nil
 		}
@@ -317,7 +348,7 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 		}
 
 	case *ast.Heading:
-		content := convertInlineContent(node, source)
+		content := convertInlineContent(node, source, manifest)
 		return map[string]interface{}{
 			"type": "heading",
 			"attrs": map[string]interface{}{
@@ -331,7 +362,7 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 		if node.IsOrdered() {
 			listType = "orderedList"
 		}
-		items := convertNode(node, source)
+		items := convertNode(node, source, manifest)
 		return map[string]interface{}{
 			"type":    listType,
 			"content": items,
@@ -339,7 +370,7 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 
 	case *ast.ListItem:
 		// List items contain paragraphs and possibly nested lists
-		content := convertNode(node, source)
+		content := convertNode(node, source, manifest)
 		return map[string]interface{}{
 			"type":    "listItem",
 			"content": content,
@@ -385,7 +416,7 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 		}
 
 	case *ast.Blockquote:
-		content := convertNode(node, source)
+		content := convertNode(node, source, manifest)
 		return map[string]interface{}{
 			"type":    "blockquote",
 			"content": content,
@@ -397,9 +428,22 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 		}
 
 	case *ast.Image:
-		// Images can't be uploaded yet - skip with warning handled elsewhere
-		// Return a paragraph with the alt text as placeholder
+		src := string(node.Destination)
 		alt := string(node.Text(source))
+
+		// Resolve image URL: check manifest for local assets, pass through external URLs
+		resolvedURL := resolveImageURL(src, alt, manifest)
+		if resolvedURL != "" {
+			return map[string]interface{}{
+				"type": "image",
+				"attrs": map[string]interface{}{
+					"src": resolvedURL,
+					"alt": alt,
+				},
+			}
+		}
+
+		// Unresolved local image — placeholder
 		if alt == "" {
 			alt = "[image]"
 		}
@@ -416,7 +460,7 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 	default:
 		// For unhandled block nodes, try to convert children
 		if n.HasChildren() {
-			content := convertNode(n, source)
+			content := convertNode(n, source, manifest)
 			if len(content) > 0 {
 				return content[0].(map[string]interface{})
 			}
@@ -426,18 +470,18 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 	return nil
 }
 
-func convertInlineContent(n ast.Node, source []byte) []interface{} {
+func convertInlineContent(n ast.Node, source []byte, manifest map[string]string) []interface{} {
 	var result []interface{}
 
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		nodes := convertInlineNode(child, source)
+		nodes := convertInlineNode(child, source, manifest)
 		result = append(result, nodes...)
 	}
 
 	return result
 }
 
-func convertInlineNode(n ast.Node, source []byte) []interface{} {
+func convertInlineNode(n ast.Node, source []byte, manifest map[string]string) []interface{} {
 	switch node := n.(type) {
 	case *ast.Text:
 		text := string(node.Segment.Value(source))
@@ -482,7 +526,7 @@ func convertInlineNode(n ast.Node, source []byte) []interface{} {
 		// Collect child text with marks
 		var children []interface{}
 		for child := node.FirstChild(); child != nil; child = child.NextSibling() {
-			nodes := convertInlineNode(child, source)
+			nodes := convertInlineNode(child, source, manifest)
 			children = append(children, nodes...)
 		}
 
@@ -506,7 +550,7 @@ func convertInlineNode(n ast.Node, source []byte) []interface{} {
 		// Collect child text with strike mark
 		var children []interface{}
 		for child := node.FirstChild(); child != nil; child = child.NextSibling() {
-			nodes := convertInlineNode(child, source)
+			nodes := convertInlineNode(child, source, manifest)
 			children = append(children, nodes...)
 		}
 
@@ -567,21 +611,21 @@ func convertInlineNode(n ast.Node, source []byte) []interface{} {
 		src := string(node.Destination)
 		alt := string(node.Text(source))
 
-		// For external URLs, create proper image node
-		// For local assets/, we'll skip (they can't be uploaded)
-		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		// Resolve image URL: check manifest for local assets, pass through external URLs
+		resolvedURL := resolveImageURL(src, alt, manifest)
+		if resolvedURL != "" {
 			return []interface{}{
 				map[string]interface{}{
 					"type": "image",
 					"attrs": map[string]interface{}{
-						"src": src,
+						"src": resolvedURL,
 						"alt": alt,
 					},
 				},
 			}
 		}
 
-		// Local image - return placeholder text
+		// Unresolved local image — placeholder text
 		return []interface{}{
 			map[string]interface{}{
 				"type": "text",
@@ -598,7 +642,7 @@ func convertInlineNode(n ast.Node, source []byte) []interface{} {
 		if n.HasChildren() {
 			var result []interface{}
 			for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-				nodes := convertInlineNode(child, source)
+				nodes := convertInlineNode(child, source, manifest)
 				result = append(result, nodes...)
 			}
 			return result
@@ -606,6 +650,25 @@ func convertInlineNode(n ast.Node, source []byte) []interface{} {
 	}
 
 	return nil
+}
+
+// resolveImageURL resolves an image source to a URL suitable for Tiptap JSON.
+// For external URLs (http/https), returns the URL as-is.
+// For local paths (assets/filename.png), looks up the original URL in the manifest.
+// Returns "" if the image cannot be resolved.
+func resolveImageURL(src, alt string, manifest map[string]string) string {
+	// External URLs pass through directly
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		return src
+	}
+
+	// Local path — check manifest for original URL
+	filename := filepath.Base(src)
+	if url, ok := manifest[filename]; ok {
+		return url
+	}
+
+	return ""
 }
 
 func updateModuleContent(c *client.Client, courseID string, data *ImportData) error {
