@@ -158,31 +158,49 @@ func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData
 		ModuleCode: moduleCode,
 	}
 
-	// Fetch SLTs first to know how many lessons to fetch
+	// Fetch module list to get module title
+	var modulesResp map[string]interface{}
+	if err := c.Get("/api/v2/course/user/modules/"+url.PathEscape(courseID), &modulesResp); err != nil {
+		return nil, fmt.Errorf("failed to fetch modules: %w", err)
+	}
+	if modules, ok := modulesResp["data"].([]interface{}); ok {
+		for _, m := range modules {
+			mod, ok := m.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if content, ok := mod["content"].(map[string]interface{}); ok {
+				if code, ok := content["course_module_code"].(string); ok && code == moduleCode {
+					if title, ok := content["title"].(string); ok {
+						data.Title = title
+					}
+					break
+				}
+			}
+		}
+	}
+
+	// Fetch SLTs with embedded lessons
 	var sltsResp map[string]interface{}
 	if err := c.Get("/api/v2/course/user/slts/"+url.PathEscape(courseID)+"/"+url.PathEscape(moduleCode), &sltsResp); err != nil {
 		return nil, fmt.Errorf("failed to fetch SLTs: %w", err)
 	}
 
-	// Extract module title and SLTs from response
-	if moduleInfo, ok := sltsResp["course_module"].(map[string]interface{}); ok {
-		if title, ok := moduleInfo["title"].(string); ok {
-			data.Title = title
-		}
+	// Extract data wrapper - response is { "data": { "slts": [...] } }
+	dataWrapper, ok := sltsResp["data"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected response format: missing data wrapper")
 	}
 
-	sltsData, ok := sltsResp["data"].([]interface{})
+	// Extract SLTs array from data.slts
+	sltsData, ok := dataWrapper["slts"].([]interface{})
 	if !ok {
 		sltsData = []interface{}{}
 	}
 
-	// Fetch lessons in parallel
-	fmt.Printf("Fetching %d lessons...\n", len(sltsData))
+	// SLTs and lessons are embedded in the response - no separate fetch needed
+	fmt.Printf("Processing %d lessons...\n", len(sltsData))
 	data.SLTs = make([]SLTData, len(sltsData))
-
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 5) // Limit to 5 concurrent requests
-	errChan := make(chan error, len(sltsData))
 
 	for i, sltItem := range sltsData {
 		sltMap, ok := sltItem.(map[string]interface{})
@@ -196,34 +214,19 @@ func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData
 			sltText = text
 		}
 
-		data.SLTs[i] = SLTData{
-			Index: sltIndex,
-			Text:  sltText,
+		// Extract embedded lesson content - lessons are already in SLT response
+		var lessonContent map[string]interface{}
+		if lesson, ok := sltMap["lesson"].(map[string]interface{}); ok {
+			if contentJSON, ok := lesson["content_json"].(map[string]interface{}); ok {
+				lessonContent = contentJSON
+			}
 		}
 
-		wg.Add(1)
-		go func(idx int, sltIdx int) {
-			defer wg.Done()
-			sem <- struct{}{}        // Acquire
-			defer func() { <-sem }() // Release
-
-			var lessonResp map[string]interface{}
-			err := c.Get(fmt.Sprintf("/api/v2/course/user/lesson/%s/%s/%d",
-				url.PathEscape(courseID), url.PathEscape(moduleCode), sltIdx), &lessonResp)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to fetch lesson %d: %w", sltIdx, err)
-				return
-			}
-			data.SLTs[idx].Lesson = lessonResp
-		}(i, sltIndex)
-	}
-
-	wg.Wait()
-	close(errChan)
-
-	// Check for errors
-	for err := range errChan {
-		return nil, err
+		data.SLTs[i] = SLTData{
+			Index:  sltIndex,
+			Text:   sltText,
+			Lesson: map[string]interface{}{"content_json": lessonContent},
+		}
 	}
 
 	// Fetch introduction (optional - may 404)
@@ -341,7 +344,11 @@ func convertLessonToMarkdown(lesson map[string]interface{}) (string, []string) {
 	// Extract content_json from lesson response
 	var contentJSON map[string]interface{}
 
-	if data, ok := lesson["data"].(map[string]interface{}); ok {
+	// Try direct content_json (from embedded SLT response)
+	if cj, ok := lesson["content_json"].(map[string]interface{}); ok {
+		contentJSON = cj
+	} else if data, ok := lesson["data"].(map[string]interface{}); ok {
+		// Try nested structure (from separate lesson API call)
 		if lessonData, ok := data["lesson"].(map[string]interface{}); ok {
 			if cj, ok := lessonData["content_json"].(map[string]interface{}); ok {
 				contentJSON = cj
@@ -472,7 +479,7 @@ func tiptapToMarkdown(node map[string]interface{}) (string, []string) {
 	case "horizontalRule":
 		buf.WriteString("---\n\n")
 
-	case "image":
+	case "image", "imageBlock":
 		if attrs, ok := node["attrs"].(map[string]interface{}); ok {
 			src, _ := attrs["src"].(string)
 			alt, _ := attrs["alt"].(string)
@@ -567,6 +574,22 @@ func renderListItem(node map[string]interface{}, prefix string) (string, []strin
 			// Indent nested list
 			for _, line := range strings.Split(strings.TrimRight(md, "\n"), "\n") {
 				buf.WriteString("  " + line + "\n")
+			}
+		} else if childType == "image" || childType == "imageBlock" {
+			// Handle images inside list items
+			if attrs, ok := childMap["attrs"].(map[string]interface{}); ok {
+				src, _ := attrs["src"].(string)
+				alt, _ := attrs["alt"].(string)
+				if src != "" {
+					imageURLs = append(imageURLs, src)
+					filename := filepath.Base(src)
+					if first {
+						buf.WriteString(prefix + fmt.Sprintf("![%s](assets/%s)\n", alt, filename))
+						first = false
+					} else {
+						buf.WriteString(fmt.Sprintf("  ![%s](assets/%s)\n", alt, filename))
+					}
+				}
 			}
 		}
 	}
