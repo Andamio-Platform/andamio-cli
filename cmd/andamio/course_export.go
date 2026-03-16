@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -314,9 +315,40 @@ func writeCompiledModule(outputDir string, data *ModuleData) error {
 			// Log warning but don't fail
 			fmt.Printf("Warning: some images failed to download: %v\n", err)
 		}
+
+		// Write image manifest mapping filenames to original URLs
+		if err := writeImageManifest(assetsDir, imageURLs); err != nil {
+			fmt.Printf("Warning: failed to write image manifest: %v\n", err)
+		}
 	}
 
 	return nil
+}
+
+// writeImageManifest writes a .image-manifest.json mapping local filenames to original URLs.
+// This enables the import command to restore original CDN URLs during round-trip.
+func writeImageManifest(assetsDir string, urls []string) error {
+	manifest := make(map[string]string)
+
+	for _, imgURL := range urls {
+		filename := filepath.Base(imgURL)
+		// Remove query params from filename
+		if idx := strings.Index(filename, "?"); idx != -1 {
+			filename = filename[:idx]
+		}
+		// If duplicate filename, keep the first mapping (matches download behavior)
+		if _, exists := manifest[filename]; !exists {
+			manifest[filename] = imgURL
+		}
+	}
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	manifestPath := filepath.Join(assetsDir, ".image-manifest.json")
+	return writeFileAtomic(manifestPath, data)
 }
 
 func generateOutline(data *ModuleData) string {
@@ -365,11 +397,20 @@ func convertLessonToMarkdown(lesson map[string]interface{}) (string, []string) {
 
 func convertContentToMarkdown(resp map[string]interface{}) (string, []string) {
 	// Handle introduction/assignment response structure
+	// API returns: { "data": { "content": { "content_json": {...} } } }
 	var contentJSON map[string]interface{}
 
 	if data, ok := resp["data"].(map[string]interface{}); ok {
-		if cj, ok := data["content_json"].(map[string]interface{}); ok {
-			contentJSON = cj
+		if content, ok := data["content"].(map[string]interface{}); ok {
+			if cj, ok := content["content_json"].(map[string]interface{}); ok {
+				contentJSON = cj
+			}
+		}
+		// Fallback: try direct content_json on data (in case API changes)
+		if contentJSON == nil {
+			if cj, ok := data["content_json"].(map[string]interface{}); ok {
+				contentJSON = cj
+			}
 		}
 	}
 
