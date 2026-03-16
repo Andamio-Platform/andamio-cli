@@ -126,6 +126,130 @@ type ImportResult struct {
 	Changes        map[string]interface{} `json:"changes"`
 }
 
+// ImportParams holds the parameters for importing a single module.
+type ImportParams struct {
+	Client     *client.Client
+	Config     *config.Config
+	ModuleDir  string
+	CourseID   string
+	CreateMode bool
+	DryRun     bool
+	SortOrder  int
+	Quiet      bool // suppress progress output (JSON mode)
+}
+
+// importModule is the shared orchestration logic for importing a single module.
+// Used by both `course import` and `course import-all`.
+func importModule(p ImportParams) (*ImportResult, error) {
+	// Read and parse the compiled module
+	data, err := readCompiledModule(p.ModuleDir)
+	if err != nil {
+		return nil, err
+	}
+
+	if !p.Quiet && len(data.ImageManifest) > 0 {
+		fmt.Printf("Found image manifest: %d image(s) will use original URLs\n", len(data.ImageManifest))
+	}
+
+	// Upload new images (not in manifest) to the app's CDN, then update manifest on disk
+	var imagesUploaded int
+	if len(data.ImageWarnings) > 0 {
+		if !p.Quiet {
+			fmt.Printf("Uploading %d new image(s)...\n", len(data.ImageWarnings))
+		}
+		assetsDir := filepath.Join(p.ModuleDir, "assets")
+		var failed []string
+		imagesUploaded, failed = uploadNewImages(p.Config, assetsDir, data.ImageWarnings, data.ImageManifest)
+
+		if !p.Quiet {
+			if imagesUploaded > 0 {
+				fmt.Printf("  Uploaded %d image(s)\n", imagesUploaded)
+			}
+			for _, f := range failed {
+				fmt.Printf("  Failed: %s\n", f)
+			}
+		}
+
+		// Write updated manifest to disk so re-read picks up new URLs
+		if imagesUploaded > 0 {
+			manifestData, _ := json.MarshalIndent(data.ImageManifest, "", "  ")
+			os.WriteFile(filepath.Join(assetsDir, ".image-manifest.json"), manifestData, 0644)
+
+			// Re-read module with updated manifest (new URLs now resolve during conversion)
+			data, err = readCompiledModule(p.ModuleDir)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		data.ImageWarnings = failed
+	}
+
+	// Fetch current module state to determine SLT lock status and preserve metadata
+	existing, err := fetchExistingModule(p.Client, p.CourseID, data.ModuleCode)
+	if err != nil {
+		// Only trigger creation for "not found" errors, not auth/network failures
+		if p.CreateMode && errors.Is(err, errModuleNotFound) {
+			if !p.Quiet {
+				fmt.Printf("Module %s not found — creating...\n", data.ModuleCode)
+			}
+			createPayload := map[string]interface{}{
+				"course_id":          p.CourseID,
+				"course_module_code": data.ModuleCode,
+				"title":              data.Title,
+				"sort_order":         p.SortOrder,
+			}
+			var createResp map[string]interface{}
+			if err := p.Client.Post("/api/v2/course/teacher/course-module/create", createPayload, &createResp); err != nil {
+				return nil, fmt.Errorf("failed to create module: %w", err)
+			}
+			if !p.Quiet {
+				fmt.Printf("Created module: %s (%s)\n", data.Title, data.ModuleCode)
+			}
+			// Re-fetch the newly created module
+			existing, err = fetchExistingModule(p.Client, p.CourseID, data.ModuleCode)
+			if err != nil {
+				return nil, fmt.Errorf("failed to fetch newly created module: %w", err)
+			}
+		} else {
+			return nil, err
+		}
+	}
+	sltsLocked := existing.Status != "DRAFT"
+	if !p.Quiet && sltsLocked {
+		fmt.Printf("Module status is %s — SLTs are locked, updating content only\n", existing.Status)
+	}
+
+	// Update the module via API (or dump payload in dry-run mode)
+	resp, err := updateModuleContent(p.Client, p.CourseID, data, existing, sltsLocked, p.DryRun)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract changes summary from API response
+	changes, _ := resp["changes"].(map[string]interface{})
+	if changes == nil {
+		changes = map[string]interface{}{}
+	}
+
+	return &ImportResult{
+		CourseID:       p.CourseID,
+		ModuleCode:     data.ModuleCode,
+		Title:          data.Title,
+		ModuleStatus:   existing.Status,
+		SLTsLocked:     sltsLocked,
+		SLTCount:       len(data.SLTs),
+		LessonCount:    len(data.Lessons),
+		HasIntro:       data.Introduction != nil,
+		HasAssignment:  data.Assignment != nil,
+		ManifestUsed:   len(data.ImageManifest),
+		ImagesUploaded: imagesUploaded,
+		FailedImages:   data.ImageWarnings,
+		DryRun:         p.DryRun,
+		Changes:        changes,
+	}, nil
+}
+
 func runCourseImport(cmd *cobra.Command, args []string) error {
 	moduleDir := args[0]
 	courseID, _ := cmd.Flags().GetString("course-id")
@@ -147,12 +271,6 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Reading module from %s...\n", moduleDir)
 	}
 
-	// Read and parse the compiled module
-	data, err := readCompiledModule(moduleDir)
-	if err != nil {
-		return err
-	}
-
 	// Load config and create client
 	cfg, err := config.Load()
 	if err != nil {
@@ -160,106 +278,18 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	if !isJSON && len(data.ImageManifest) > 0 {
-		fmt.Printf("Found image manifest: %d image(s) will use original URLs\n", len(data.ImageManifest))
-	}
-
-	// Upload new images (not in manifest) to the app's CDN, then update manifest on disk
-	var imagesUploaded int
-	if len(data.ImageWarnings) > 0 {
-		if !isJSON {
-			fmt.Printf("Uploading %d new image(s)...\n", len(data.ImageWarnings))
-		}
-		assetsDir := filepath.Join(moduleDir, "assets")
-		var failed []string
-		imagesUploaded, failed = uploadNewImages(cfg, assetsDir, data.ImageWarnings, data.ImageManifest)
-
-		if !isJSON {
-			if imagesUploaded > 0 {
-				fmt.Printf("  Uploaded %d image(s)\n", imagesUploaded)
-			}
-			for _, f := range failed {
-				fmt.Printf("  Failed: %s\n", f)
-			}
-		}
-
-		// Write updated manifest to disk so re-read picks up new URLs
-		if imagesUploaded > 0 {
-			manifestData, _ := json.MarshalIndent(data.ImageManifest, "", "  ")
-			os.WriteFile(filepath.Join(assetsDir, ".image-manifest.json"), manifestData, 0644)
-
-			// Re-read module with updated manifest (new URLs now resolve during conversion)
-			data, err = readCompiledModule(moduleDir)
-			if err != nil {
-				return err
-			}
-		}
-
-		data.ImageWarnings = failed
-	}
-
-	// Fetch current module state to determine SLT lock status and preserve metadata
-	existing, err := fetchExistingModule(c, courseID, data.ModuleCode)
-	if err != nil {
-		// Only trigger creation for "not found" errors, not auth/network failures
-		if createMode && errors.Is(err, errModuleNotFound) {
-			if !isJSON {
-				fmt.Printf("Module %s not found — creating...\n", data.ModuleCode)
-			}
-			createPayload := map[string]interface{}{
-				"course_id":          courseID,
-				"course_module_code": data.ModuleCode,
-				"title":              data.Title,
-				"sort_order":         sortOrder,
-			}
-			var createResp map[string]interface{}
-			if err := c.Post("/api/v2/course/teacher/course-module/create", createPayload, &createResp); err != nil {
-				return fmt.Errorf("failed to create module: %w", err)
-			}
-			if !isJSON {
-				fmt.Printf("Created module: %s (%s)\n", data.Title, data.ModuleCode)
-			}
-			// Re-fetch the newly created module
-			existing, err = fetchExistingModule(c, courseID, data.ModuleCode)
-			if err != nil {
-				return fmt.Errorf("failed to fetch newly created module: %w", err)
-			}
-		} else {
-			return err
-		}
-	}
-	sltsLocked := existing.Status != "DRAFT"
-	if !isJSON && sltsLocked {
-		fmt.Printf("Module status is %s — SLTs are locked, updating content only\n", existing.Status)
-	}
-
-	// Update the module via API (or dump payload in dry-run mode)
-	resp, err := updateModuleContent(c, courseID, data, existing, sltsLocked, dryRun)
+	importResult, err := importModule(ImportParams{
+		Client:     c,
+		Config:     cfg,
+		ModuleDir:  moduleDir,
+		CourseID:   courseID,
+		CreateMode: createMode,
+		DryRun:     dryRun,
+		SortOrder:  sortOrder,
+		Quiet:      isJSON,
+	})
 	if err != nil {
 		return err
-	}
-
-	// Extract changes summary from API response
-	changes, _ := resp["changes"].(map[string]interface{})
-	if changes == nil {
-		changes = map[string]interface{}{}
-	}
-
-	importResult := ImportResult{
-		CourseID:       courseID,
-		ModuleCode:     data.ModuleCode,
-		Title:          data.Title,
-		ModuleStatus:   existing.Status,
-		SLTsLocked:     sltsLocked,
-		SLTCount:       len(data.SLTs),
-		LessonCount:    len(data.Lessons),
-		HasIntro:       data.Introduction != nil,
-		HasAssignment:  data.Assignment != nil,
-		ManifestUsed:   len(data.ImageManifest),
-		ImagesUploaded: imagesUploaded,
-		FailedImages:   data.ImageWarnings,
-		DryRun:         dryRun,
-		Changes:        changes,
 	}
 
 	if isJSON {
@@ -267,21 +297,23 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Text TUI output
+	r := importResult
 	fmt.Println()
-	fmt.Printf("  Module:  %s (%s)\n", data.Title, data.ModuleCode)
-	fmt.Printf("  Course:  %s\n", courseID)
+	fmt.Printf("  Module:  %s (%s)\n", r.Title, r.ModuleCode)
+	fmt.Printf("  Course:  %s\n", r.CourseID)
 	fmt.Println()
 	fmt.Println("  Content:")
-	fmt.Printf("    SLTs:          %d\n", len(data.SLTs))
-	fmt.Printf("    Lessons:       %d\n", len(data.Lessons))
-	if data.Introduction != nil {
+	fmt.Printf("    SLTs:          %d\n", r.SLTCount)
+	fmt.Printf("    Lessons:       %d\n", r.LessonCount)
+	if r.HasIntro {
 		fmt.Printf("    Introduction:  yes\n")
 	}
-	if data.Assignment != nil {
+	if r.HasAssignment {
 		fmt.Printf("    Assignment:    yes\n")
 	}
 
 	// Show changes from API response
+	changes := r.Changes
 	if len(changes) > 0 {
 		fmt.Println()
 		fmt.Println("  Changes:")
@@ -317,16 +349,16 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if len(data.ImageManifest) > 0 || imagesUploaded > 0 {
+	if r.ManifestUsed > 0 || r.ImagesUploaded > 0 {
 		fmt.Printf("\n  Images:\n")
-		if len(data.ImageManifest) > 0 {
-			fmt.Printf("    Manifest:   %d preserved via CDN URLs\n", len(data.ImageManifest))
+		if r.ManifestUsed > 0 {
+			fmt.Printf("    Manifest:   %d preserved via CDN URLs\n", r.ManifestUsed)
 		}
-		if imagesUploaded > 0 {
-			fmt.Printf("    Uploaded:   %d new image(s) to CDN\n", imagesUploaded)
+		if r.ImagesUploaded > 0 {
+			fmt.Printf("    Uploaded:   %d new image(s) to CDN\n", r.ImagesUploaded)
 		}
-		if len(data.ImageWarnings) > 0 {
-			fmt.Printf("    Failed:     %d image(s) could not be uploaded\n", len(data.ImageWarnings))
+		if len(r.FailedImages) > 0 {
+			fmt.Printf("    Failed:     %d image(s) could not be uploaded\n", len(r.FailedImages))
 		}
 	}
 
@@ -1213,7 +1245,8 @@ func uploadImage(cfg *config.Config, filePath string) (string, error) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 	partHeader := make(textproto.MIMEHeader)
-	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filepath.Base(filePath)))
+	safeName := strings.ReplaceAll(filepath.Base(filePath), `"`, `_`)
+	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, safeName))
 	partHeader.Set("Content-Type", mimeType)
 	part, err := writer.CreatePart(partHeader)
 	if err != nil {
