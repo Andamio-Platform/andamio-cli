@@ -113,6 +113,7 @@ andamio user logout
 - `course lesson <course-id> <module-code> <slt-index>` — Get lesson content
 - `course assignment <course-id> <module-code>` — Get assignment
 - `course intro <course-id> <module-code>` — Get module introduction
+- `course export <course-id> <module-code>` — Export module to local directory (requires user login)
 
 ### `andamio project`
 
@@ -138,6 +139,37 @@ andamio user logout
 
 - `apikey usage` — Get API key usage stats
 - `apikey profile` — Get API key profile
+
+## Course Export
+
+Export a course module to a local directory in the same format used by [andamio-lesson-coach](https://github.com/Andamio-Platform/andamio-lesson-coach-v2).
+
+```bash
+# Export a module to ./compiled/<course-slug>/<module-code>/
+andamio course export <course-id> <module-code>
+
+# Export to a custom directory
+andamio course export <course-id> <module-code> --output-dir ./my-courses
+```
+
+This produces a directory structure compatible with the lesson-coach `/compile` skill:
+
+```
+compiled/<course-slug>/<module-code>/
+├── outline.md          # YAML frontmatter (title, code) + SLT list
+├── introduction.md     # Module introduction (if exists)
+├── lesson-1.md         # Lesson for SLT 1
+├── lesson-2.md         # Lesson for SLT 2
+├── ...
+├── assignment.md       # Module assignment (if exists)
+└── assets/             # Images referenced in content
+    └── *.png
+```
+
+Use this for:
+- Local editing of course content in your preferred editor
+- Version control of course materials
+- Round-trip editing: export → modify → re-import (import coming soon)
 
 ## Configuration
 

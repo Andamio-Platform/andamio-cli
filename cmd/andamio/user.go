@@ -141,7 +141,7 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 			result.Error = errParam
 			resultChan <- result
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprintf(w, authFailureHTML(errParam))
+			fmt.Fprint(w, authFailureHTML(errParam))
 			return
 		}
 
@@ -151,7 +151,7 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 			result.Error = "invalid state parameter"
 			resultChan <- result
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprintf(w, authFailureHTML("Security validation failed"))
+			fmt.Fprint(w, authFailureHTML("Security validation failed"))
 			return
 		}
 
@@ -165,13 +165,13 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 			result.Error = "no JWT received"
 			resultChan <- result
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprintf(w, authFailureHTML("Authentication failed - no token received"))
+			fmt.Fprint(w, authFailureHTML("Authentication failed - no token received"))
 			return
 		}
 
 		resultChan <- result
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, authSuccessHTML(result.Alias))
+		fmt.Fprint(w, authSuccessHTML(result.Alias))
 	})
 
 	server := &http.Server{Handler: mux}
