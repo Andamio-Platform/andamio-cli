@@ -114,6 +114,7 @@ andamio user logout
 - `course assignment <course-id> <module-code>` — Get assignment
 - `course intro <course-id> <module-code>` — Get module introduction
 - `course export <course-id> <module-code>` — Export module to local directory (requires user login)
+- `course import <path> --course-id <id>` — Import module from local directory (requires user login)
 
 ### `andamio project`
 
@@ -140,9 +141,11 @@ andamio user logout
 - `apikey usage` — Get API key usage stats
 - `apikey profile` — Get API key profile
 
-## Course Export
+## Course Import/Export
 
-Export a course module to a local directory in the same format used by [andamio-lesson-coach](https://github.com/Andamio-Platform/andamio-lesson-coach-v2).
+Export and import course modules for local editing. The format is compatible with [andamio-lesson-coach](https://github.com/Andamio-Platform/andamio-lesson-coach-v2).
+
+### Export
 
 ```bash
 # Export a module to ./compiled/<course-slug>/<module-code>/
@@ -152,7 +155,18 @@ andamio course export <course-id> <module-code>
 andamio course export <course-id> <module-code> --output-dir ./my-courses
 ```
 
-This produces a directory structure compatible with the lesson-coach `/compile` skill:
+### Import
+
+```bash
+# Import a locally-edited module back to the platform
+andamio course import ./compiled/my-course/101 --course-id <course-id>
+```
+
+> **Note:** Image upload is not yet supported. Local images in `assets/` will be skipped with a warning. External image URLs (http/https) are preserved.
+
+### Directory Structure
+
+Both commands use this structure (compatible with lesson-coach `/compile` skill):
 
 ```
 compiled/<course-slug>/<module-code>/
@@ -166,10 +180,12 @@ compiled/<course-slug>/<module-code>/
     └── *.png
 ```
 
-Use this for:
-- Local editing of course content in your preferred editor
-- Version control of course materials
-- Round-trip editing: export → modify → re-import (import coming soon)
+### Use Cases
+
+- **Local editing:** Edit course content in your preferred editor
+- **Version control:** Track course materials in git
+- **Round-trip editing:** Export → modify → import
+- **Lesson coach integration:** Import modules compiled by lesson-coach
 
 ## Configuration
 
