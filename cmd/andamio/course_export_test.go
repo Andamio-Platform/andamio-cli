@@ -525,10 +525,10 @@ func TestGenerateOutline(t *testing.T) {
 	got := generateOutline(data)
 
 	// Check YAML frontmatter
-	if !strings.Contains(got, "---\ntitle: Getting Started") {
+	if !strings.Contains(got, `title: "Getting Started"`) {
 		t.Error("Missing title in frontmatter")
 	}
-	if !strings.Contains(got, "code: 101") {
+	if !strings.Contains(got, `code: "101"`) {
 		t.Error("Missing code in frontmatter")
 	}
 
