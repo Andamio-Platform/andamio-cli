@@ -13,7 +13,8 @@ symptoms:
   - "outline.md has empty title and no SLTs listed"
   - "lesson-N.md files are 0 bytes"
   - "No images downloaded to assets/ directory"
-root_cause: "Code assumed API response structure that differed from actual structure - SLTs nested at data.slts, lessons embedded in SLT response, module title in separate endpoint"
+  - "assignment.md and introduction.md are empty (0 bytes)"
+root_cause: "Code assumed API response structure that differed from actual structure - SLTs nested at data.slts, lessons embedded in SLT response, module title in separate endpoint, introduction/assignment content nested at data.content.content_json"
 severity: high
 time_to_resolve: "2 hours"
 ---
@@ -37,6 +38,7 @@ The code was making successful API calls but extracting data from wrong paths in
 | Lessons fetched via separate API calls | Lessons embedded in each SLT object |
 | Module title in SLT response | Module title requires separate modules endpoint |
 | Only `image` node type | Also `imageBlock` type (inside list items) |
+| Introduction/assignment content at `data.content_json` | Content nested at `data.content.content_json` |
 
 ## Solution
 
@@ -142,6 +144,48 @@ func convertLessonToMarkdown(lesson map[string]interface{}) (string, []string) {
         return "", nil
     }
     return tiptapToMarkdown(contentJSON)
+}
+```
+
+### Fix 6: Introduction/Assignment Content Nesting
+
+The `convertContentToMarkdown` function assumed `data.content_json` but the API nests it under `data.content.content_json`:
+
+```go
+// WRONG - missing intermediate "content" key
+if data, ok := resp["data"].(map[string]interface{}); ok {
+    if cj, ok := data["content_json"].(map[string]interface{}); ok {
+        contentJSON = cj
+    }
+}
+
+// RIGHT - traverse through "content" wrapper
+if data, ok := resp["data"].(map[string]interface{}); ok {
+    if content, ok := data["content"].(map[string]interface{}); ok {
+        if cj, ok := content["content_json"].(map[string]interface{}); ok {
+            contentJSON = cj
+        }
+    }
+    // Fallback: try direct content_json on data
+    if contentJSON == nil {
+        if cj, ok := data["content_json"].(map[string]interface{}); ok {
+            contentJSON = cj
+        }
+    }
+}
+```
+
+**Actual API response structure for introduction/assignment:**
+```json
+{
+  "data": {
+    "course_id": "...",
+    "course_module_code": "...",
+    "content": {
+      "title": "Module Assignment",
+      "content_json": { "type": "doc", "content": [...] }
+    }
+  }
 }
 ```
 
