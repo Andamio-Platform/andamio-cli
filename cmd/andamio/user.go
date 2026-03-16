@@ -351,14 +351,6 @@ const (
 )
 
 func printDashboard(data map[string]interface{}) {
-	// Andamio ASCII logo with gradient effect
-	fmt.Println()
-	fmt.Printf("%s%s    ╔═══╗%s\n", cBold, cCyan, cReset)
-	fmt.Printf("%s%s   ╔╝   ╚╗%s\n", cBold, cCyan, cReset)
-	fmt.Printf("%s%s  ╔╝ ▄▄▄ ╚╗%s   %s%sANDAMIO%s\n", cBold, cBrightCyan, cReset, cBold, cWhite, cReset)
-	fmt.Printf("%s%s ╔╝ ╔═══╗ ╚╗%s  %s%sDashboard%s\n", cBold, cBrightCyan, cReset, cDim, cWhite, cReset)
-	fmt.Printf("%s%s╔╝  ╚═══╝  ╚╗%s\n", cBold, cCyan, cReset)
-	fmt.Printf("%s%s╚═══════════╝%s\n", cBold, cCyan, cReset)
 	fmt.Println()
 
 	// User info

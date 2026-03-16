@@ -1,8 +1,9 @@
 ---
 title: Wallet Authentication Testing Plan (Preprod)
 type: test
-status: active
+status: in-progress
 date: 2026-03-14
+tested: 2026-03-16
 origin: docs/plans/2026-03-13-feat-browser-wallet-authentication-plan.md
 ---
 
@@ -12,11 +13,11 @@ Testing plan for the browser-based wallet authentication flow against `https://p
 
 ## Prerequisites
 
-- [ ] CLI built locally: `go build -o andamio ./cmd/andamio`
-- [ ] Config points to preprod: `./andamio config show` → `base_url: https://preprod.api.andamio.io`
-- [ ] API key configured: `./andamio auth login --api-key <key>`
-- [ ] A Cardano wallet with an Andamio Access Token (Nami, Eternl, or Lace installed in browser)
-- [ ] App auth page deployed at `https://preprod.app.andamio.io/auth/cli`
+- [x] CLI built locally: `go build -o andamio ./cmd/andamio`
+- [x] Config points to preprod: `./andamio config show` → `base_url: https://preprod.api.andamio.io`
+- [x] API key configured: `./andamio auth login --api-key <key>`
+- [x] A Cardano wallet with an Andamio Access Token (Nami, Eternl, or Lace installed in browser)
+- [x] App auth page deployed at `https://preprod.app.andamio.io/auth/cli`
 
 ## Test Cases
 
@@ -27,11 +28,11 @@ Testing plan for the browser-based wallet authentication flow against `https://p
 ```
 
 **Expected:**
-- [ ] Terminal prints "Opening browser for authentication..."
-- [ ] Browser opens to `https://preprod.app.andamio.io/auth/cli?redirect_uri=http://127.0.0.1:{port}/callback&state={state}`
-- [ ] Auth page renders with wallet connect prompt
-- [ ] After signing, browser shows "Authentication Successful" with alias
-- [ ] Terminal prints "Successfully authenticated as: {alias}"
+- [x] Terminal prints "Opening browser for authentication..."
+- [x] Browser opens to `https://preprod.app.andamio.io/auth/cli?redirect_uri=http://127.0.0.1:{port}/callback&state={state}`
+- [x] Auth page renders with wallet connect prompt
+- [x] After signing, browser shows "Authentication Successful" with alias
+- [x] Terminal prints "Successfully authenticated as: {alias}"
 - [ ] Terminal prints session expiration time
 
 **Verify state persisted:**
@@ -177,7 +178,7 @@ mv ~/.andamio/config.json ~/.andamio/config.json.bak
 
 | Environment | App URL | API URL | Status |
 |-------------|---------|---------|--------|
-| Preprod | `https://preprod.app.andamio.io` | `https://preprod.api.andamio.io` | Test first |
+| Preprod | `https://preprod.app.andamio.io` | `https://preprod.api.andamio.io` | **Testing (2026-03-16)** |
 | Mainnet | `https://mainnet.app.andamio.io` | `https://mainnet.api.andamio.io` | Test after preprod passes |
 
 ## Known Limitations
