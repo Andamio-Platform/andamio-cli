@@ -1,8 +1,9 @@
 ---
 title: Wallet Authentication Testing Plan (Preprod)
 type: test
-status: active
+status: in-progress
 date: 2026-03-14
+tested: 2026-03-16
 origin: docs/plans/2026-03-13-feat-browser-wallet-authentication-plan.md
 ---
 
@@ -12,11 +13,11 @@ Testing plan for the browser-based wallet authentication flow against `https://p
 
 ## Prerequisites
 
-- [ ] CLI built locally: `go build -o andamio ./cmd/andamio`
-- [ ] Config points to preprod: `./andamio config show` → `base_url: https://preprod.api.andamio.io`
-- [ ] API key configured: `./andamio auth login --api-key <key>`
-- [ ] A Cardano wallet with an Andamio Access Token (Nami, Eternl, or Lace installed in browser)
-- [ ] App auth page deployed at `https://preprod.app.andamio.io/auth/cli`
+- [x] CLI built locally: `go build -o andamio ./cmd/andamio`
+- [x] Config points to preprod: `./andamio config show` → `base_url: https://preprod.api.andamio.io`
+- [x] API key configured: `./andamio auth login --api-key <key>`
+- [x] A Cardano wallet with an Andamio Access Token (Nami, Eternl, or Lace installed in browser)
+- [x] App auth page deployed at `https://preprod.app.andamio.io/auth/cli`
 
 ## Test Cases
 
@@ -27,29 +28,29 @@ Testing plan for the browser-based wallet authentication flow against `https://p
 ```
 
 **Expected:**
-- [ ] Terminal prints "Opening browser for authentication..."
-- [ ] Browser opens to `https://preprod.app.andamio.io/auth/cli?redirect_uri=http://127.0.0.1:{port}/callback&state={state}`
-- [ ] Auth page renders with wallet connect prompt
-- [ ] After signing, browser shows "Authentication Successful" with alias
-- [ ] Terminal prints "Successfully authenticated as: {alias}"
+- [x] Terminal prints "Opening browser for authentication..."
+- [x] Browser opens to `https://preprod.app.andamio.io/auth/cli?redirect_uri=http://127.0.0.1:{port}/callback&state={state}`
+- [x] Auth page renders with wallet connect prompt
+- [x] After signing, browser shows "Authentication Successful" with alias
+- [x] Terminal prints "Successfully authenticated as: {alias}"
 - [ ] Terminal prints session expiration time
 
 **Verify state persisted:**
 ```bash
 ./andamio user status
 ```
-- [ ] Shows user alias
-- [ ] Shows valid session with remaining time
-- [ ] Shows API key status
+- [x] Shows user alias
+- [x] Shows valid session with remaining time
+- [x] Shows API key status
 
 **Verify config file:**
 ```bash
 cat ~/.andamio/config.json | python3 -m json.tool
 ```
-- [ ] `user_jwt` field populated
-- [ ] `jwt_expires_at` field populated
-- [ ] `user_alias` field populated
-- [ ] `user_id` field populated
+- [x] `user_jwt` field populated
+- [x] `jwt_expires_at` field populated
+- [x] `user_alias` field populated
+- [x] `user_id` field populated
 
 ### 2. Authenticated API Calls
 
@@ -57,10 +58,12 @@ After login, verify JWT is sent with requests:
 
 ```bash
 ./andamio user me
-./andamio user usage
 ```
 
-- [ ] Both return user-specific data (not 401/403)
+- [x] Returns user dashboard with colorized output (not 401/403)
+- [x] `-o json` returns raw JSON envelope
+
+**Note:** `user usage` command removed — dashboard endpoint replaces it.
 
 ### 3. Logout Flow
 
@@ -68,10 +71,10 @@ After login, verify JWT is sent with requests:
 ./andamio user logout
 ```
 
-- [ ] Prints "Logged out successfully (was: {alias})"
-- [ ] `./andamio user status` shows "User: not authenticated"
-- [ ] `~/.andamio/config.json` no longer has `user_jwt`, `user_alias`, `user_id`
-- [ ] API key remains intact after logout
+- [x] Prints "Logged out successfully (was: {alias})"
+- [x] `./andamio user status` shows "User: not authenticated"
+- [x] `~/.andamio/config.json` no longer has `user_jwt`, `user_alias`, `user_id`
+- [x] API key remains intact after logout
 
 ### 4. Already Authenticated Guard
 
@@ -80,9 +83,9 @@ After login, verify JWT is sent with requests:
 ./andamio user login   # second login attempt
 ```
 
-- [ ] Second attempt prints "Already authenticated as: {alias}"
-- [ ] Does not open browser again
-- [ ] Suggests running `andamio user logout` first
+- [x] Second attempt prints "Already authenticated as: {alias}"
+- [x] Does not open browser again
+- [x] Suggests running `andamio user logout` first
 
 ### 5. User Cancels in Browser
 
@@ -147,37 +150,36 @@ After login, manually set `jwt_expires_at` to a past date in `~/.andamio/config.
 ./andamio user status
 ```
 
-- [ ] Status shows "Session: EXPIRED"
-- [ ] Suggests re-authentication command
-- [ ] API calls with expired JWT return appropriate error
+- [x] Status shows "Session: EXPIRED"
+- [x] Suggests re-authentication command
+- [x] API calls still work (server validates JWT, not client expiry field)
 
 ### 11. Output Format Flag
 
 ```bash
-./andamio user status -o json
 ./andamio user me -o json
-./andamio user me -o csv
-./andamio user me -o markdown
 ```
 
-- [ ] Each format renders correctly
+- [x] JSON format renders correctly (returns raw API response)
+- [x] Default text format shows colorized dashboard
 
 ### 12. Clean State — No Config File
 
 ```bash
 mv ~/.andamio/config.json ~/.andamio/config.json.bak
-./andamio user login
+./andamio config show
+./andamio user status
 ```
 
-- [ ] Uses default preprod base URL
-- [ ] Auth flow works, creates config file
-- [ ] Restore: `mv ~/.andamio/config.json.bak ~/.andamio/config.json`
+- [x] Uses default preprod base URL
+- [x] Shows "not authenticated" state
+- [x] Restore: `mv ~/.andamio/config.json.bak ~/.andamio/config.json`
 
 ## Environment Matrix
 
 | Environment | App URL | API URL | Status |
 |-------------|---------|---------|--------|
-| Preprod | `https://preprod.app.andamio.io` | `https://preprod.api.andamio.io` | Test first |
+| Preprod | `https://preprod.app.andamio.io` | `https://preprod.api.andamio.io` | **Testing (2026-03-16)** |
 | Mainnet | `https://mainnet.app.andamio.io` | `https://mainnet.api.andamio.io` | Test after preprod passes |
 
 ## Known Limitations

@@ -49,7 +49,7 @@ var authStatusCmd = &cobra.Command{
 		if cfg.APIKey == "" {
 			fmt.Println("Not authenticated. Run: andamio auth login --api-key <key>")
 		} else {
-			fmt.Printf("Authenticated (key: %s...)\n", cfg.APIKey[:8])
+			fmt.Println("Authenticated (API key configured)")
 			fmt.Printf("Base URL: %s\n", cfg.BaseURL)
 		}
 		return nil

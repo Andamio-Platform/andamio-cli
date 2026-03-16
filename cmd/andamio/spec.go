@@ -7,10 +7,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/spf13/cobra"
 )
+
+// specHTTPClient is a dedicated client for spec fetching with proper timeout
+var specHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 var specCmd = &cobra.Command{
 	Use:   "spec",
@@ -29,7 +33,7 @@ var specFetchCmd = &cobra.Command{
 		specURL := cfg.BaseURL + "/api/v1/docs/doc.json"
 		fmt.Printf("Fetching spec from %s...\n", specURL)
 
-		resp, err := http.Get(specURL)
+		resp, err := specHTTPClient.Get(specURL)
 		if err != nil {
 			return fmt.Errorf("failed to fetch spec: %w", err)
 		}
@@ -37,7 +41,11 @@ var specFetchCmd = &cobra.Command{
 
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+			errMsg := string(body)
+			if len(errMsg) > 500 {
+				errMsg = errMsg[:500] + "... (truncated)"
+			}
+			return fmt.Errorf("API error %d: %s", resp.StatusCode, errMsg)
 		}
 
 		var spec map[string]interface{}
@@ -84,7 +92,7 @@ var specPathsCmd = &cobra.Command{
 				}
 
 				specURL := cfg.BaseURL + "/api/v1/docs/doc.json"
-				resp, err := http.Get(specURL)
+				resp, err := specHTTPClient.Get(specURL)
 				if err != nil {
 					return fmt.Errorf("failed to fetch spec: %w", err)
 				}

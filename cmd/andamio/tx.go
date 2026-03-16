@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/url"
+
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +32,7 @@ var txStatusCmd = &cobra.Command{
 	Short: "Get transaction status",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/tx/status/" + args[0])
+		return getJSON("/api/v2/tx/status/" + url.PathEscape(args[0]))
 	},
 }
 
