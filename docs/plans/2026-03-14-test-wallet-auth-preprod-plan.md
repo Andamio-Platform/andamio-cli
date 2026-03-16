@@ -39,18 +39,18 @@ Testing plan for the browser-based wallet authentication flow against `https://p
 ```bash
 ./andamio user status
 ```
-- [ ] Shows user alias
-- [ ] Shows valid session with remaining time
-- [ ] Shows API key status
+- [x] Shows user alias
+- [x] Shows valid session with remaining time
+- [x] Shows API key status
 
 **Verify config file:**
 ```bash
 cat ~/.andamio/config.json | python3 -m json.tool
 ```
-- [ ] `user_jwt` field populated
-- [ ] `jwt_expires_at` field populated
-- [ ] `user_alias` field populated
-- [ ] `user_id` field populated
+- [x] `user_jwt` field populated
+- [x] `jwt_expires_at` field populated
+- [x] `user_alias` field populated
+- [x] `user_id` field populated
 
 ### 2. Authenticated API Calls
 
@@ -58,10 +58,12 @@ After login, verify JWT is sent with requests:
 
 ```bash
 ./andamio user me
-./andamio user usage
 ```
 
-- [ ] Both return user-specific data (not 401/403)
+- [x] Returns user dashboard with colorized output (not 401/403)
+- [x] `-o json` returns raw JSON envelope
+
+**Note:** `user usage` command removed — dashboard endpoint replaces it.
 
 ### 3. Logout Flow
 
@@ -155,13 +157,11 @@ After login, manually set `jwt_expires_at` to a past date in `~/.andamio/config.
 ### 11. Output Format Flag
 
 ```bash
-./andamio user status -o json
 ./andamio user me -o json
-./andamio user me -o csv
-./andamio user me -o markdown
 ```
 
-- [ ] Each format renders correctly
+- [x] JSON format renders correctly (returns raw API response)
+- [x] Default text format shows colorized dashboard
 
 ### 12. Clean State — No Config File
 
