@@ -4,15 +4,21 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/adrg/frontmatter"
 	"github.com/spf13/cobra"
 	"github.com/yuin/goldmark"
@@ -21,6 +27,11 @@ import (
 	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
+)
+
+var (
+	sltLineRe   = regexp.MustCompile(`^\d+[\.\)]\s+(.+)$`)
+	lessonNumRe = regexp.MustCompile(`lesson-(\d+)\.md`)
 )
 
 func init() {
@@ -66,8 +77,8 @@ type ImportData struct {
 	ModuleCode    string
 	SLTs          []string
 	Lessons       []LessonImport
-	Introduction  map[string]interface{}
-	Assignment    map[string]interface{}
+	Introduction  *ContentSection
+	Assignment    *ContentSection
 	ImageWarnings []string
 	ImageManifest map[string]string // filename → original URL from .image-manifest.json
 }
@@ -75,6 +86,13 @@ type ImportData struct {
 // LessonImport holds a single lesson's data
 type LessonImport struct {
 	Index      int
+	Title      string
+	TiptapJSON map[string]interface{}
+}
+
+// ContentSection holds parsed content with title extracted from H1
+type ContentSection struct {
+	Title      string
 	TiptapJSON map[string]interface{}
 }
 
@@ -84,9 +102,27 @@ type OutlineFrontmatter struct {
 	Code  string `yaml:"code"`
 }
 
+// ImportResult holds the result of an import operation for structured output
+type ImportResult struct {
+	CourseID       string                 `json:"course_id"`
+	ModuleCode     string                 `json:"module_code"`
+	Title          string                 `json:"title"`
+	ModuleStatus   string                 `json:"module_status"`
+	SLTsLocked     bool                   `json:"slts_locked"`
+	SLTCount       int                    `json:"slt_count"`
+	LessonCount    int                    `json:"lesson_count"`
+	HasIntro       bool                   `json:"has_introduction"`
+	HasAssignment  bool                   `json:"has_assignment"`
+	ManifestUsed   int                    `json:"manifest_images"`
+	ImagesUploaded int                    `json:"images_uploaded,omitempty"`
+	FailedImages   []string               `json:"failed_images,omitempty"`
+	Changes        map[string]interface{} `json:"changes"`
+}
+
 func runCourseImport(cmd *cobra.Command, args []string) error {
 	moduleDir := args[0]
 	courseID, _ := cmd.Flags().GetString("course-id")
+	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Validate directory exists
 	info, err := os.Stat(moduleDir)
@@ -97,29 +133,15 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not a directory: %s", moduleDir)
 	}
 
-	fmt.Printf("Reading module from %s...\n", moduleDir)
+	if !isJSON {
+		fmt.Printf("Reading module from %s...\n", moduleDir)
+	}
 
 	// Read and parse the compiled module
 	data, err := readCompiledModule(moduleDir)
 	if err != nil {
 		return err
 	}
-
-	// Report manifest usage
-	if len(data.ImageManifest) > 0 {
-		fmt.Printf("Found image manifest: %d image(s) will use original URLs\n", len(data.ImageManifest))
-	}
-
-	// Warn about new images not in manifest
-	if len(data.ImageWarnings) > 0 {
-		fmt.Printf("Warning: %d new image(s) in assets/ cannot be uploaded (not yet supported):\n", len(data.ImageWarnings))
-		for _, img := range data.ImageWarnings {
-			fmt.Printf("  - %s\n", img)
-		}
-		fmt.Println()
-	}
-
-	fmt.Printf("Importing module %s (%s) with %d lessons...\n", data.ModuleCode, data.Title, len(data.Lessons))
 
 	// Load config and create client
 	cfg, err := config.Load()
@@ -128,12 +150,150 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	// Update the module via API
-	if err := updateModuleContent(c, courseID, data); err != nil {
+	if !isJSON && len(data.ImageManifest) > 0 {
+		fmt.Printf("Found image manifest: %d image(s) will use original URLs\n", len(data.ImageManifest))
+	}
+
+	// Upload new images (not in manifest) to the app's CDN, then update manifest on disk
+	var imagesUploaded int
+	if len(data.ImageWarnings) > 0 {
+		if !isJSON {
+			fmt.Printf("Uploading %d new image(s)...\n", len(data.ImageWarnings))
+		}
+		assetsDir := filepath.Join(moduleDir, "assets")
+		imagesUploaded, failed := uploadNewImages(cfg, assetsDir, data.ImageWarnings, data.ImageManifest)
+
+		if !isJSON {
+			if imagesUploaded > 0 {
+				fmt.Printf("  Uploaded %d image(s)\n", imagesUploaded)
+			}
+			for _, f := range failed {
+				fmt.Printf("  Failed: %s\n", f)
+			}
+		}
+
+		// Write updated manifest to disk so re-read picks up new URLs
+		if imagesUploaded > 0 {
+			manifestData, _ := json.MarshalIndent(data.ImageManifest, "", "  ")
+			os.WriteFile(filepath.Join(assetsDir, ".image-manifest.json"), manifestData, 0644)
+
+			// Re-read module with updated manifest (new URLs now resolve during conversion)
+			data, err = readCompiledModule(moduleDir)
+			if err != nil {
+				return err
+			}
+		}
+
+		data.ImageWarnings = failed
+	}
+
+	// Fetch current module state to determine SLT lock status and preserve metadata
+	existing, err := fetchExistingModule(c, courseID, data.ModuleCode)
+	if err != nil {
+		return err
+	}
+	sltsLocked := existing.Status != "DRAFT"
+	if !isJSON && sltsLocked {
+		fmt.Printf("Module status is %s — SLTs are locked, updating content only\n", existing.Status)
+	}
+
+	// Update the module via API, merging with existing metadata
+	resp, err := updateModuleContent(c, courseID, data, existing, sltsLocked)
+	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Successfully imported module %s to course %s\n", data.ModuleCode, courseID)
+	// Extract changes summary from API response
+	changes, _ := resp["changes"].(map[string]interface{})
+	if changes == nil {
+		changes = map[string]interface{}{}
+	}
+
+	importResult := ImportResult{
+		CourseID:       courseID,
+		ModuleCode:     data.ModuleCode,
+		Title:          data.Title,
+		ModuleStatus:   existing.Status,
+		SLTsLocked:     sltsLocked,
+		SLTCount:       len(data.SLTs),
+		LessonCount:    len(data.Lessons),
+		HasIntro:       data.Introduction != nil,
+		HasAssignment:  data.Assignment != nil,
+		ManifestUsed:   len(data.ImageManifest),
+		ImagesUploaded: imagesUploaded,
+		FailedImages:   data.ImageWarnings,
+		Changes:        changes,
+	}
+
+	if isJSON {
+		return output.PrintJSON(importResult)
+	}
+
+	// Text TUI output
+	fmt.Println()
+	fmt.Printf("  Module:  %s (%s)\n", data.Title, data.ModuleCode)
+	fmt.Printf("  Course:  %s\n", courseID)
+	fmt.Println()
+	fmt.Println("  Content:")
+	fmt.Printf("    SLTs:          %d\n", len(data.SLTs))
+	fmt.Printf("    Lessons:       %d\n", len(data.Lessons))
+	if data.Introduction != nil {
+		fmt.Printf("    Introduction:  yes\n")
+	}
+	if data.Assignment != nil {
+		fmt.Printf("    Assignment:    yes\n")
+	}
+
+	// Show changes from API response
+	if len(changes) > 0 {
+		fmt.Println()
+		fmt.Println("  Changes:")
+		if v, ok := changes["slts_created"].(float64); ok && v > 0 {
+			fmt.Printf("    SLTs created:       %.0f\n", v)
+		}
+		if v, ok := changes["slts_updated"].(float64); ok && v > 0 {
+			fmt.Printf("    SLTs updated:       %.0f\n", v)
+		}
+		if v, ok := changes["slts_deleted"].(float64); ok && v > 0 {
+			fmt.Printf("    SLTs deleted:       %.0f\n", v)
+		}
+		if v, ok := changes["lessons_created"].(float64); ok && v > 0 {
+			fmt.Printf("    Lessons created:    %.0f\n", v)
+		}
+		if v, ok := changes["lessons_updated"].(float64); ok && v > 0 {
+			fmt.Printf("    Lessons updated:    %.0f\n", v)
+		}
+		if v, ok := changes["lessons_deleted"].(float64); ok && v > 0 {
+			fmt.Printf("    Lessons deleted:    %.0f\n", v)
+		}
+		if v, ok := changes["introduction_created"].(bool); ok && v {
+			fmt.Printf("    Introduction:       created\n")
+		}
+		if v, ok := changes["introduction_updated"].(bool); ok && v {
+			fmt.Printf("    Introduction:       updated\n")
+		}
+		if v, ok := changes["assignment_created"].(bool); ok && v {
+			fmt.Printf("    Assignment:         created\n")
+		}
+		if v, ok := changes["assignment_updated"].(bool); ok && v {
+			fmt.Printf("    Assignment:         updated\n")
+		}
+	}
+
+	if len(data.ImageManifest) > 0 || imagesUploaded > 0 {
+		fmt.Printf("\n  Images:\n")
+		if len(data.ImageManifest) > 0 {
+			fmt.Printf("    Manifest:   %d preserved via CDN URLs\n", len(data.ImageManifest))
+		}
+		if imagesUploaded > 0 {
+			fmt.Printf("    Uploaded:   %d new image(s) to CDN\n", imagesUploaded)
+		}
+		if len(data.ImageWarnings) > 0 {
+			fmt.Printf("    Failed:     %d image(s) could not be uploaded\n", len(data.ImageWarnings))
+		}
+	}
+
+	fmt.Println()
 	return nil
 }
 
@@ -200,13 +360,16 @@ func readCompiledModule(dir string) (*ImportData, error) {
 			return nil, fmt.Errorf("failed to read %s: %w", filepath.Base(lessonFile), err)
 		}
 
-		tiptap, err := markdownToTiptap(string(content), data.ImageManifest)
+		// Extract H1 as title, convert remaining body to Tiptap (matches app behavior)
+		title, body := extractH1Title(string(content))
+		tiptap, err := markdownToTiptap(body, data.ImageManifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert %s: %w", filepath.Base(lessonFile), err)
 		}
 
 		data.Lessons = append(data.Lessons, LessonImport{
 			Index:      lessonNum,
+			Title:      title,
 			TiptapJSON: tiptap,
 		})
 	}
@@ -216,24 +379,26 @@ func readCompiledModule(dir string) (*ImportData, error) {
 		return nil, fmt.Errorf("found %d lesson files but outline lists %d SLTs", len(data.Lessons), len(data.SLTs))
 	}
 
-	// Read introduction.md if exists
+	// Read introduction.md if exists — H1 → title, rest → content_json
 	introPath := filepath.Join(dir, "introduction.md")
 	if introBytes, err := os.ReadFile(introPath); err == nil && len(introBytes) > 0 {
-		tiptap, err := markdownToTiptap(string(introBytes), data.ImageManifest)
+		title, body := extractH1Title(string(introBytes))
+		tiptap, err := markdownToTiptap(body, data.ImageManifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert introduction.md: %w", err)
 		}
-		data.Introduction = tiptap
+		data.Introduction = &ContentSection{Title: title, TiptapJSON: tiptap}
 	}
 
-	// Read assignment.md if exists
+	// Read assignment.md if exists — H1 → title, rest → content_json
 	assignPath := filepath.Join(dir, "assignment.md")
 	if assignBytes, err := os.ReadFile(assignPath); err == nil && len(assignBytes) > 0 {
-		tiptap, err := markdownToTiptap(string(assignBytes), data.ImageManifest)
+		title, body := extractH1Title(string(assignBytes))
+		tiptap, err := markdownToTiptap(body, data.ImageManifest)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert assignment.md: %w", err)
 		}
-		data.Assignment = tiptap
+		data.Assignment = &ContentSection{Title: title, TiptapJSON: tiptap}
 	}
 
 	return data, nil
@@ -246,7 +411,7 @@ func loadImageManifest(assetsDir string) map[string]string {
 	manifestPath := filepath.Join(assetsDir, ".image-manifest.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if !os.IsNotExist(err) && output.GetFormat() != output.FormatJSON {
 			fmt.Printf("Warning: could not read image manifest: %v\n", err)
 		}
 		return make(map[string]string)
@@ -254,7 +419,9 @@ func loadImageManifest(assetsDir string) map[string]string {
 
 	var raw map[string]string
 	if err := json.Unmarshal(data, &raw); err != nil {
-		fmt.Printf("Warning: could not parse image manifest: %v\n", err)
+		if output.GetFormat() != output.FormatJSON {
+			fmt.Printf("Warning: could not parse image manifest: %v\n", err)
+		}
 		return make(map[string]string)
 	}
 
@@ -263,12 +430,47 @@ func loadImageManifest(assetsDir string) map[string]string {
 	for filename, url := range raw {
 		if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
 			manifest[filename] = url
-		} else {
+		} else if output.GetFormat() != output.FormatJSON {
 			fmt.Printf("Warning: skipping manifest entry with invalid URL scheme: %s\n", filename)
 		}
 	}
 
 	return manifest
+}
+
+// imageBlockNode creates a Tiptap imageBlock node matching the app's format.
+func imageBlockNode(src, alt string) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "imageBlock",
+		"attrs": map[string]interface{}{
+			"src":   src,
+			"alt":   alt,
+			"width": "600",
+			"align": "center",
+		},
+	}
+}
+
+// extractH1Title extracts the first H1 heading as a title and returns the remaining markdown.
+// This matches how the app parses lesson/intro/assignment files: H1 → title field, rest → content_json.
+func extractH1Title(md string) (title string, body string) {
+	lines := strings.Split(md, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "## ") {
+			title = strings.TrimPrefix(trimmed, "# ")
+			// Body is everything after the H1 line, trimmed
+			body = strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+			return title, body
+		}
+		// Skip blank lines at the top before the H1
+		if trimmed != "" {
+			// Non-blank, non-H1 line — no title found
+			break
+		}
+	}
+	// No H1 found, entire content is the body
+	return "", strings.TrimSpace(md)
 }
 
 func parseSLTsFromOutline(content string) []string {
@@ -292,9 +494,7 @@ func parseSLTsFromOutline(content string) []string {
 
 		// Parse numbered list items
 		if inSLTSection {
-			// Match "1. text" or "1) text"
-			re := regexp.MustCompile(`^\d+[\.\)]\s+(.+)$`)
-			if matches := re.FindStringSubmatch(trimmed); len(matches) > 1 {
+			if matches := sltLineRe.FindStringSubmatch(trimmed); len(matches) > 1 {
 				slts = append(slts, matches[1])
 			}
 		}
@@ -305,9 +505,7 @@ func parseSLTsFromOutline(content string) []string {
 
 func extractLessonNumber(path string) int {
 	base := filepath.Base(path)
-	// Extract number from "lesson-N.md"
-	re := regexp.MustCompile(`lesson-(\d+)\.md`)
-	if matches := re.FindStringSubmatch(base); len(matches) > 1 {
+	if matches := lessonNumRe.FindStringSubmatch(base); len(matches) > 1 {
 		num, _ := strconv.Atoi(matches[1])
 		return num
 	}
@@ -370,6 +568,42 @@ func convertNode(n ast.Node, source []byte) []interface{} {
 func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 	switch node := n.(type) {
 	case *ast.Paragraph:
+		// Check for solo-image paragraph → imageBlock (matches app behavior)
+		if node.ChildCount() == 1 {
+			if img, ok := node.FirstChild().(*ast.Image); ok {
+				src := string(img.Destination)
+				alt := string(img.Text(source))
+				if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+					return imageBlockNode(src, alt)
+				}
+				// Unresolved local image — placeholder
+				if alt == "" {
+					alt = "[image]"
+				}
+				return map[string]interface{}{
+					"type": "paragraph",
+					"content": []interface{}{
+						map[string]interface{}{
+							"type": "text",
+							"text": fmt.Sprintf("[Image: %s]", alt),
+						},
+					},
+				}
+			}
+		}
+
+		content := convertInlineContent(node, source)
+		if len(content) == 0 {
+			return nil
+		}
+		return map[string]interface{}{
+			"type":    "paragraph",
+			"content": content,
+		}
+
+	case *ast.TextBlock:
+		// TextBlock is used inside tight list items (no blank lines between items).
+		// Treat the same as a paragraph so bullet text isn't silently dropped.
 		content := convertInlineContent(node, source)
 		if len(content) == 0 {
 			return nil
@@ -463,15 +697,9 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 		src := string(node.Destination)
 		alt := string(node.Text(source))
 
-		// External URLs (including manifest-resolved ones) → proper image node
+		// Block-level image → imageBlock (matches app behavior)
 		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-			return map[string]interface{}{
-				"type": "image",
-				"attrs": map[string]interface{}{
-					"src": src,
-					"alt": alt,
-				},
-			}
+			return imageBlockNode(src, alt)
 		}
 
 		// Unresolved local image — placeholder
@@ -493,7 +721,9 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 		if n.HasChildren() {
 			content := convertNode(n, source)
 			if len(content) > 0 {
-				return content[0].(map[string]interface{})
+				if m, ok := content[0].(map[string]interface{}); ok {
+					return m
+				}
 			}
 		}
 	}
@@ -642,17 +872,9 @@ func convertInlineNode(n ast.Node, source []byte) []interface{} {
 		src := string(node.Destination)
 		alt := string(node.Text(source))
 
-		// External URLs (including manifest-resolved ones) → proper image node
+		// Inline image with resolved URL → imageBlock
 		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-			return []interface{}{
-				map[string]interface{}{
-					"type": "image",
-					"attrs": map[string]interface{}{
-						"src": src,
-						"alt": alt,
-					},
-				},
-			}
+			return []interface{}{imageBlockNode(src, alt)}
 		}
 
 		// Unresolved local image — placeholder text
@@ -682,44 +904,279 @@ func convertInlineNode(n ast.Node, source []byte) []interface{} {
 	return nil
 }
 
-func updateModuleContent(c *client.Client, courseID string, data *ImportData) error {
-	// Build lessons payload
+// ExistingModuleData holds the current state of the module from the API
+type ExistingModuleData struct {
+	Status       string
+	Lessons      map[int]map[string]interface{} // slt_index → lesson fields
+	Introduction map[string]interface{}
+	Assignment   map[string]interface{}
+}
+
+// fetchExistingModule gets the current module state from the teacher endpoint.
+// This is used to merge existing metadata (titles, descriptions, image_url, video_url)
+// with the new content being imported.
+func fetchExistingModule(c *client.Client, courseID, moduleCode string) (*ExistingModuleData, error) {
+	var resp map[string]interface{}
+	reqBody := map[string]string{"course_id": courseID}
+	if err := c.Post("/api/v2/course/teacher/course-modules/list", reqBody, &resp); err != nil {
+		return nil, fmt.Errorf("failed to fetch module: %w", err)
+	}
+
+	modules, ok := resp["data"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected response format")
+	}
+
+	for _, m := range modules {
+		mod, ok := m.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		content, ok := mod["content"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		code, ok := content["course_module_code"].(string)
+		if !ok || code != moduleCode {
+			continue
+		}
+
+		existing := &ExistingModuleData{
+			Lessons: make(map[int]map[string]interface{}),
+		}
+
+		if status, ok := content["module_status"].(string); ok {
+			existing.Status = status
+		}
+
+		// Extract existing lesson metadata keyed by slt_index
+		if slts, ok := content["slts"].([]interface{}); ok {
+			for i, slt := range slts {
+				sltMap, ok := slt.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if lesson, ok := sltMap["lesson"].(map[string]interface{}); ok {
+					existing.Lessons[i+1] = lesson
+				}
+			}
+		}
+
+		// Extract existing introduction metadata
+		if intro, ok := content["introduction"].(map[string]interface{}); ok {
+			existing.Introduction = intro
+		}
+
+		// Extract existing assignment metadata
+		if assign, ok := content["assignment"].(map[string]interface{}); ok {
+			existing.Assignment = assign
+		}
+
+		return existing, nil
+	}
+
+	return nil, fmt.Errorf("module '%s' not found in course '%s'", moduleCode, courseID)
+}
+
+func updateModuleContent(c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool) (map[string]interface{}, error) {
+	// Build lessons payload with H1-extracted titles
 	lessons := make([]map[string]interface{}, len(data.Lessons))
 	for i, lesson := range data.Lessons {
-		lessons[i] = map[string]interface{}{
+		l := map[string]interface{}{
 			"slt_index":    lesson.Index,
 			"content_json": lesson.TiptapJSON,
 		}
-	}
 
-	// Build SLTs payload
-	slts := make([]map[string]interface{}, len(data.SLTs))
-	for i, sltText := range data.SLTs {
-		slts[i] = map[string]interface{}{
-			"slt_index": i + 1,
-			"slt_text":  sltText,
+		// Use H1-extracted title; fall back to existing title
+		if lesson.Title != "" {
+			l["title"] = lesson.Title
+		} else if existingLesson, ok := existing.Lessons[lesson.Index]; ok {
+			if v, ok := existingLesson["title"].(string); ok && v != "" {
+				l["title"] = v
+			}
 		}
+
+		// Preserve existing metadata not in markdown files
+		if existingLesson, ok := existing.Lessons[lesson.Index]; ok {
+			for _, field := range []string{"description", "image_url", "video_url"} {
+				if v, ok := existingLesson[field]; ok && v != nil && v != "" {
+					l[field] = v
+				}
+			}
+		}
+
+		lessons[i] = l
 	}
 
 	payload := map[string]interface{}{
 		"course_id":          courseID,
 		"course_module_code": data.ModuleCode,
 		"title":              data.Title,
-		"slts":               slts,
 		"lessons":            lessons,
 	}
 
-	if data.Introduction != nil {
-		payload["introduction"] = data.Introduction
+	// Only include SLTs if they're not locked (module is in DRAFT status)
+	if !sltsLocked {
+		slts := make([]map[string]interface{}, len(data.SLTs))
+		for i, sltText := range data.SLTs {
+			slts[i] = map[string]interface{}{
+				"slt_index": i + 1,
+				"slt_text":  sltText,
+			}
+		}
+		payload["slts"] = slts
 	}
+
+	// Build introduction — H1 title from file, preserve existing metadata
+	if data.Introduction != nil {
+		intro := map[string]interface{}{
+			"content_json": data.Introduction.TiptapJSON,
+		}
+		if data.Introduction.Title != "" {
+			intro["title"] = data.Introduction.Title
+		} else if existing.Introduction != nil {
+			if v, ok := existing.Introduction["title"].(string); ok && v != "" {
+				intro["title"] = v
+			}
+		}
+		if existing.Introduction != nil {
+			for _, field := range []string{"description", "image_url", "video_url"} {
+				if v, ok := existing.Introduction[field]; ok && v != nil && v != "" {
+					intro[field] = v
+				}
+			}
+		}
+		payload["introduction"] = intro
+	}
+
+	// Build assignment — H1 title from file, preserve existing metadata
 	if data.Assignment != nil {
-		payload["assignment"] = data.Assignment
+		assign := map[string]interface{}{
+			"content_json": data.Assignment.TiptapJSON,
+		}
+		if data.Assignment.Title != "" {
+			assign["title"] = data.Assignment.Title
+		} else if existing.Assignment != nil {
+			if v, ok := existing.Assignment["title"].(string); ok && v != "" {
+				assign["title"] = v
+			}
+		}
+		if existing.Assignment != nil {
+			for _, field := range []string{"description", "image_url", "video_url"} {
+				if v, ok := existing.Assignment[field]; ok && v != nil && v != "" {
+					assign[field] = v
+				}
+			}
+		}
+		payload["assignment"] = assign
 	}
 
 	var resp map[string]interface{}
 	if err := c.Post("/api/v2/course/teacher/course-module/update", payload, &resp); err != nil {
-		return fmt.Errorf("failed to update module: %w", err)
+		return nil, fmt.Errorf("failed to update module: %w", err)
 	}
 
-	return nil
+	return resp, nil
+}
+
+// uploadImage uploads a single image file to the app's /api/upload endpoint.
+// Returns the public CDN URL on success.
+func uploadImage(cfg *config.Config, filePath string) (string, error) {
+	// Derive app URL from API URL (same pattern as user.go OAuth flow)
+	appURL := strings.Replace(cfg.BaseURL, ".api.", ".app.", 1)
+	uploadURL := appURL + "/api/upload"
+
+	// Read file
+	fileData, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read %s: %w", filepath.Base(filePath), err)
+	}
+
+	// 5MB limit (matches app validation)
+	if len(fileData) > 5*1024*1024 {
+		return "", fmt.Errorf("%s exceeds 5MB limit (%d bytes)", filepath.Base(filePath), len(fileData))
+	}
+
+	// Determine MIME type from extension
+	mimeType := ""
+	switch strings.ToLower(filepath.Ext(filePath)) {
+	case ".png":
+		mimeType = "image/png"
+	case ".jpg", ".jpeg":
+		mimeType = "image/jpeg"
+	case ".gif":
+		mimeType = "image/gif"
+	case ".webp":
+		mimeType = "image/webp"
+	default:
+		return "", fmt.Errorf("%s: unsupported image type (allowed: PNG, JPG, GIF, WebP)", filepath.Base(filePath))
+	}
+
+	// Build multipart form with correct Content-Type
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	partHeader := make(textproto.MIMEHeader)
+	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filepath.Base(filePath)))
+	partHeader.Set("Content-Type", mimeType)
+	part, err := writer.CreatePart(partHeader)
+	if err != nil {
+		return "", err
+	}
+	if _, err := part.Write(fileData); err != nil {
+		return "", err
+	}
+	writer.Close()
+
+	// Send request
+	req, err := http.NewRequest("POST", uploadURL, &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+cfg.UserJWT)
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("upload failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		URL         string `json:"url"`
+		Key         string `json:"key"`
+		Size        int    `json:"size"`
+		ContentType string `json:"contentType"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("failed to parse upload response: %w", err)
+	}
+
+	return result.URL, nil
+}
+
+// uploadNewImages uploads images not in the manifest and adds their URLs to the manifest.
+// Returns the number of images successfully uploaded.
+func uploadNewImages(cfg *config.Config, assetsDir string, newImages []string, manifest map[string]string) (int, []string) {
+	var uploaded int
+	var failed []string
+
+	for _, filename := range newImages {
+		filePath := filepath.Join(assetsDir, filename)
+		url, err := uploadImage(cfg, filePath)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", filename, err))
+			continue
+		}
+		manifest[filename] = url
+		uploaded++
+	}
+
+	return uploaded, failed
 }
