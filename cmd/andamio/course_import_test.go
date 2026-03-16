@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -333,5 +334,163 @@ func TestMarkdownToTiptapEmptyInput(t *testing.T) {
 	content := got["content"].([]interface{})
 	if len(content) != 0 {
 		t.Errorf("expected empty content for empty input, got %d elements", len(content))
+	}
+}
+
+func TestResolveImageURL(t *testing.T) {
+	manifest := map[string]string{
+		"diagram.png":    "https://cdn.andamio.io/images/abc/diagram.png",
+		"screenshot.png": "https://cdn.andamio.io/images/abc/screenshot.png",
+	}
+
+	tests := []struct {
+		name    string
+		src     string
+		want    string
+		wantOK  bool
+	}{
+		{
+			name:   "external URL passes through",
+			src:    "https://example.com/image.png",
+			want:   "https://example.com/image.png",
+			wantOK: true,
+		},
+		{
+			name:   "local asset resolved via manifest",
+			src:    "assets/diagram.png",
+			want:   "https://cdn.andamio.io/images/abc/diagram.png",
+			wantOK: true,
+		},
+		{
+			name:   "local asset not in manifest",
+			src:    "assets/new-image.png",
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:   "http URL passes through",
+			src:    "http://example.com/image.png",
+			want:   "http://example.com/image.png",
+			wantOK: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveImageURL(tt.src, "alt", manifest)
+			if tt.wantOK && got != tt.want {
+				t.Errorf("resolveImageURL() = %q, want %q", got, tt.want)
+			}
+			if !tt.wantOK && got != "" {
+				t.Errorf("resolveImageURL() = %q, want empty string", got)
+			}
+		})
+	}
+}
+
+func TestResolveImageURLNilManifest(t *testing.T) {
+	// External URLs should still work with nil manifest
+	got := resolveImageURL("https://example.com/img.png", "alt", nil)
+	if got != "https://example.com/img.png" {
+		t.Errorf("resolveImageURL() with nil manifest = %q, want external URL", got)
+	}
+
+	// Local paths should return empty with nil manifest
+	got = resolveImageURL("assets/img.png", "alt", nil)
+	if got != "" {
+		t.Errorf("resolveImageURL() local with nil manifest = %q, want empty", got)
+	}
+}
+
+func TestMarkdownToTiptapImageWithManifest(t *testing.T) {
+	manifest := map[string]string{
+		"diagram.png": "https://cdn.andamio.io/images/abc/diagram.png",
+	}
+
+	markdown := "![A diagram](assets/diagram.png)"
+	got, err := markdownToTiptap(markdown, manifest)
+	if err != nil {
+		t.Fatalf("markdownToTiptap() error = %v", err)
+	}
+
+	content := got["content"].([]interface{})
+	para := content[0].(map[string]interface{})
+	paraContent := para["content"].([]interface{})
+
+	found := false
+	for _, node := range paraContent {
+		nodeMap := node.(map[string]interface{})
+		if nodeMap["type"] == "image" {
+			attrs := nodeMap["attrs"].(map[string]interface{})
+			if attrs["src"] == "https://cdn.andamio.io/images/abc/diagram.png" {
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		t.Errorf("expected image with resolved CDN URL, got %v", content)
+	}
+}
+
+func TestMarkdownToTiptapImageWithoutManifest(t *testing.T) {
+	// Local image with no manifest should produce placeholder text
+	markdown := "![A diagram](assets/diagram.png)"
+	got, err := markdownToTiptap(markdown, nil)
+	if err != nil {
+		t.Fatalf("markdownToTiptap() error = %v", err)
+	}
+
+	content := got["content"].([]interface{})
+	para := content[0].(map[string]interface{})
+	paraContent := para["content"].([]interface{})
+
+	found := false
+	for _, node := range paraContent {
+		nodeMap := node.(map[string]interface{})
+		if text, ok := nodeMap["text"].(string); ok && text == "[Image: A diagram]" {
+			found = true
+		}
+	}
+
+	if !found {
+		t.Errorf("expected placeholder text for unresolved image, got %v", content)
+	}
+}
+
+func TestLoadImageManifest(t *testing.T) {
+	// Non-existent directory returns empty map
+	manifest := loadImageManifest("/nonexistent/path")
+	if len(manifest) != 0 {
+		t.Errorf("expected empty manifest for nonexistent path, got %d entries", len(manifest))
+	}
+
+	// Write a manifest to a temp dir and read it back
+	dir := t.TempDir()
+	manifestData := []byte(`{"diagram.png": "https://cdn.example.com/diagram.png"}`)
+	manifestPath := dir + "/.image-manifest.json"
+	if err := os.WriteFile(manifestPath, manifestData, 0644); err != nil {
+		t.Fatalf("failed to write test manifest: %v", err)
+	}
+
+	manifest = loadImageManifest(dir)
+	if len(manifest) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(manifest))
+	}
+	if manifest["diagram.png"] != "https://cdn.example.com/diagram.png" {
+		t.Errorf("unexpected URL: %s", manifest["diagram.png"])
+	}
+}
+
+func TestLoadImageManifestInvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := dir + "/.image-manifest.json"
+	if err := os.WriteFile(manifestPath, []byte("not json"), 0644); err != nil {
+		t.Fatalf("failed to write test manifest: %v", err)
+	}
+
+	manifest := loadImageManifest(dir)
+	if len(manifest) != 0 {
+		t.Errorf("expected empty manifest for invalid JSON, got %d entries", len(manifest))
 	}
 }
