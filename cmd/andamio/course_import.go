@@ -154,35 +154,44 @@ func importModule(p ImportParams) (*ImportResult, error) {
 	// Upload new images (not in manifest) to the app's CDN, then update manifest on disk
 	var imagesUploaded int
 	if len(data.ImageWarnings) > 0 {
-		if !p.Quiet {
-			fmt.Printf("Uploading %d new image(s)...\n", len(data.ImageWarnings))
-		}
-		assetsDir := filepath.Join(p.ModuleDir, "assets")
-		var failed []string
-		imagesUploaded, failed = uploadNewImages(p.Config, assetsDir, data.ImageWarnings, data.ImageManifest)
+		if p.DryRun {
+			if !p.Quiet {
+				fmt.Printf("Dry-run: %d new image(s) would be uploaded:\n", len(data.ImageWarnings))
+				for _, img := range data.ImageWarnings {
+					fmt.Printf("  %s\n", img)
+				}
+			}
+		} else {
+			if !p.Quiet {
+				fmt.Printf("Uploading %d new image(s)...\n", len(data.ImageWarnings))
+			}
+			assetsDir := filepath.Join(p.ModuleDir, "assets")
+			var failed []string
+			imagesUploaded, failed = uploadNewImages(p.Config, assetsDir, data.ImageWarnings, data.ImageManifest)
 
-		if !p.Quiet {
+			if !p.Quiet {
+				if imagesUploaded > 0 {
+					fmt.Printf("  Uploaded %d image(s)\n", imagesUploaded)
+				}
+				for _, f := range failed {
+					fmt.Printf("  Failed: %s\n", f)
+				}
+			}
+
+			// Write updated manifest to disk so re-read picks up new URLs
 			if imagesUploaded > 0 {
-				fmt.Printf("  Uploaded %d image(s)\n", imagesUploaded)
+				manifestData, _ := json.MarshalIndent(data.ImageManifest, "", "  ")
+				os.WriteFile(filepath.Join(assetsDir, ".image-manifest.json"), manifestData, 0644)
+
+				// Re-read module with updated manifest (new URLs now resolve during conversion)
+				data, err = readCompiledModule(p.ModuleDir)
+				if err != nil {
+					return nil, err
+				}
 			}
-			for _, f := range failed {
-				fmt.Printf("  Failed: %s\n", f)
-			}
+
+			data.ImageWarnings = failed
 		}
-
-		// Write updated manifest to disk so re-read picks up new URLs
-		if imagesUploaded > 0 {
-			manifestData, _ := json.MarshalIndent(data.ImageManifest, "", "  ")
-			os.WriteFile(filepath.Join(assetsDir, ".image-manifest.json"), manifestData, 0644)
-
-			// Re-read module with updated manifest (new URLs now resolve during conversion)
-			data, err = readCompiledModule(p.ModuleDir)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		data.ImageWarnings = failed
 	}
 
 	// Fetch current module state to determine SLT lock status and preserve metadata
@@ -190,6 +199,22 @@ func importModule(p ImportParams) (*ImportResult, error) {
 	if err != nil {
 		// Only trigger creation for "not found" errors, not auth/network failures
 		if p.CreateMode && errors.Is(err, errModuleNotFound) {
+			if p.DryRun {
+				if !p.Quiet {
+					fmt.Printf("Dry-run: would create module %s (%s) with sort_order %d\n", data.Title, data.ModuleCode, p.SortOrder)
+				}
+				return &ImportResult{
+					CourseID:   p.CourseID,
+					ModuleCode: data.ModuleCode,
+					Title:      data.Title,
+					DryRun:     true,
+					SLTCount:   len(data.SLTs),
+					LessonCount: len(data.Lessons),
+					HasIntro:   data.Introduction != nil,
+					HasAssignment: data.Assignment != nil,
+					Changes:    map[string]interface{}{"would_create_module": true},
+				}, nil
+			}
 			if !p.Quiet {
 				fmt.Printf("Module %s not found — creating...\n", data.ModuleCode)
 			}
