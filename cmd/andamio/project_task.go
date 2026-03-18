@@ -1,0 +1,587 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Andamio-Platform/andamio-cli/internal/client"
+	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
+	"github.com/spf13/cobra"
+)
+
+var projectTaskCmd = &cobra.Command{
+	Use:   "task",
+	Short: "Manage project tasks (manager role)",
+}
+
+var projectTasksListCmd = &cobra.Command{
+	Use:   "list [project-id]",
+	Short: "List tasks for a project",
+	Long: `List tasks for a project where you are a manager.
+
+If project-id is omitted, lists your managed projects and prompts for selection.
+
+Requires user authentication via 'andamio user login'.`,
+	Args: cobra.MaximumNArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if !cfg.HasUserAuth() {
+			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
+		}
+		return nil
+	},
+	RunE: runTasksList,
+}
+
+var projectTaskCreateCmd = &cobra.Command{
+	Use:   "create [project-id]",
+	Short: "Create a new task",
+	Long: `Create a new task for a project where you are a manager.
+
+If project-id is omitted, lists your managed projects and prompts for selection.
+
+Examples:
+  andamio project task create <project-id> --title "Build API" --lovelace 5000000 --expiration 2026-04-01T00:00:00Z
+  andamio project task create <project-id> --title "Fix bug" --lovelace 2000000 --expiration 2026-04-01T00:00:00Z --github-issue "org/repo#42"
+
+Requires user authentication via 'andamio user login'.`,
+	Args: cobra.MaximumNArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if !cfg.HasUserAuth() {
+			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
+		}
+		return nil
+	},
+	RunE: runTaskCreate,
+}
+
+var projectTaskGetCmd = &cobra.Command{
+	Use:   "get <index>",
+	Short: "Get task details by index",
+	Long: `Get full details for a task by its index.
+
+Requires --project-id flag.
+
+Requires user authentication via 'andamio user login'.`,
+	Args: cobra.ExactArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if !cfg.HasUserAuth() {
+			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
+		}
+		return nil
+	},
+	RunE: runTaskGet,
+}
+
+var projectTaskUpdateCmd = &cobra.Command{
+	Use:   "update <index>",
+	Short: "Update a task by index",
+	Long: `Update a task's fields by its index.
+
+Requires --project-id flag. Only specified flags are updated.
+
+Requires user authentication via 'andamio user login'.`,
+	Args: cobra.ExactArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if !cfg.HasUserAuth() {
+			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
+		}
+		return nil
+	},
+	RunE: runTaskUpdate,
+}
+
+var projectTaskDeleteCmd = &cobra.Command{
+	Use:   "delete <index>",
+	Short: "Delete a draft task by index",
+	Long: `Delete a draft task by its index.
+
+Requires --project-id flag.
+
+Requires user authentication via 'andamio user login'.`,
+	Args: cobra.ExactArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if !cfg.HasUserAuth() {
+			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
+		}
+		return nil
+	},
+	RunE: runTaskDelete,
+}
+
+func init() {
+	projectCmd.AddCommand(projectTaskCmd)
+	projectTaskCmd.AddCommand(projectTasksListCmd)
+	projectTaskCmd.AddCommand(projectTaskCreateCmd)
+	projectTaskCmd.AddCommand(projectTaskGetCmd)
+	projectTaskCmd.AddCommand(projectTaskUpdateCmd)
+	projectTaskCmd.AddCommand(projectTaskDeleteCmd)
+
+	// Create flags
+	projectTaskCreateCmd.Flags().String("title", "", "Task title (required)")
+	projectTaskCreateCmd.MarkFlagRequired("title")
+	projectTaskCreateCmd.Flags().String("lovelace", "", "Lovelace reward amount, e.g. 5000000 for 5 ADA (required)")
+	projectTaskCreateCmd.MarkFlagRequired("lovelace")
+	projectTaskCreateCmd.Flags().String("expiration", "", "Expiration time in ISO 8601 format, e.g. 2026-04-01T00:00:00Z (required)")
+	projectTaskCreateCmd.MarkFlagRequired("expiration")
+	projectTaskCreateCmd.Flags().String("content", "", "Plain text task description")
+	projectTaskCreateCmd.Flags().String("github-issue", "", "GitHub issue reference, e.g. org/repo#123 (prepended to title as [org/repo#123])")
+
+	// Get flags
+	projectTaskGetCmd.Flags().String("project-id", "", "Project ID (required)")
+	projectTaskGetCmd.MarkFlagRequired("project-id")
+
+	// Update flags
+	projectTaskUpdateCmd.Flags().String("project-id", "", "Project ID (required)")
+	projectTaskUpdateCmd.MarkFlagRequired("project-id")
+	projectTaskUpdateCmd.Flags().String("title", "", "New task title")
+	projectTaskUpdateCmd.Flags().String("lovelace", "", "New lovelace reward amount")
+	projectTaskUpdateCmd.Flags().String("expiration", "", "New expiration time (ISO 8601)")
+	projectTaskUpdateCmd.Flags().String("content", "", "New plain text description")
+
+	// Delete flags
+	projectTaskDeleteCmd.Flags().String("project-id", "", "Project ID (required)")
+	projectTaskDeleteCmd.MarkFlagRequired("project-id")
+}
+
+// managerProject holds the fields we need from the manager projects list response
+type managerProject struct {
+	ProjectID          string
+	ContributorStateID string
+	Title              string
+}
+
+// fetchManagerProjects calls POST /v2/project/manager/projects/list and returns parsed projects
+func fetchManagerProjects(c *client.Client) ([]managerProject, error) {
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/project/manager/projects/list", nil, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list manager projects: %w", err)
+	}
+
+	data, ok := resp["data"].([]interface{})
+	if !ok || len(data) == 0 {
+		return nil, nil
+	}
+
+	projects := make([]managerProject, 0, len(data))
+	for _, item := range data {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		p := managerProject{}
+		p.ProjectID, _ = m["project_id"].(string)
+		p.ContributorStateID, _ = m["contributor_state_id"].(string)
+
+		if content, ok := m["content"].(map[string]interface{}); ok {
+			p.Title, _ = content["title"].(string)
+		}
+
+		if p.ProjectID != "" {
+			projects = append(projects, p)
+		}
+	}
+	return projects, nil
+}
+
+// resolveProjectID returns a project ID either from args or by prompting the user to pick
+func resolveProjectID(c *client.Client, args []string) (string, error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], nil
+	}
+
+	projects, err := fetchManagerProjects(c)
+	if err != nil {
+		return "", err
+	}
+	if len(projects) == 0 {
+		return "", fmt.Errorf("no managed projects found")
+	}
+
+	fmt.Println("Your managed projects:")
+	for i, p := range projects {
+		title := p.Title
+		if title == "" {
+			title = "(untitled)"
+		}
+		fmt.Printf("  %d. %s  [%s]\n", i+1, title, p.ProjectID)
+	}
+	fmt.Print("\nSelect project number: ")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return "", fmt.Errorf("no input received")
+	}
+	input := strings.TrimSpace(scanner.Text())
+	num, err := strconv.Atoi(input)
+	if err != nil || num < 1 || num > len(projects) {
+		return "", fmt.Errorf("invalid selection: %s", input)
+	}
+
+	selected := projects[num-1]
+	fmt.Printf("Selected: %s\n\n", selected.Title)
+	return selected.ProjectID, nil
+}
+
+// resolveProjectStatePolicyID looks up the contributor_state_id for a given project_id
+func resolveProjectStatePolicyID(c *client.Client, projectID string) (string, error) {
+	projects, err := fetchManagerProjects(c)
+	if err != nil {
+		return "", err
+	}
+
+	for _, p := range projects {
+		if p.ProjectID == projectID {
+			if p.ContributorStateID == "" {
+				return "", fmt.Errorf("project %s has no contributor_state_id (may not be on-chain yet)", projectID)
+			}
+			return p.ContributorStateID, nil
+		}
+	}
+
+	return "", fmt.Errorf("project %s not found in your managed projects", projectID)
+}
+
+// fetchTasks calls POST /v2/project/manager/tasks/list and returns the raw response
+func fetchTasks(c *client.Client, projectID string) (map[string]interface{}, error) {
+	body := map[string]string{"project_id": projectID}
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/project/manager/tasks/list", body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list tasks: %w", err)
+	}
+	return resp, nil
+}
+
+// extractTaskList extracts the data array from a tasks list response
+func extractTaskList(resp map[string]interface{}) []map[string]interface{} {
+	data, ok := resp["data"].([]interface{})
+	if !ok {
+		return nil
+	}
+	items := make([]map[string]interface{}, 0, len(data))
+	for _, item := range data {
+		if m, ok := item.(map[string]interface{}); ok {
+			items = append(items, m)
+		}
+	}
+	return items
+}
+
+func runTasksList(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	c := client.New(cfg)
+
+	projectID, err := resolveProjectID(c, args)
+	if err != nil {
+		return err
+	}
+
+	resp, err := fetchTasks(c, projectID)
+	if err != nil {
+		return err
+	}
+
+	if output.GetFormat() == output.FormatJSON {
+		return output.PrintJSON(resp)
+	}
+
+	items := extractTaskList(resp)
+	if len(items) == 0 {
+		fmt.Println("No tasks found.")
+		return nil
+	}
+
+	// Custom table output with task-relevant columns
+	fmt.Printf("%-6s %-40s %-12s %12s %s\n", "Index", "Title", "Status", "Lovelace", "Expiration")
+	fmt.Printf("%-6s %-40s %-12s %12s %s\n", "-----", "-----", "------", "--------", "----------")
+
+	for _, item := range items {
+		index := 0
+		if v, ok := item["task_index"].(float64); ok {
+			index = int(v)
+		}
+		status, _ := item["task_status"].(string)
+		if status == "" {
+			status, _ = item["source"].(string)
+		}
+
+		title := ""
+		if content, ok := item["content"].(map[string]interface{}); ok {
+			title, _ = content["title"].(string)
+		}
+
+		lovelace := int64(0)
+		if v, ok := item["lovelace_amount"].(float64); ok {
+			lovelace = int64(v)
+		}
+
+		expiration, _ := item["expiration"].(string)
+
+		// Truncate long titles
+		if len(title) > 38 {
+			title = title[:35] + "..."
+		}
+
+		// Format lovelace as ADA
+		adaStr := fmt.Sprintf("%d", lovelace)
+
+		fmt.Printf("%-6d %-40s %-12s %12s %s\n", index, title, status, adaStr, expiration)
+	}
+
+	return nil
+}
+
+// parseExpiration converts an ISO 8601 date string to Unix milliseconds string for the API
+func parseExpiration(exp string) (string, error) {
+	// Try RFC3339 first (2026-04-01T00:00:00Z)
+	t, err := time.Parse(time.RFC3339, exp)
+	if err != nil {
+		// Try date-only format (2026-04-01)
+		t, err = time.Parse("2006-01-02", exp)
+		if err != nil {
+			return "", fmt.Errorf("invalid expiration format %q: use ISO 8601, e.g. 2026-04-01T00:00:00Z or 2026-04-01", exp)
+		}
+	}
+	return strconv.FormatInt(t.UnixMilli(), 10), nil
+}
+
+// CreateTaskResult holds the result for structured output
+type CreateTaskResult struct {
+	ProjectID            string `json:"project_id"`
+	ProjectStatePolicyID string `json:"project_state_policy_id"`
+	Title                string `json:"title"`
+	Lovelace             string `json:"lovelace"`
+	ExpirationTime       string `json:"expiration_time"`
+	GitHubIssue          string `json:"github_issue,omitempty"`
+}
+
+func runTaskCreate(cmd *cobra.Command, args []string) error {
+	title, _ := cmd.Flags().GetString("title")
+	lovelace, _ := cmd.Flags().GetString("lovelace")
+	expiration, _ := cmd.Flags().GetString("expiration")
+	content, _ := cmd.Flags().GetString("content")
+	githubIssue, _ := cmd.Flags().GetString("github-issue")
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	c := client.New(cfg)
+
+	projectID, err := resolveProjectID(c, args)
+	if err != nil {
+		return err
+	}
+
+	policyID, err := resolveProjectStatePolicyID(c, projectID)
+	if err != nil {
+		return err
+	}
+
+	// Convert expiration to Unix ms
+	expirationMs, err := parseExpiration(expiration)
+	if err != nil {
+		return err
+	}
+
+	// Prepend GitHub issue reference to title
+	if githubIssue != "" {
+		title = fmt.Sprintf("[%s] %s", githubIssue, title)
+	}
+
+	if !isJSON {
+		fmt.Printf("Creating task: %s\n", title)
+	}
+
+	payload := map[string]interface{}{
+		"project_state_policy_id": policyID,
+		"title":                   title,
+		"lovelace":                lovelace,
+		"expiration_time":         expirationMs,
+	}
+	if content != "" {
+		payload["content"] = content
+	}
+
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/project/manager/task/create", payload, &resp); err != nil {
+		return fmt.Errorf("failed to create task: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(resp)
+	}
+
+	fmt.Printf("Task created successfully.\n")
+	return nil
+}
+
+func runTaskGet(cmd *cobra.Command, args []string) error {
+	indexStr := args[0]
+	projectID, _ := cmd.Flags().GetString("project-id")
+
+	index, err := strconv.Atoi(indexStr)
+	if err != nil {
+		return fmt.Errorf("invalid index: %s", indexStr)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	c := client.New(cfg)
+
+	resp, err := fetchTasks(c, projectID)
+	if err != nil {
+		return err
+	}
+
+	items := extractTaskList(resp)
+	for _, item := range items {
+		taskIndex := 0
+		if v, ok := item["task_index"].(float64); ok {
+			taskIndex = int(v)
+		}
+		if taskIndex == index {
+			return output.PrintJSON(item)
+		}
+	}
+
+	return fmt.Errorf("task with index %d not found", index)
+}
+
+func runTaskUpdate(cmd *cobra.Command, args []string) error {
+	indexStr := args[0]
+	projectID, _ := cmd.Flags().GetString("project-id")
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	index, err := strconv.Atoi(indexStr)
+	if err != nil {
+		return fmt.Errorf("invalid index: %s", indexStr)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	c := client.New(cfg)
+
+	policyID, err := resolveProjectStatePolicyID(c, projectID)
+	if err != nil {
+		return err
+	}
+
+	payload := map[string]interface{}{
+		"project_state_policy_id": policyID,
+		"index":                   index,
+	}
+
+	// Only include flags that were explicitly set
+	if cmd.Flags().Changed("title") {
+		title, _ := cmd.Flags().GetString("title")
+		payload["title"] = title
+	}
+	if cmd.Flags().Changed("lovelace") {
+		lovelace, _ := cmd.Flags().GetString("lovelace")
+		payload["lovelace"] = lovelace
+	}
+	if cmd.Flags().Changed("expiration") {
+		exp, _ := cmd.Flags().GetString("expiration")
+		expirationMs, err := parseExpiration(exp)
+		if err != nil {
+			return err
+		}
+		payload["expiration_time"] = expirationMs
+	}
+	if cmd.Flags().Changed("content") {
+		content, _ := cmd.Flags().GetString("content")
+		payload["content"] = content
+	}
+
+	if !isJSON {
+		fmt.Printf("Updating task %d...\n", index)
+	}
+
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/project/manager/task/update", payload, &resp); err != nil {
+		return fmt.Errorf("failed to update task: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(resp)
+	}
+
+	fmt.Printf("Task %d updated successfully.\n", index)
+	return nil
+}
+
+func runTaskDelete(cmd *cobra.Command, args []string) error {
+	indexStr := args[0]
+	projectID, _ := cmd.Flags().GetString("project-id")
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	index, err := strconv.Atoi(indexStr)
+	if err != nil {
+		return fmt.Errorf("invalid index: %s", indexStr)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	c := client.New(cfg)
+
+	policyID, err := resolveProjectStatePolicyID(c, projectID)
+	if err != nil {
+		return err
+	}
+
+	payload := map[string]interface{}{
+		"project_state_policy_id": policyID,
+		"index":                   index,
+	}
+
+	if !isJSON {
+		fmt.Printf("Deleting task %d...\n", index)
+	}
+
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/project/manager/task/delete", payload, &resp); err != nil {
+		return fmt.Errorf("failed to delete task: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(resp)
+	}
+
+	fmt.Printf("Task %d deleted.\n", index)
+	return nil
+}

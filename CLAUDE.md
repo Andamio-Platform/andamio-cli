@@ -121,6 +121,13 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 |---------|----------|------|-------------|
 | `project list` | `/api/v2/project/user/projects/list` | either | List projects |
 | `project get <id>` | `/api/v2/project/user/project/{id}` | either | Project details |
+| `project task list [id]` | `/v2/project/manager/tasks/list` | jwt | List tasks (manager). Interactive picker if id omitted |
+| `project task get <index>` | `/v2/project/manager/tasks/list` | jwt | Get task by index (filters from list) |
+| `project task create [id]` | `/v2/project/manager/task/create` | jwt | Create task. Flags: --title, --lovelace, --expiration, --github-issue |
+| `project task update <index>` | `/v2/project/manager/task/update` | jwt | Update task. --project-id required |
+| `project task delete <index>` | `/v2/project/manager/task/delete` | jwt | Delete draft task. --project-id required |
+| `project task export [id]` | `/v2/project/manager/tasks/list` | jwt | Export tasks to tasks/<slug>/ as Markdown |
+| `project task import [id]` | `/v2/project/manager/task/create,update` | jwt | Import tasks from Markdown files. --dry-run supported |
 
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |
