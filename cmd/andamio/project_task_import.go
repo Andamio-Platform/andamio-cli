@@ -234,9 +234,9 @@ func importTaskFile(c *client.Client, filePath, filename, policyID string, exist
 
 func createTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, filename string, dryRun, isJSON bool) (string, error) {
 	payload := map[string]interface{}{
-		"project_state_policy_id": policyID,
+		"contributor_state_id": policyID,
 		"title":                   fm.Title,
-		"lovelace":                fm.Lovelace,
+		"lovelace_amount":         fm.Lovelace,
 		"expiration_time":         expirationMs,
 	}
 
@@ -271,10 +271,10 @@ func createTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirati
 
 func updateTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, index int, filename string, dryRun, isJSON bool) (string, error) {
 	payload := map[string]interface{}{
-		"project_state_policy_id": policyID,
+		"contributor_state_id": policyID,
 		"index":                   index,
 		"title":                   fm.Title,
-		"lovelace":                fm.Lovelace,
+		"lovelace_amount":         fm.Lovelace,
 		"expiration_time":         expirationMs,
 	}
 

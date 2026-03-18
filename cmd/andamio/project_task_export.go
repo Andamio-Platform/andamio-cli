@@ -208,7 +208,7 @@ func exportTask(dir string, item map[string]interface{}, projectID, policyID str
 	}
 	fm.WriteString(fmt.Sprintf("project_id: %q\n", projectID))
 	if contributorStateID != "" {
-		fm.WriteString(fmt.Sprintf("project_state_policy_id: %q\n", contributorStateID))
+		fm.WriteString(fmt.Sprintf("contributor_state_id: %q\n", contributorStateID))
 	}
 	if description != "" {
 		fm.WriteString(fmt.Sprintf("description: %q\n", description))

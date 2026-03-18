@@ -362,10 +362,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	payload := map[string]interface{}{
-		"project_state_policy_id": policyID,
-		"title":                   title,
-		"lovelace":                lovelace,
-		"expiration_time":         expirationMs,
+		"contributor_state_id": policyID,
+		"title":               title,
+		"lovelace_amount":     lovelace,
+		"expiration_time":     expirationMs,
 	}
 	if content != "" {
 		payload["content"] = content
@@ -452,8 +452,8 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	payload := map[string]interface{}{
-		"project_state_policy_id": policyID,
-		"index":                   index,
+		"contributor_state_id": policyID,
+		"index":               index,
 	}
 
 	// Only include flags that were explicitly set
@@ -463,7 +463,7 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("lovelace") {
 		lovelace, _ := cmd.Flags().GetString("lovelace")
-		payload["lovelace"] = lovelace
+		payload["lovelace_amount"] = lovelace
 	}
 	if cmd.Flags().Changed("expiration") {
 		exp, _ := cmd.Flags().GetString("expiration")
@@ -521,8 +521,8 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	payload := map[string]interface{}{
-		"project_state_policy_id": policyID,
-		"index":                   index,
+		"contributor_state_id": policyID,
+		"index":               index,
 	}
 
 	if !isJSON {
