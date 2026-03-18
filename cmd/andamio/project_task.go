@@ -363,6 +363,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 
 	payload := map[string]interface{}{
 		"project_state_policy_id": policyID,
+		"contributor_state_id":    policyID,
 		"title":                   title,
 		"lovelace":                lovelace,
 		"expiration_time":         expirationMs,
