@@ -121,6 +121,13 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 |---------|----------|------|-------------|
 | `project list` | `/api/v2/project/user/projects/list` | either | List projects |
 | `project get <id>` | `/api/v2/project/user/project/{id}` | either | Project details |
+| `project task list <project-id>` | `/v2/project/manager/tasks/list` | jwt | List tasks (manager) |
+| `project task get <index> --project-id <id>` | `/v2/project/manager/tasks/list` | jwt | Get task by index (filters from list) |
+| `project task create <project-id>` | `/v2/project/manager/task/create` | jwt | Create task. Flags: --title, --lovelace, --expiration, --github-issue |
+| `project task update <index> --project-id <id>` | `/v2/project/manager/task/update` | jwt | Update task fields. --project-id required |
+| `project task delete <index> --project-id <id>` | `/v2/project/manager/task/delete` | jwt | Delete draft task. --project-id required |
+| `project task export <project-id>` | `/v2/project/manager/tasks/list` | jwt | Export tasks to tasks/<slug>/ as Markdown |
+| `project task import <project-id>` | `/v2/project/manager/task/create,update` | jwt | Import tasks from Markdown files. --dry-run supported |
 
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |
@@ -170,6 +177,30 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 ```
 
 Omitted top-level fields = unchanged. But array items (lessons, slts) replace the full entity — must include all fields to preserve them.
+
+## Composability Rules
+
+All commands must work without a TTY. **Never read from stdin in command handlers.**
+
+1. **No interactive pickers.** If a required argument is omitted, return an error that tells the user how to discover valid values (e.g., `"Run 'andamio project list --output json'"`). Cobra's `ExactArgs(N)` enforces this at the framework level.
+
+2. **Progress to stderr.** Use `fmt.Fprintf(os.Stderr, ...)` for all human-readable status/progress messages. Gate with `if !isJSON` to suppress them when `--output json` is set.
+
+3. **Data to stdout only.** Structured output (tables, JSON, CSV, Markdown) goes to `os.Stdout` via the `output` package. Nothing else touches stdout.
+
+4. **Required args are required.** Use `cobra.ExactArgs(N)` and `MarkFlagRequired`. Never use `MaximumNArgs` for arguments the command cannot function without.
+
+5. **`--output json` is the scripting surface.** All list/get commands must support it with stable JSON schemas. This is what scripts, agents, and pipes consume.
+
+The two-step composable pattern:
+```bash
+# 1. Discover IDs
+PROJECT_ID=$(andamio project list --output json | jq -r '.data[0].project_id')
+
+# 2. Use them directly — no prompts, no TTY needed
+andamio project task list "$PROJECT_ID" --output json | jq '.data[].content.title'
+andamio project task create "$PROJECT_ID" --title "..." --lovelace 5000000 --expiration 2026-06-01
+```
 
 ## Adding Endpoints
 
