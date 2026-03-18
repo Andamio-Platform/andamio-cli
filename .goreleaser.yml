@@ -36,6 +36,18 @@ changelog:
       - "^docs:"
       - "^test:"
 
+brews:
+  - repository:
+      owner: Andamio-Platform
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/Andamio-Platform/andamio-cli"
+    description: "CLI for the Andamio Protocol"
+    install: |
+      bin.install "andamio"
+    test: |
+      system "#{bin}/andamio", "--version"
+
 release:
   github:
     owner: Andamio-Platform
