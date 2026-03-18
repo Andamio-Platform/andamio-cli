@@ -1,8 +1,7 @@
 package main
 
 import (
-	"fmt"
-
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -20,7 +19,7 @@ var teacherCmd = &cobra.Command{
 			return err
 		}
 		if !cfg.HasUserAuth() {
-			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
+			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
 		}
 		return nil
 	},

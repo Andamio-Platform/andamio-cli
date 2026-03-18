@@ -264,7 +264,7 @@ type userStatusResult struct {
 	UserAlias              string `json:"user_alias,omitempty"`
 	UserID                 string `json:"user_id,omitempty"`
 	SessionExpiresAt       string `json:"session_expires_at,omitempty"`
-	SessionExpired         bool   `json:"session_expired,omitempty"`
+	SessionExpired         *bool  `json:"session_expired,omitempty"`
 	SessionRemainingSeconds int64 `json:"session_remaining_seconds,omitempty"`
 }
 
@@ -287,8 +287,9 @@ func runUserStatus(cmd *cobra.Command, args []string) error {
 				result.SessionExpiresAt = cfg.JWTExpiresAt
 				if expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt); err == nil {
 					now := time.Now()
-					result.SessionExpired = now.After(expiresAt)
-					if !result.SessionExpired {
+					expired := now.After(expiresAt)
+					result.SessionExpired = &expired
+					if !expired {
 						result.SessionRemainingSeconds = int64(expiresAt.Sub(now).Seconds())
 					}
 				}

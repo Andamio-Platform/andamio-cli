@@ -141,7 +141,7 @@ func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
 	data, ok := response["data"].([]interface{})
 	if !ok || len(data) == 0 {
 		if output.GetFormat() == output.FormatJSON {
-			fmt.Println(`{"data":[]}`)
+			return output.PrintJSON(map[string]interface{}{"data": []interface{}{}})
 		} else {
 			fmt.Fprintln(os.Stderr, emptyMsg)
 		}
@@ -187,7 +187,7 @@ func runCourseModulesTeacher(cfg *config.Config, courseID string) error {
 	modules, ok := resp["data"].([]interface{})
 	if !ok || len(modules) == 0 {
 		if output.GetFormat() == output.FormatJSON {
-			fmt.Println(`{"data":[]}`)
+			return output.PrintJSON(map[string]interface{}{"data": []interface{}{}})
 		} else {
 			fmt.Fprintln(os.Stderr, "No modules found.")
 		}

@@ -90,7 +90,11 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DefaultConfig(), nil
+			cfg := DefaultConfig()
+			if jwt := os.Getenv("ANDAMIO_JWT"); jwt != "" {
+				cfg.UserJWT = jwt
+			}
+			return cfg, nil
 		}
 		return nil, err
 	}
@@ -98,6 +102,11 @@ func Load() (*Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
+	}
+
+	// ANDAMIO_JWT env var overrides stored JWT (for CI/CD and headless environments)
+	if jwt := os.Getenv("ANDAMIO_JWT"); jwt != "" {
+		cfg.UserJWT = jwt
 	}
 
 	// Validate base URL on load to catch config file tampering
