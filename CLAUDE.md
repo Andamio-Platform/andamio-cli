@@ -38,14 +38,16 @@ Version is injected via ldflags: `-X main.version={{.Version}} -X main.commit={{
 
 ## Architecture
 
-Go CLI using Cobra for the Andamio Protocol. Dependencies: Cobra (CLI), `pkg/browser` (OAuth flow), goldmark (Markdown parsing), adrg/frontmatter (YAML frontmatter).
+Go CLI using Cobra for the Andamio Protocol. Dependencies: Cobra (CLI), `pkg/browser` (OAuth flow), goldmark (Markdown parsing), adrg/frontmatter (YAML frontmatter), Bursa (Cardano key loading), fxamacker/cbor/v2 (CBOR encoding), golang.org/x/crypto (Blake2b hashing).
 
 ### Package Layout
 
 - `cmd/andamio/` — All command definitions, one file per command group. `main.go` defines `rootCmd` with global `--output` flag and version info.
-- `internal/config/` — Config management. Single `Config` struct serialized to `~/.andamio/config.json`. Holds API key, base URL, user JWT fields. Permissions: 0600.
+- `internal/config/` — Config management. Single `Config` struct serialized to `~/.andamio/config.json`. Holds API key, base URL, user JWT, submit URL fields. Permissions: 0600.
 - `internal/client/` — HTTP client wrapping `net/http`. GET/POST/PUT. Automatically sets `X-API-Key` and `Authorization: Bearer` headers from config.
 - `internal/output/` — Multi-format output (text, json, csv, markdown). Global format set via `--output` flag in `PersistentPreRunE`. Supports nested key access with dot notation.
+- `internal/cardano/` — Cardano transaction signing. Loads `.skey` files via Bursa, extracts raw CBOR body bytes (preserves original encoding), signs with Blake2b-256 + ed25519, assembles VKey witnesses (merges into existing witness set).
+- `internal/submit/` — HTTP client for Cardano submit APIs. Posts `application/cbor` to configurable endpoints with custom headers. Separate from the Andamio API client.
 
 ### Command Pattern
 
@@ -94,6 +96,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 |---------|----------|------|-------------|
 | `config show` | local | none | Show current config |
 | `config set-url <url>` | local | none | Switch environment |
+| `config set-submit-url <url>` | local | none | Set Cardano submit API URL |
 
 ### user — Wallet auth and user info
 | Command | Endpoint | Auth | Description |
@@ -132,6 +135,10 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |
 |---------|----------|------|-------------|
+| `tx build <endpoint> --body <json>` | POST to `/api/v2/tx/*` | jwt | Build unsigned transaction via API. `--body-file` for file input |
+| `tx sign --tx <hex> --skey <path>` | local | none | Sign unsigned tx with local .skey file. `--tx-file` for file input |
+| `tx submit --tx <hex>` | configurable submit API | none | Submit signed tx to Cardano network. `--submit-url`, `--submit-header` |
+| `tx register --tx-hash <hash> --tx-type <type>` | `/api/v2/tx/register` | jwt | Register submitted tx for tracking. `--instance-id` optional |
 | `tx pending` | `/api/v2/tx/pending` | either | Pending transactions |
 | `tx types` | `/api/v2/tx/types` | either | Transaction types |
 | `tx status <hash>` | `/api/v2/tx/status/{hash}` | either | Transaction status |
