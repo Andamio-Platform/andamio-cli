@@ -82,10 +82,38 @@ func printAsJSON(data interface{}) error {
 }
 
 func printListAsText(items []map[string]interface{}, titleKey, idKey string) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	// Derive column headers from the key names (last segment of dot notation)
+	titleHeader := titleKey
+	if i := strings.LastIndex(titleHeader, "."); i >= 0 {
+		titleHeader = titleHeader[i+1:]
+	}
+	idHeader := idKey
+
+	// Find max widths
+	titleWidth := len(titleHeader)
+	idWidth := len(idHeader)
+	for _, item := range items {
+		if w := len(getNestedString(item, titleKey)); w > titleWidth {
+			titleWidth = w
+		}
+		if w := len(getNestedString(item, idKey)); w > idWidth {
+			idWidth = w
+		}
+	}
+
+	// Print header
+	fmt.Printf("%-*s  %s\n", titleWidth, strings.ToUpper(titleHeader), strings.ToUpper(idHeader))
+	fmt.Printf("%-*s  %s\n", titleWidth, strings.Repeat("─", titleWidth), strings.Repeat("─", idWidth))
+
+	// Print rows
 	for _, item := range items {
 		title := getNestedString(item, titleKey)
 		id := getNestedString(item, idKey)
-		fmt.Printf("- %s (%s)\n", title, id)
+		fmt.Printf("%-*s  %s\n", titleWidth, title, id)
 	}
 	return nil
 }
