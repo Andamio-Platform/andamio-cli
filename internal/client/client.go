@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 )
 
@@ -57,7 +58,14 @@ func (c *Client) Get(path string, result interface{}) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error %d: %s", resp.StatusCode, truncateErrorBody(body))
+		msg := fmt.Sprintf("API error %d: %s", resp.StatusCode, truncateErrorBody(body))
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return &apierr.AuthError{Message: msg}
+		case http.StatusNotFound:
+			return &apierr.NotFoundError{Message: msg}
+		}
+		return fmt.Errorf("%s", msg)
 	}
 
 	return json.NewDecoder(resp.Body).Decode(result)
@@ -105,7 +113,14 @@ func (c *Client) Post(path string, body interface{}, result interface{}) error {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error %d: %s", resp.StatusCode, truncateErrorBody(respBody))
+		msg := fmt.Sprintf("API error %d: %s", resp.StatusCode, truncateErrorBody(respBody))
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return &apierr.AuthError{Message: msg}
+		case http.StatusNotFound:
+			return &apierr.NotFoundError{Message: msg}
+		}
+		return fmt.Errorf("%s", msg)
 	}
 
 	if result != nil {
@@ -145,7 +160,14 @@ func (c *Client) Put(path string, body interface{}, result interface{}) error {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error %d: %s", resp.StatusCode, truncateErrorBody(respBody))
+		msg := fmt.Sprintf("API error %d: %s", resp.StatusCode, truncateErrorBody(respBody))
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return &apierr.AuthError{Message: msg}
+		case http.StatusNotFound:
+			return &apierr.NotFoundError{Message: msg}
+		}
+		return fmt.Errorf("%s", msg)
 	}
 
 	if result != nil {
