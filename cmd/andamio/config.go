@@ -45,6 +45,40 @@ Set ANDAMIO_ALLOW_ANY_URL=1 to allow non-andamio.io URLs for testing.`,
 	},
 }
 
+var configSetSubmitURLCmd = &cobra.Command{
+	Use:   "set-submit-url [url]",
+	Short: "Set the Cardano submit API URL",
+	Long: `Set the URL for submitting signed transactions to the Cardano network.
+
+This can be any Cardano submit API endpoint (Blockfrost, Maestro, self-hosted, etc.).
+Requires HTTPS for non-localhost URLs. Set ANDAMIO_ALLOW_ANY_URL=1 to bypass.
+
+Examples:
+  andamio config set-submit-url https://cardano-mainnet.blockfrost.io/api/tx/submit
+  andamio config set-submit-url https://submit-api.example.com`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rawURL := args[0]
+
+		if err := config.ValidateSubmitURL(rawURL); err != nil {
+			return err
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+
+		cfg.SubmitURL = rawURL
+		if err := config.Save(cfg); err != nil {
+			return err
+		}
+
+		fmt.Printf("Submit URL set to: %s\n", rawURL)
+		return nil
+	},
+}
+
 var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current configuration",
@@ -58,18 +92,25 @@ var configShowCmd = &cobra.Command{
 			type configStatus struct {
 				BaseURL   string `json:"base_url"`
 				APIKeySet bool   `json:"api_key_set"`
+				SubmitURL string `json:"submit_url,omitempty"`
 			}
 			return output.PrintJSON(configStatus{
 				BaseURL:   cfg.BaseURL,
 				APIKeySet: cfg.APIKey != "",
+				SubmitURL: cfg.SubmitURL,
 			})
 		}
 
-		fmt.Printf("Base URL: %s\n", cfg.BaseURL)
+		fmt.Printf("Base URL:   %s\n", cfg.BaseURL)
 		if cfg.APIKey != "" {
-			fmt.Println("API Key:  ****... (configured)")
+			fmt.Println("API Key:    ****... (configured)")
 		} else {
-			fmt.Println("API Key:  (not set)")
+			fmt.Println("API Key:    (not set)")
+		}
+		if cfg.SubmitURL != "" {
+			fmt.Printf("Submit URL: %s\n", cfg.SubmitURL)
+		} else {
+			fmt.Println("Submit URL: (not set)")
 		}
 		return nil
 	},
@@ -78,5 +119,6 @@ var configShowCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configSetURLCmd)
+	configCmd.AddCommand(configSetSubmitURLCmd)
 	configCmd.AddCommand(configShowCmd)
 }

@@ -16,6 +16,7 @@ type Config struct {
 	JWTExpiresAt string `json:"jwt_expires_at,omitempty"`
 	UserAlias    string `json:"user_alias,omitempty"`
 	UserID       string `json:"user_id,omitempty"`
+	SubmitURL    string `json:"submit_url,omitempty"`
 }
 
 // ClearUserAuth removes all user authentication fields from the config.
@@ -73,6 +74,32 @@ func ValidateBaseURL(rawURL string) error {
 	return nil
 }
 
+// ValidateSubmitURL checks if a Cardano submit API URL is safe to use.
+// Unlike ValidateBaseURL, this allows any domain (submit APIs are third-party services).
+// Requires HTTPS for non-localhost. Set ANDAMIO_ALLOW_ANY_URL=1 to bypass.
+func ValidateSubmitURL(rawURL string) error {
+	if os.Getenv("ANDAMIO_ALLOW_ANY_URL") == "1" {
+		return nil
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	hostname := parsed.Hostname()
+	isLocalhost := hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1"
+	if isLocalhost {
+		return nil
+	}
+
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("submit URL must use HTTPS (got %s)", parsed.Scheme)
+	}
+
+	return nil
+}
+
 func ConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -107,6 +134,11 @@ func Load() (*Config, error) {
 	// ANDAMIO_JWT env var overrides stored JWT (for CI/CD and headless environments)
 	if jwt := os.Getenv("ANDAMIO_JWT"); jwt != "" {
 		cfg.UserJWT = jwt
+	}
+
+	// ANDAMIO_SUBMIT_URL env var overrides stored submit URL
+	if submitURL := os.Getenv("ANDAMIO_SUBMIT_URL"); submitURL != "" {
+		cfg.SubmitURL = submitURL
 	}
 
 	// Validate base URL on load to catch config file tampering
