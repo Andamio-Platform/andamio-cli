@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"unicode/utf8"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
@@ -55,18 +56,10 @@ var courseLessonCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		courseID, moduleCode, sltIndex := args[0], args[1], args[2]
-		err := getJSON("/api/v2/course/user/lesson/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode) + "/" + url.PathEscape(sltIndex))
-		if err != nil {
-			var notFound *apierr.NotFoundError
-			if errors.As(err, &notFound) {
-				return &apierr.NotFoundError{
-					Message: fmt.Sprintf("No lesson found for SLT %s in module %s. Run 'andamio course slts %s %s' to see which SLTs have lessons.",
-						sltIndex, moduleCode, courseID, moduleCode),
-				}
-			}
-			return err
-		}
-		return nil
+		path := "/api/v2/course/user/lesson/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode) + "/" + url.PathEscape(sltIndex)
+		hint := fmt.Sprintf("No lesson found for SLT %s in module %s. Run 'andamio course slts %s %s' to see which SLTs have lessons.",
+			sltIndex, moduleCode, courseID, moduleCode)
+		return getJSONWithHint(path, hint)
 	},
 }
 
@@ -76,18 +69,10 @@ var courseAssignmentCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		courseID, moduleCode := args[0], args[1]
-		err := getJSON("/api/v2/course/user/assignment/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode))
-		if err != nil {
-			var notFound *apierr.NotFoundError
-			if errors.As(err, &notFound) {
-				return &apierr.NotFoundError{
-					Message: fmt.Sprintf("No assignment found for module %s. Run 'andamio course modules %s' to see which modules have assignments.",
-						moduleCode, courseID),
-				}
-			}
-			return err
-		}
-		return nil
+		path := "/api/v2/course/user/assignment/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode)
+		hint := fmt.Sprintf("No assignment found for module %s. Run 'andamio course modules %s' to see which modules have assignments.",
+			moduleCode, courseID)
+		return getJSONWithHint(path, hint)
 	},
 }
 
@@ -97,18 +82,10 @@ var courseIntroCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		courseID, moduleCode := args[0], args[1]
-		err := getJSON("/api/v2/course/user/introduction/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode))
-		if err != nil {
-			var notFound *apierr.NotFoundError
-			if errors.As(err, &notFound) {
-				return &apierr.NotFoundError{
-					Message: fmt.Sprintf("No introduction found for module %s. Run 'andamio course modules %s' to see available modules.",
-						moduleCode, courseID),
-				}
-			}
-			return err
-		}
-		return nil
+		path := "/api/v2/course/user/introduction/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode)
+		hint := fmt.Sprintf("No introduction found for module %s. Run 'andamio course modules %s' to see available modules.",
+			moduleCode, courseID)
+		return getJSONWithHint(path, hint)
 	},
 }
 
@@ -153,6 +130,28 @@ func postJSON(path string) error {
 	}
 
 	return output.PrintJSON(result)
+}
+
+// getJSONWithHint wraps getJSON and replaces NotFoundError messages with a contextual hint.
+func getJSONWithHint(path, notFoundHint string) error {
+	err := getJSON(path)
+	if err != nil {
+		var notFound *apierr.NotFoundError
+		if errors.As(err, &notFound) {
+			return &apierr.NotFoundError{Message: notFoundHint}
+		}
+		return err
+	}
+	return nil
+}
+
+// truncateUTF8 truncates a string to maxRunes runes, appending "..." if truncated.
+func truncateUTF8(s string, maxRunes int) string {
+	if utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:maxRunes-3]) + "..."
 }
 
 // printList fetches a list endpoint and prints using PrintList
@@ -272,10 +271,7 @@ func runCourseModulesTeacher(cfg *config.Config, courseID string) error {
 			hasAssignment = "Yes"
 		}
 
-		// Truncate long titles
-		if len(title) > 38 {
-			title = title[:35] + "..."
-		}
+		title = truncateUTF8(title, 38)
 
 		fmt.Printf("%-8s %-40s %-12s %5d %7d %10s\n", code, title, status, sltCount, lessonCount, hasAssignment)
 	}
@@ -351,24 +347,12 @@ func runCourseSltsTeacher(cfg *config.Config, courseID, moduleCode string) error
 		return nil
 	}
 
-	if output.GetFormat() == output.FormatJSON {
-		return output.PrintJSON(map[string]interface{}{"data": targetSlts})
-	}
-
-	// Print formatted table
-	fmt.Printf("%-7s %-50s %s\n", "INDEX", "SLT TEXT", "HAS LESSON")
-	fmt.Printf("%-7s %-50s %s\n", "-----", "--------", "----------")
-
+	// Build structured items for all output formats
+	items := make([]map[string]interface{}, 0, len(targetSlts))
 	for _, slt := range targetSlts {
 		sltMap, ok := slt.(map[string]interface{})
 		if !ok {
 			continue
-		}
-
-		index := fmt.Sprintf("%v", sltMap["slt_index"])
-		text, _ := sltMap["slt_text"].(string)
-		if len(text) > 48 {
-			text = text[:45] + "..."
 		}
 
 		hasLesson := "No"
@@ -376,7 +360,25 @@ func runCourseSltsTeacher(cfg *config.Config, courseID, moduleCode string) error
 			hasLesson = "Yes"
 		}
 
-		fmt.Printf("%-7s %-50s %s\n", index, text, hasLesson)
+		items = append(items, map[string]interface{}{
+			"slt_index":  fmt.Sprintf("%v", sltMap["slt_index"]),
+			"slt_text":   sltMap["slt_text"],
+			"has_lesson": hasLesson,
+		})
+	}
+
+	if output.GetFormat() != output.FormatText {
+		return output.PrintJSON(map[string]interface{}{"data": items})
+	}
+
+	// Text mode: formatted table with truncated SLT text
+	fmt.Printf("%-7s %-50s %s\n", "INDEX", "SLT TEXT", "HAS LESSON")
+	fmt.Printf("%-7s %-50s %s\n", "-----", "--------", "----------")
+
+	for _, item := range items {
+		text, _ := item["slt_text"].(string)
+		text = truncateUTF8(text, 50)
+		fmt.Printf("%-7s %-50s %s\n", item["slt_index"], text, item["has_lesson"])
 	}
 
 	return nil
