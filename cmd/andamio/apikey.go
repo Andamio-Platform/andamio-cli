@@ -48,9 +48,10 @@ func getAPIKeyJSON(path string) error {
 			Message: "apikey commands require an API key. Run 'andamio auth login --api-key <key>'",
 		}
 	}
-	// Clear wallet JWT so only X-API-Key is sent
-	cfg.UserJWT = ""
-	c := client.New(cfg)
+	// Copy config and clear wallet JWT so only X-API-Key is sent
+	apiKeyCfg := *cfg
+	apiKeyCfg.UserJWT = ""
+	c := client.New(&apiKeyCfg)
 	var result map[string]interface{}
 	if err := c.Get(path, &result); err != nil {
 		return err
