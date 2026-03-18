@@ -70,15 +70,20 @@ var specFetchCmd = &cobra.Command{
 			return err
 		}
 
-		if !isJSON {
-			// Extract metadata
-			info, _ := spec["info"].(map[string]interface{})
-			version := info["version"]
-			title := info["title"]
-			fmt.Fprintf(os.Stderr, "Saved to %s\n", outPath)
-			fmt.Fprintf(os.Stderr, "API: %s v%s\n", title, version)
+		info, _ := spec["info"].(map[string]interface{})
+		apiVersion, _ := info["version"].(string)
+		apiTitle, _ := info["title"].(string)
+
+		if isJSON {
+			return output.PrintJSON(map[string]interface{}{
+				"path":        outPath,
+				"api_version": apiVersion,
+				"api_title":   apiTitle,
+			})
 		}
 
+		fmt.Fprintf(os.Stderr, "Saved to %s\n", outPath)
+		fmt.Fprintf(os.Stderr, "API: %s v%s\n", apiTitle, apiVersion)
 		return nil
 	},
 }

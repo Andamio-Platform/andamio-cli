@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -42,7 +43,7 @@ Requires user authentication via 'andamio user login'.`,
 			return err
 		}
 		if !cfg.HasUserAuth() {
-			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
+			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
 		}
 		return nil
 	},

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -62,7 +63,8 @@ func main() {
 		}
 
 		if output.GetFormat() == output.FormatJSON {
-			fmt.Printf(`{"error":%q}`+"\n", err.Error())
+			b, _ := json.Marshal(map[string]string{"error": err.Error()})
+			fmt.Println(string(b))
 		} else {
 			fmt.Fprintln(os.Stderr, err)
 		}

@@ -131,6 +131,13 @@ andamio course list -o markdown    # Markdown tables
 
 - `project list` — List available projects
 - `project get <project-id>` — Get project details
+- `project task list <project-id>` — List tasks (manager only)
+- `project task get <index> --project-id <id>` — Get a task by index
+- `project task create <project-id>` — Create a task (`--title`, `--lovelace`, `--expiration` required; `--github-issue` optional)
+- `project task update <index> --project-id <id>` — Update task fields
+- `project task delete <index> --project-id <id>` — Delete a DRAFT task
+- `project task export <project-id>` — Export tasks to `tasks/<slug>/` as Markdown files
+- `project task import <project-id>` — Import tasks from Markdown files (`--dry-run` supported)
 
 ### `andamio user`
 
@@ -270,6 +277,93 @@ andamio course import compiled/my-course/101 --course-id <course-id>
 - **Round-trip editing:** Export → modify → import
 - **Lesson coach integration:** Import modules compiled by lesson-coach
 - **Bulk content updates:** Edit multiple lessons at once, import all changes atomically
+
+## Project Tasks
+
+Project tasks are on-chain bounties that project managers create to reward contributors. All task commands require wallet authentication (`andamio user login`) and manager access on the project.
+
+### Setup
+
+```bash
+# Find your project ID once, use it everywhere
+export PROJECT_ID=$(andamio project list --output json | jq -r '.data[0].project_id')
+```
+
+### CRUD
+
+```bash
+# List tasks
+andamio project task list "$PROJECT_ID"
+
+# Create a task
+andamio project task create "$PROJECT_ID" \
+  --title "Implement wallet connect" \
+  --lovelace 5000000 \
+  --expiration 2026-06-01
+
+# Get a task by index
+andamio project task get 1 --project-id "$PROJECT_ID"
+
+# Update fields on a DRAFT task
+andamio project task update 1 --project-id "$PROJECT_ID" --lovelace 7000000
+
+# Delete a DRAFT task
+andamio project task delete 1 --project-id "$PROJECT_ID"
+```
+
+### Link to a GitHub Issue
+
+Use `--github-issue` to prefix the title with the issue reference:
+
+```bash
+andamio project task create "$PROJECT_ID" \
+  --title "Add dark mode toggle" \
+  --github-issue "Andamio-Platform/andamio-cli#42" \
+  --lovelace 5000000 \
+  --expiration 2026-06-01
+```
+
+The stored title becomes `[Andamio-Platform/andamio-cli#42] Add dark mode toggle`.
+
+### GitHub + Andamio Pipeline
+
+All task commands work without a TTY — they compose cleanly with `gh` in scripts and CI:
+
+```bash
+# Create one andamio task per open GitHub issue
+gh issue list --repo org/repo --json number,title --jq '.[]' | \
+while IFS= read -r issue; do
+  NUMBER=$(echo "$issue" | jq -r '.number')
+  TITLE=$(echo "$issue" | jq -r '.title')
+  andamio project task create "$PROJECT_ID" \
+    --title "$TITLE" \
+    --github-issue "org/repo#$NUMBER" \
+    --lovelace 5000000 \
+    --expiration 2026-06-01
+done
+```
+
+### Task Import/Export
+
+Export all tasks to Markdown, edit locally, and reimport:
+
+```bash
+# Export
+andamio project task export "$PROJECT_ID"
+# Creates: tasks/<project-slug>/001-task-title.md, 002-...
+
+# Edit tasks/<project-slug>/*.md in your editor
+
+# Dry run
+andamio project task import "$PROJECT_ID" --dry-run
+
+# Import
+andamio project task import "$PROJECT_ID"
+```
+
+Each exported file has YAML frontmatter (`title`, `lovelace`, `expiration_time`, `index`, `project_id`) and a Markdown body. Files without an `index` field create new tasks on import.
+
+Only DRAFT tasks can be updated or deleted. ACTIVE and COMPLETED tasks are skipped during import.
 
 ## Networks
 

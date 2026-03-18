@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,7 +66,7 @@ func (c *Client) Get(path string, result interface{}) error {
 		case http.StatusNotFound:
 			return &apierr.NotFoundError{Message: msg}
 		}
-		return fmt.Errorf("%s", msg)
+		return errors.New(msg)
 	}
 
 	return json.NewDecoder(resp.Body).Decode(result)
@@ -120,7 +121,7 @@ func (c *Client) Post(path string, body interface{}, result interface{}) error {
 		case http.StatusNotFound:
 			return &apierr.NotFoundError{Message: msg}
 		}
-		return fmt.Errorf("%s", msg)
+		return errors.New(msg)
 	}
 
 	if result != nil {
@@ -167,7 +168,7 @@ func (c *Client) Put(path string, body interface{}, result interface{}) error {
 		case http.StatusNotFound:
 			return &apierr.NotFoundError{Message: msg}
 		}
-		return fmt.Errorf("%s", msg)
+		return errors.New(msg)
 	}
 
 	if result != nil {
