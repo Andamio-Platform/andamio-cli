@@ -6,10 +6,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -25,13 +27,17 @@ var specFetchCmd = &cobra.Command{
 	Use:   "fetch",
 	Short: "Fetch OpenAPI spec from the API",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		isJSON := output.GetFormat() == output.FormatJSON
+
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
 
 		specURL := cfg.BaseURL + "/api/v1/docs/doc.json"
-		fmt.Printf("Fetching spec from %s...\n", specURL)
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "Fetching spec from %s...\n", specURL)
+		}
 
 		resp, err := specHTTPClient.Get(specURL)
 		if err != nil {
@@ -64,16 +70,23 @@ var specFetchCmd = &cobra.Command{
 			return err
 		}
 
-		// Extract metadata
-		info, _ := spec["info"].(map[string]interface{})
-		version := info["version"]
-		title := info["title"]
-
-		fmt.Printf("Saved to %s\n", outPath)
-		fmt.Printf("API: %s v%s\n", title, version)
+		if !isJSON {
+			// Extract metadata
+			info, _ := spec["info"].(map[string]interface{})
+			version := info["version"]
+			title := info["title"]
+			fmt.Fprintf(os.Stderr, "Saved to %s\n", outPath)
+			fmt.Fprintf(os.Stderr, "API: %s v%s\n", title, version)
+		}
 
 		return nil
 	},
+}
+
+type specPathEntry struct {
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Summary string `json:"summary"`
 }
 
 var specPathsCmd = &cobra.Command{
@@ -119,16 +132,43 @@ var specPathsCmd = &cobra.Command{
 
 		filter, _ := cmd.Flags().GetString("filter")
 
+		var entries []specPathEntry
 		for path, methods := range paths {
 			if filter != "" && !strings.Contains(path, filter) {
 				continue
 			}
 			methodsMap, _ := methods.(map[string]interface{})
-			for method := range methodsMap {
-				fmt.Printf("%s %s\n", method, path)
+			for method, methodData := range methodsMap {
+				summary := ""
+				if md, ok := methodData.(map[string]interface{}); ok {
+					summary, _ = md["summary"].(string)
+				}
+				entries = append(entries, specPathEntry{
+					Method:  strings.ToUpper(method),
+					Path:    path,
+					Summary: summary,
+				})
 			}
 		}
 
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].Path != entries[j].Path {
+				return entries[i].Path < entries[j].Path
+			}
+			return entries[i].Method < entries[j].Method
+		})
+
+		if output.GetFormat() == output.FormatJSON {
+			return output.PrintJSON(entries)
+		}
+
+		for _, e := range entries {
+			if e.Summary != "" {
+				fmt.Printf("%s %s — %s\n", e.Method, e.Path, e.Summary)
+			} else {
+				fmt.Printf("%s %s\n", e.Method, e.Path)
+			}
+		}
 		return nil
 	},
 }

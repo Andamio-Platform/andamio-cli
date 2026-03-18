@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"os"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -139,7 +140,11 @@ func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
 
 	data, ok := response["data"].([]interface{})
 	if !ok || len(data) == 0 {
-		fmt.Println(emptyMsg)
+		if output.GetFormat() == output.FormatJSON {
+			fmt.Println(`{"data":[]}`)
+		} else {
+			fmt.Fprintln(os.Stderr, emptyMsg)
+		}
 		return nil
 	}
 
@@ -181,7 +186,11 @@ func runCourseModulesTeacher(cfg *config.Config, courseID string) error {
 
 	modules, ok := resp["data"].([]interface{})
 	if !ok || len(modules) == 0 {
-		fmt.Println("No modules found.")
+		if output.GetFormat() == output.FormatJSON {
+			fmt.Println(`{"data":[]}`)
+		} else {
+			fmt.Fprintln(os.Stderr, "No modules found.")
+		}
 		return nil
 	}
 

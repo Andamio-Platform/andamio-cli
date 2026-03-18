@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -51,6 +52,17 @@ var configShowCmd = &cobra.Command{
 		cfg, err := config.Load()
 		if err != nil {
 			return err
+		}
+
+		if output.GetFormat() == output.FormatJSON {
+			type configStatus struct {
+				BaseURL   string `json:"base_url"`
+				APIKeySet bool   `json:"api_key_set"`
+			}
+			return output.PrintJSON(configStatus{
+				BaseURL:   cfg.BaseURL,
+				APIKeySet: cfg.APIKey != "",
+			})
 		}
 
 		fmt.Printf("Base URL: %s\n", cfg.BaseURL)

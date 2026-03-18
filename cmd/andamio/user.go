@@ -257,10 +257,44 @@ func runUserLogout(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+type userStatusResult struct {
+	APIKeySet              bool   `json:"api_key_set"`
+	BaseURL                string `json:"base_url"`
+	UserAuthenticated      bool   `json:"user_authenticated"`
+	UserAlias              string `json:"user_alias,omitempty"`
+	UserID                 string `json:"user_id,omitempty"`
+	SessionExpiresAt       string `json:"session_expires_at,omitempty"`
+	SessionExpired         bool   `json:"session_expired,omitempty"`
+	SessionRemainingSeconds int64 `json:"session_remaining_seconds,omitempty"`
+}
+
 func runUserStatus(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if output.GetFormat() == output.FormatJSON {
+		result := userStatusResult{
+			APIKeySet:         cfg.APIKey != "",
+			BaseURL:           cfg.BaseURL,
+			UserAuthenticated: cfg.HasUserAuth(),
+		}
+		if cfg.HasUserAuth() {
+			result.UserAlias = cfg.UserAlias
+			result.UserID = cfg.UserID
+			if cfg.JWTExpiresAt != "" {
+				result.SessionExpiresAt = cfg.JWTExpiresAt
+				if expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt); err == nil {
+					now := time.Now()
+					result.SessionExpired = now.After(expiresAt)
+					if !result.SessionExpired {
+						result.SessionRemainingSeconds = int64(expiresAt.Sub(now).Seconds())
+					}
+				}
+			}
+		}
+		return output.PrintJSON(result)
 	}
 
 	fmt.Println("Authentication Status")

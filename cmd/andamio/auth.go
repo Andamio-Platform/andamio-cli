@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -44,6 +45,17 @@ var authStatusCmd = &cobra.Command{
 		cfg, err := config.Load()
 		if err != nil {
 			return err
+		}
+
+		if output.GetFormat() == output.FormatJSON {
+			type authStatus struct {
+				APIKeySet bool   `json:"api_key_set"`
+				BaseURL   string `json:"base_url"`
+			}
+			return output.PrintJSON(authStatus{
+				APIKeySet: cfg.APIKey != "",
+				BaseURL:   cfg.BaseURL,
+			})
 		}
 
 		if cfg.APIKey == "" {

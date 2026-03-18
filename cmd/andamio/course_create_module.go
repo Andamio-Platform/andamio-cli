@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -87,7 +88,7 @@ func runCreateModule(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	if !isJSON {
-		fmt.Printf("Creating module %s (%s)...\n", title, code)
+		fmt.Fprintf(os.Stderr, "Creating module %s (%s)...\n", title, code)
 	}
 
 	// Step 1: Create the module shell
@@ -114,6 +115,6 @@ func runCreateModule(cmd *cobra.Command, args []string) error {
 		return output.PrintJSON(result)
 	}
 
-	fmt.Printf("Created module: %s (%s)\n", title, code)
+	fmt.Fprintf(os.Stderr, "Created module: %s (%s)\n", title, code)
 	return nil
 }
