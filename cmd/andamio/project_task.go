@@ -17,18 +17,11 @@ import (
 var projectTaskCmd = &cobra.Command{
 	Use:   "task",
 	Short: "Manage project tasks (manager role)",
-}
-
-var projectTasksListCmd = &cobra.Command{
-	Use:   "list [project-id]",
-	Short: "List tasks for a project",
-	Long: `List tasks for a project where you are a manager.
-
-If project-id is omitted, lists your managed projects and prompts for selection.
-
-Requires user authentication via 'andamio user login'.`,
-	Args: cobra.MaximumNArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Chain with root's PersistentPreRunE (output format)
+		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
+			return err
+		}
 		cfg, err := config.Load()
 		if err != nil {
 			return err
@@ -38,6 +31,17 @@ Requires user authentication via 'andamio user login'.`,
 		}
 		return nil
 	},
+}
+
+var projectTaskListCmd = &cobra.Command{
+	Use:   "list [project-id]",
+	Short: "List tasks for a project",
+	Long: `List tasks for a project where you are a manager.
+
+If project-id is omitted, lists your managed projects and prompts for selection.
+
+Requires user authentication via 'andamio user login'.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runTasksList,
 }
 
@@ -54,16 +58,6 @@ Examples:
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.MaximumNArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
-		}
-		return nil
-	},
 	RunE: runTaskCreate,
 }
 
@@ -76,16 +70,6 @@ Requires --project-id flag.
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
-		}
-		return nil
-	},
 	RunE: runTaskGet,
 }
 
@@ -98,16 +82,6 @@ Requires --project-id flag. Only specified flags are updated.
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
-		}
-		return nil
-	},
 	RunE: runTaskUpdate,
 }
 
@@ -120,22 +94,12 @@ Requires --project-id flag.
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
-		}
-		return nil
-	},
 	RunE: runTaskDelete,
 }
 
 func init() {
 	projectCmd.AddCommand(projectTaskCmd)
-	projectTaskCmd.AddCommand(projectTasksListCmd)
+	projectTaskCmd.AddCommand(projectTaskListCmd)
 	projectTaskCmd.AddCommand(projectTaskCreateCmd)
 	projectTaskCmd.AddCommand(projectTaskGetCmd)
 	projectTaskCmd.AddCommand(projectTaskUpdateCmd)
@@ -208,20 +172,29 @@ func fetchManagerProjects(c *client.Client) ([]managerProject, error) {
 	return projects, nil
 }
 
-// resolveProjectID returns a project ID either from args or by prompting the user to pick
-func resolveProjectID(c *client.Client, args []string) (string, error) {
-	if len(args) > 0 && args[0] != "" {
-		return args[0], nil
-	}
-
+// resolveProject returns the selected project and full projects list.
+// If project-id is provided in args, it fetches the list to find the matching project.
+// If omitted, prompts the user to pick from their managed projects.
+func resolveProject(c *client.Client, args []string) (*managerProject, []managerProject, error) {
 	projects, err := fetchManagerProjects(c)
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
 	if len(projects) == 0 {
-		return "", fmt.Errorf("no managed projects found")
+		return nil, nil, fmt.Errorf("no managed projects found")
 	}
 
+	// If project ID provided, find it in the list
+	if len(args) > 0 && args[0] != "" {
+		for i := range projects {
+			if projects[i].ProjectID == args[0] {
+				return &projects[i], projects, nil
+			}
+		}
+		return nil, nil, fmt.Errorf("project %s not found in your managed projects", args[0])
+	}
+
+	// Interactive picker
 	fmt.Println("Your managed projects:")
 	for i, p := range projects {
 		title := p.Title
@@ -234,26 +207,21 @@ func resolveProjectID(c *client.Client, args []string) (string, error) {
 
 	scanner := bufio.NewScanner(os.Stdin)
 	if !scanner.Scan() {
-		return "", fmt.Errorf("no input received")
+		return nil, nil, fmt.Errorf("no input received")
 	}
 	input := strings.TrimSpace(scanner.Text())
 	num, err := strconv.Atoi(input)
 	if err != nil || num < 1 || num > len(projects) {
-		return "", fmt.Errorf("invalid selection: %s", input)
+		return nil, nil, fmt.Errorf("invalid selection: %s", input)
 	}
 
-	selected := projects[num-1]
+	selected := &projects[num-1]
 	fmt.Printf("Selected: %s\n\n", selected.Title)
-	return selected.ProjectID, nil
+	return selected, projects, nil
 }
 
-// resolveProjectStatePolicyID looks up the contributor_state_id for a given project_id
-func resolveProjectStatePolicyID(c *client.Client, projectID string) (string, error) {
-	projects, err := fetchManagerProjects(c)
-	if err != nil {
-		return "", err
-	}
-
+// findProjectPolicyID looks up the contributor_state_id from a pre-fetched projects list
+func findProjectPolicyID(projects []managerProject, projectID string) (string, error) {
 	for _, p := range projects {
 		if p.ProjectID == projectID {
 			if p.ContributorStateID == "" {
@@ -262,7 +230,6 @@ func resolveProjectStatePolicyID(c *client.Client, projectID string) (string, er
 			return p.ContributorStateID, nil
 		}
 	}
-
 	return "", fmt.Errorf("project %s not found in your managed projects", projectID)
 }
 
@@ -298,12 +265,12 @@ func runTasksList(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	projectID, err := resolveProjectID(c, args)
+	proj, _, err := resolveProject(c, args)
 	if err != nil {
 		return err
 	}
 
-	resp, err := fetchTasks(c, projectID)
+	resp, err := fetchTasks(c, proj.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -349,10 +316,7 @@ func runTasksList(cmd *cobra.Command, args []string) error {
 			title = title[:35] + "..."
 		}
 
-		// Format lovelace as ADA
-		adaStr := fmt.Sprintf("%d", lovelace)
-
-		fmt.Printf("%-6d %-40s %-12s %12s %s\n", index, title, status, adaStr, expiration)
+		fmt.Printf("%-6d %-40s %-12s %12d %s\n", index, title, status, lovelace, expiration)
 	}
 
 	return nil
@@ -372,14 +336,16 @@ func parseExpiration(exp string) (string, error) {
 	return strconv.FormatInt(t.UnixMilli(), 10), nil
 }
 
-// CreateTaskResult holds the result for structured output
-type CreateTaskResult struct {
-	ProjectID            string `json:"project_id"`
-	ProjectStatePolicyID string `json:"project_state_policy_id"`
-	Title                string `json:"title"`
-	Lovelace             string `json:"lovelace"`
-	ExpirationTime       string `json:"expiration_time"`
-	GitHubIssue          string `json:"github_issue,omitempty"`
+// validateLovelace checks that a lovelace string is a valid non-negative integer
+func validateLovelace(lovelace string) error {
+	val, err := strconv.ParseInt(lovelace, 10, 64)
+	if err != nil {
+		return fmt.Errorf("--lovelace must be a non-negative integer, got %q", lovelace)
+	}
+	if val < 0 {
+		return fmt.Errorf("--lovelace must be non-negative, got %d", val)
+	}
+	return nil
 }
 
 func runTaskCreate(cmd *cobra.Command, args []string) error {
@@ -390,18 +356,22 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	githubIssue, _ := cmd.Flags().GetString("github-issue")
 	isJSON := output.GetFormat() == output.FormatJSON
 
+	if err := validateLovelace(lovelace); err != nil {
+		return err
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 	c := client.New(cfg)
 
-	projectID, err := resolveProjectID(c, args)
+	proj, projects, err := resolveProject(c, args)
 	if err != nil {
 		return err
 	}
 
-	policyID, err := resolveProjectStatePolicyID(c, projectID)
+	policyID, err := findProjectPolicyID(projects, proj.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -488,13 +458,25 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid index: %s", indexStr)
 	}
 
+	// Validate lovelace if provided
+	if cmd.Flags().Changed("lovelace") {
+		lovelace, _ := cmd.Flags().GetString("lovelace")
+		if err := validateLovelace(lovelace); err != nil {
+			return err
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 	c := client.New(cfg)
 
-	policyID, err := resolveProjectStatePolicyID(c, projectID)
+	projects, err := fetchManagerProjects(c)
+	if err != nil {
+		return err
+	}
+	policyID, err := findProjectPolicyID(projects, projectID)
 	if err != nil {
 		return err
 	}
@@ -559,7 +541,11 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	policyID, err := resolveProjectStatePolicyID(c, projectID)
+	projects, err := fetchManagerProjects(c)
+	if err != nil {
+		return err
+	}
+	policyID, err := findProjectPolicyID(projects, projectID)
 	if err != nil {
 		return err
 	}

@@ -26,16 +26,6 @@ If project-id is omitted, lists your managed projects and prompts for selection.
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.MaximumNArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
-		}
-		return nil
-	},
 	RunE: runTaskExport,
 }
 
@@ -45,23 +35,15 @@ func init() {
 
 // TaskExportResult holds the result for structured output
 type TaskExportResult struct {
-	ProjectID string `json:"project_id"`
-	Directory string `json:"directory"`
-	Tasks     int    `json:"tasks_exported"`
-	Files     []string `json:"files"`
+	ProjectID    string   `json:"project_id"`
+	Directory    string   `json:"directory"`
+	TasksExported int     `json:"tasks_exported"`
+	Files        []string `json:"files"`
 }
 
-// formatExpirationISO converts Unix ms (int64 or float64) to ISO 8601 string
-func formatExpirationISO(posix interface{}) string {
-	var ms int64
-	switch v := posix.(type) {
-	case float64:
-		ms = int64(v)
-	case int64:
-		ms = v
-	default:
-		return ""
-	}
+// formatExpirationISO converts Unix ms (float64 from JSON) to ISO 8601 string
+func formatExpirationISO(posix float64) string {
+	ms := int64(posix)
 	if ms == 0 {
 		return ""
 	}
@@ -78,35 +60,18 @@ func runTaskExport(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	projectID, err := resolveProjectID(c, args)
+	proj, _, err := resolveProject(c, args)
 	if err != nil {
 		return err
 	}
 
-	// Get project title for directory name
-	projectSlug := slugify(projectID) // fallback
-	projects, err := fetchManagerProjects(c)
-	if err == nil {
-		for _, p := range projects {
-			if p.ProjectID == projectID && p.Title != "" {
-				projectSlug = slugify(p.Title)
-				break
-			}
-		}
+	projectSlug := slugify(proj.Title)
+	if proj.Title == "" {
+		projectSlug = slugify(proj.ProjectID)
 	}
+	policyID := proj.ContributorStateID
 
-	// Get contributor_state_id for metadata
-	policyID := ""
-	if projects != nil {
-		for _, p := range projects {
-			if p.ProjectID == projectID {
-				policyID = p.ContributorStateID
-				break
-			}
-		}
-	}
-
-	resp, err := fetchTasks(c, projectID)
+	resp, err := fetchTasks(c, proj.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -115,9 +80,8 @@ func runTaskExport(cmd *cobra.Command, args []string) error {
 	if len(items) == 0 {
 		if isJSON {
 			return output.PrintJSON(TaskExportResult{
-				ProjectID: projectID,
+				ProjectID: proj.ProjectID,
 				Directory: fmt.Sprintf("tasks/%s", projectSlug),
-				Tasks:     0,
 			})
 		}
 		fmt.Println("No tasks to export.")
@@ -139,12 +103,12 @@ func runTaskExport(cmd *cobra.Command, args []string) error {
 	}
 
 	result := TaskExportResult{
-		ProjectID: projectID,
+		ProjectID: proj.ProjectID,
 		Directory: outDir,
 	}
 
 	for _, item := range items {
-		filename, err := exportTask(absDir, item, projectID, policyID)
+		filename, err := exportTask(absDir, item, proj.ProjectID, policyID)
 		if err != nil {
 			if !isJSON {
 				fmt.Printf("  Warning: failed to export task: %v\n", err)
@@ -152,7 +116,7 @@ func runTaskExport(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		result.Files = append(result.Files, filename)
-		result.Tasks++
+		result.TasksExported++
 		if !isJSON {
 			fmt.Printf("  %s\n", filename)
 		}
@@ -162,7 +126,7 @@ func runTaskExport(cmd *cobra.Command, args []string) error {
 		return output.PrintJSON(result)
 	}
 
-	fmt.Printf("\nExported %d tasks to %s/\n", result.Tasks, outDir)
+	fmt.Printf("\nExported %d tasks to %s/\n", result.TasksExported, outDir)
 	return nil
 }
 
@@ -260,9 +224,14 @@ func exportTask(dir string, item map[string]interface{}, projectID, policyID str
 		}
 	}
 
-	// Derive filename from title
+	// Derive filename: prepend index to prevent collisions from duplicate slugified titles
 	slug := slugify(title)
-	filename := slug + ".md"
+	var filename string
+	if index >= 0 {
+		filename = fmt.Sprintf("%03d-%s.md", index, slug)
+	} else {
+		filename = slug + ".md"
+	}
 	filePath := filepath.Join(dir, filename)
 
 	fileContent := fm.String()
@@ -277,12 +246,8 @@ func exportTask(dir string, item map[string]interface{}, projectID, policyID str
 	return filename, nil
 }
 
-// getProjectSlug returns a slug for a project by looking up its title
-func getProjectSlug(c *client.Client, projectID string) string {
-	projects, err := fetchManagerProjects(c)
-	if err != nil {
-		return slugify(projectID)
-	}
+// projectSlugFromList finds a project's slug from a pre-fetched projects list
+func projectSlugFromList(projects []managerProject, projectID string) string {
 	for _, p := range projects {
 		if p.ProjectID == projectID && p.Title != "" {
 			return slugify(p.Title)

@@ -30,16 +30,6 @@ If project-id is omitted, lists your managed projects and prompts for selection.
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.MaximumNArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return fmt.Errorf("not authenticated. Run 'andamio user login' first")
-		}
-		return nil
-	},
 	RunE: runTaskImport,
 }
 
@@ -50,15 +40,13 @@ func init() {
 
 // TaskFrontmatter defines the YAML frontmatter structure for task files
 type TaskFrontmatter struct {
-	Title                string      `yaml:"title"`
-	Lovelace             string      `yaml:"lovelace"`
-	ExpirationTime       string      `yaml:"expiration_time"`
-	Tokens               []TaskToken `yaml:"tokens"`
-	Index                *int        `yaml:"index"`
-	Status               string      `yaml:"status"`
-	ProjectID            string      `yaml:"project_id"`
-	ProjectStatePolicyID string      `yaml:"project_state_policy_id"`
-	Description          string      `yaml:"description"`
+	Title          string      `yaml:"title"`
+	Lovelace       string      `yaml:"lovelace"`
+	ExpirationTime string      `yaml:"expiration_time"`
+	Tokens         []TaskToken `yaml:"tokens"`
+	Index          *int        `yaml:"index"`
+	Status         string      `yaml:"status"`
+	Description    string      `yaml:"description"`
 }
 
 // TaskToken represents a token reward in frontmatter
@@ -76,6 +64,7 @@ type TaskImportResult struct {
 	Updated   int    `json:"tasks_updated"`
 	Skipped   int    `json:"tasks_skipped"`
 	Errors    int    `json:"errors"`
+	DryRun    bool   `json:"dry_run,omitempty"`
 }
 
 func runTaskImport(cmd *cobra.Command, args []string) error {
@@ -88,19 +77,18 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	projectID, err := resolveProjectID(c, args)
+	// Single fetch: resolve project, policy ID, and slug from one API call
+	proj, projects, err := resolveProject(c, args)
 	if err != nil {
 		return err
 	}
 
-	// Resolve project_state_policy_id
-	policyID, err := resolveProjectStatePolicyID(c, projectID)
+	policyID, err := findProjectPolicyID(projects, proj.ProjectID)
 	if err != nil {
 		return err
 	}
 
-	// Determine directory
-	projectSlug := getProjectSlug(c, projectID)
+	projectSlug := projectSlugFromList(projects, proj.ProjectID)
 	taskDir := filepath.Join("tasks", projectSlug)
 	absDir, err := filepath.Abs(taskDir)
 	if err != nil {
@@ -122,7 +110,7 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 
 	if len(mdFiles) == 0 {
 		if isJSON {
-			return output.PrintJSON(TaskImportResult{ProjectID: projectID, Directory: taskDir})
+			return output.PrintJSON(TaskImportResult{ProjectID: proj.ProjectID, Directory: taskDir, DryRun: dryRun})
 		}
 		fmt.Printf("No .md files found in %s/\n", taskDir)
 		return nil
@@ -130,7 +118,7 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 
 	// Fetch existing tasks to check status for updates
 	var existingTasks []map[string]interface{}
-	resp, err := fetchTasks(c, projectID)
+	resp, err := fetchTasks(c, proj.ProjectID)
 	if err == nil {
 		existingTasks = extractTaskList(resp)
 	}
@@ -144,13 +132,14 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 	}
 
 	result := TaskImportResult{
-		ProjectID: projectID,
+		ProjectID: proj.ProjectID,
 		Directory: taskDir,
+		DryRun:    dryRun,
 	}
 
 	for _, filename := range mdFiles {
 		filePath := filepath.Join(absDir, filename)
-		action, err := importTaskFile(c, filePath, filename, projectID, policyID, existingTasks, dryRun, isJSON)
+		action, err := importTaskFile(c, filePath, filename, policyID, existingTasks, dryRun, isJSON)
 		if err != nil {
 			result.Errors++
 			if !isJSON {
@@ -178,7 +167,7 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 }
 
 // importTaskFile processes a single task file and returns the action taken
-func importTaskFile(c *client.Client, filePath, filename, projectID, policyID string, existingTasks []map[string]interface{}, dryRun, isJSON bool) (string, error) {
+func importTaskFile(c *client.Client, filePath, filename, policyID string, existingTasks []map[string]interface{}, dryRun, isJSON bool) (string, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
@@ -200,6 +189,11 @@ func importTaskFile(c *client.Client, filePath, filename, projectID, policyID st
 		return "", fmt.Errorf("missing required field: expiration_time")
 	}
 
+	// Validate lovelace
+	if err := validateLovelace(fm.Lovelace); err != nil {
+		return "", err
+	}
+
 	// Convert expiration to Unix ms
 	expirationMs, err := parseExpiration(fm.ExpirationTime)
 	if err != nil {
@@ -216,15 +210,9 @@ func importTaskFile(c *client.Client, filePath, filename, projectID, policyID st
 		}
 	}
 
-	// Use policy ID from frontmatter if present, otherwise use resolved one
-	taskPolicyID := policyID
-	if fm.ProjectStatePolicyID != "" {
-		taskPolicyID = fm.ProjectStatePolicyID
-	}
-
 	if fm.Index == nil {
 		// New task — create
-		return createTaskFromFile(c, fm, taskPolicyID, expirationMs, contentJSON, filename, dryRun, isJSON)
+		return createTaskFromFile(c, fm, policyID, expirationMs, contentJSON, filename, dryRun, isJSON)
 	}
 
 	// Existing task — check status before updating
@@ -241,7 +229,7 @@ func importTaskFile(c *client.Client, filePath, filename, projectID, policyID st
 		}
 	}
 
-	return updateTaskFromFile(c, fm, taskPolicyID, expirationMs, contentJSON, index, filename, dryRun, isJSON)
+	return updateTaskFromFile(c, fm, policyID, expirationMs, contentJSON, index, filename, dryRun, isJSON)
 }
 
 func createTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, filename string, dryRun, isJSON bool) (string, error) {
