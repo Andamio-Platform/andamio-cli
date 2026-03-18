@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -54,6 +55,7 @@ Find your project IDs with: andamio project list --output json
 Examples:
   andamio project task create <project-id> --title "Build API" --lovelace 5000000 --expiration 2026-04-01T00:00:00Z
   andamio project task create <project-id> --title "Fix bug" --lovelace 2000000 --expiration 2026-04-01T00:00:00Z --github-issue "org/repo#42"
+  andamio project task create <project-id> --title "Design system" --lovelace 5000000 --expiration 2026-04-01 --content-file task.md
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.ExactArgs(1),
@@ -112,6 +114,7 @@ func init() {
 	projectTaskCreateCmd.Flags().String("expiration", "", "Expiration time in ISO 8601 format, e.g. 2026-04-01T00:00:00Z (required)")
 	projectTaskCreateCmd.MarkFlagRequired("expiration")
 	projectTaskCreateCmd.Flags().String("content", "", "Plain text task description")
+	projectTaskCreateCmd.Flags().String("content-file", "", "Markdown file for rich task content (converted to Tiptap JSON)")
 	projectTaskCreateCmd.Flags().String("github-issue", "", "GitHub issue reference, e.g. org/repo#123 (prepended to title as [org/repo#123])")
 
 	// Get flags
@@ -125,6 +128,7 @@ func init() {
 	projectTaskUpdateCmd.Flags().String("lovelace", "", "New lovelace reward amount")
 	projectTaskUpdateCmd.Flags().String("expiration", "", "New expiration time (ISO 8601)")
 	projectTaskUpdateCmd.Flags().String("content", "", "New plain text description")
+	projectTaskUpdateCmd.Flags().String("content-file", "", "Markdown file for rich task content (converted to Tiptap JSON)")
 
 	// Delete flags
 	projectTaskDeleteCmd.Flags().String("project-id", "", "Project ID (required)")
@@ -323,6 +327,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	lovelace, _ := cmd.Flags().GetString("lovelace")
 	expiration, _ := cmd.Flags().GetString("expiration")
 	content, _ := cmd.Flags().GetString("content")
+	contentFile, _ := cmd.Flags().GetString("content-file")
 	githubIssue, _ := cmd.Flags().GetString("github-issue")
 	isJSON := output.GetFormat() == output.FormatJSON
 
@@ -369,6 +374,15 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	}
 	if content != "" {
 		payload["content"] = content
+	}
+
+	// Read Markdown file and convert to Tiptap JSON
+	if contentFile != "" {
+		contentJSON, err := readContentFile(contentFile)
+		if err != nil {
+			return err
+		}
+		payload["content_json"] = contentJSON
 	}
 
 	var resp map[string]interface{}
@@ -477,6 +491,14 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 		content, _ := cmd.Flags().GetString("content")
 		payload["content"] = content
 	}
+	if cmd.Flags().Changed("content-file") {
+		contentFile, _ := cmd.Flags().GetString("content-file")
+		contentJSON, err := readContentFile(contentFile)
+		if err != nil {
+			return err
+		}
+		payload["content_json"] = contentJSON
+	}
 
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "Updating task %d...\n", index)
@@ -540,4 +562,21 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Task %d deleted.\n", index)
 	return nil
+}
+
+// readContentFile reads a Markdown file and converts it to Tiptap JSON for content_json.
+func readContentFile(path string) (interface{}, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read content file %s: %w", path, err)
+	}
+	body := strings.TrimSpace(string(data))
+	if body == "" {
+		return nil, fmt.Errorf("content file %s is empty", path)
+	}
+	contentJSON, err := markdownToTiptap(body, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert Markdown to Tiptap: %w", err)
+	}
+	return contentJSON, nil
 }
