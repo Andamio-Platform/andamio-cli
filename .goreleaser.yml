@@ -45,10 +45,14 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://github.com/Andamio-Platform/andamio-cli"
     description: "CLI for the Andamio Protocol"
-    install: |
-      bin.install "andamio"
-    test: |
-      system "#{bin}/andamio", "--version"
+    binaries:
+      - andamio
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/andamio"]
+          end
 
 release:
   github:
