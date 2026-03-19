@@ -4,6 +4,12 @@ CLI for interacting with the Andamio Protocol.
 
 ## Installation
 
+### Homebrew (macOS)
+
+```bash
+brew install Andamio-Platform/tap/andamio-cli
+```
+
 ### Download a release
 
 Prebuilt binaries for macOS, Linux, and Windows are available on the [Releases page](https://github.com/Andamio-Platform/andamio-cli/releases/latest).
@@ -11,8 +17,8 @@ Prebuilt binaries for macOS, Linux, and Windows are available on the [Releases p
 Download the archive for your platform, extract it, and move the binary to your PATH:
 
 ```bash
-# Example: macOS Apple Silicon, replace VERSION with the latest release
-VERSION=0.1.0
+# Example: macOS Apple Silicon — replace VERSION with the latest release
+VERSION=0.3.0
 curl -sLO "https://github.com/Andamio-Platform/andamio-cli/releases/download/v${VERSION}/andamio_${VERSION}_darwin_arm64.tar.gz"
 curl -sLO "https://github.com/Andamio-Platform/andamio-cli/releases/download/v${VERSION}/checksums.txt"
 shasum -a 256 --check --ignore-missing checksums.txt
