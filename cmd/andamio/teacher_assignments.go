@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -71,7 +72,8 @@ func runTeacherAssignmentsList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if output.GetFormat() == output.FormatJSON {
+	// Non-text formats: pass through raw API response (handles empty data correctly)
+	if output.GetFormat() != output.FormatText {
 		return output.PrintJSON(resp)
 	}
 
@@ -137,7 +139,9 @@ func runTeacherAssignmentsGet(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return fmt.Errorf("no commitment found for student %q in module %s. Run 'andamio teacher assignments list --course %s' to see pending commitments",
-		studentAlias, moduleCode, courseID)
+	return &apierr.NotFoundError{
+		Message: fmt.Sprintf("no commitment found for student %q in module %s. Run 'andamio teacher assignments list --course %s' to see pending commitments",
+			studentAlias, moduleCode, courseID),
+	}
 }
 
