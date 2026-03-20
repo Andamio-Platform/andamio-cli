@@ -92,7 +92,7 @@ func runCourseExport(cmd *cobra.Command, args []string) error {
 	} else {
 		// export <module-code> --course "Name"
 		moduleCode = args[0]
-		courseID, err = resolveCourseID(c, nil, 0, cmd)
+		courseID, err = resolveCourseID(c, "", cmd)
 		if err != nil {
 			return err
 		}
