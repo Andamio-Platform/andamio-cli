@@ -69,17 +69,9 @@ func runImportAll(cmd *cobra.Command, args []string) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Resolve course ID from --course-id or --course flag
-	courseID, _ := cmd.Flags().GetString("course-id")
-	if courseID == "" {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		c := client.New(cfg)
-		courseID, err = resolveCourseID(c, nil, 0, cmd)
-		if err != nil {
-			return fmt.Errorf("--course-id or --course is required\n\nList your courses with:\n  andamio teacher courses")
-		}
+	courseID, err := resolveCourseIDFromFlags(cmd)
+	if err != nil {
+		return err
 	}
 
 	// Find module subdirectories (contain outline.md)
