@@ -248,13 +248,13 @@ func fetchTeacherCourses(c *client.Client) ([]teacherCourse, error) {
 	return courses, nil
 }
 
-// resolveCourseID resolves a course ID from positional args or --course flag.
-// If a positional arg is provided, it is used directly. Otherwise, --course is
+// resolveCourseID resolves a course ID from a positional arg or --course flag.
+// If courseIDArg is non-empty, it is used directly. Otherwise, --course is
 // used for substring matching against the teacher courses list.
-func resolveCourseID(c *client.Client, args []string, argIndex int, cmd *cobra.Command) (string, error) {
+func resolveCourseID(c *client.Client, courseIDArg string, cmd *cobra.Command) (string, error) {
 	// If positional arg is available, use it directly
-	if len(args) > argIndex {
-		return args[argIndex], nil
+	if courseIDArg != "" {
+		return courseIDArg, nil
 	}
 
 	// Check --course flag
@@ -299,6 +299,21 @@ func resolveCourseID(c *client.Client, args []string, argIndex int, cmd *cobra.C
 	}
 }
 
+// resolveCourseIDFromFlags resolves a course ID from --course-id or --course flag.
+// Used by import commands where both flags are available.
+func resolveCourseIDFromFlags(cmd *cobra.Command) (string, error) {
+	courseID, _ := cmd.Flags().GetString("course-id")
+	if courseID != "" {
+		return courseID, nil
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	c := client.New(cfg)
+	return resolveCourseID(c, "", cmd)
+}
+
 func runCourseModules(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -306,7 +321,11 @@ func runCourseModules(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	courseID, err := resolveCourseID(c, args, 0, cmd)
+	var courseIDArg string
+	if len(args) > 0 {
+		courseIDArg = args[0]
+	}
+	courseID, err := resolveCourseID(c, courseIDArg, cmd)
 	if err != nil {
 		return err
 	}
@@ -404,7 +423,7 @@ func runCourseSlts(cmd *cobra.Command, args []string) error {
 	} else {
 		// slts <module-code> --course "Name"
 		moduleCode = args[0]
-		courseID, err = resolveCourseID(c, nil, 0, cmd)
+		courseID, err = resolveCourseID(c, "", cmd)
 		if err != nil {
 			return err
 		}
