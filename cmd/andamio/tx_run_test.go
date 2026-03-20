@@ -77,23 +77,3 @@ func TestParseMetadataFlags(t *testing.T) {
 		})
 	}
 }
-
-func TestTruncateTxHash(t *testing.T) {
-	tests := []struct {
-		hash string
-		want string
-	}{
-		{"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", "abcdef01"},
-		{"short", "short"},
-		{"12345678", "12345678"},
-		{"123456789", "12345678"},
-		{"", ""},
-	}
-
-	for _, tt := range tests {
-		got := truncateTxHash(tt.hash)
-		if got != tt.want {
-			t.Errorf("truncateTxHash(%q) = %q, want %q", tt.hash, got, tt.want)
-		}
-	}
-}

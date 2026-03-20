@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -167,22 +168,40 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var mu sync.Mutex
 	result := &RunResult{TxType: txType}
+
+	// fail prints the RunResult as JSON (if in JSON mode) and returns the appropriate error.
+	// In JSON mode it wraps the error as ReportedError so main.go sets the exit code
+	// without printing a second error message.
+	fail := func(state, msg string, origErr error) error {
+		mu.Lock()
+		result.State = state
+		result.Error = origErr.Error()
+		mu.Unlock()
+		if isJSON {
+			mu.Lock()
+			_ = output.PrintJSON(result)
+			mu.Unlock()
+			return &apierr.ReportedError{Err: fmt.Errorf("%s: %w", msg, origErr)}
+		}
+		return fmt.Errorf("%s: %w", msg, origErr)
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
 	go func() {
 		<-sigCh
-		if !isJSON {
-			if result.TxHash != "" {
-				fmt.Fprintf(os.Stderr, "\nInterrupted. Transaction may have been submitted. Check: andamio tx status %s\n", result.TxHash)
-			}
-		}
-		// Print partial result in JSON mode
-		if isJSON && result.TxHash != "" {
-			result.State = "interrupted"
-			result.Step = "interrupted"
-			_ = output.PrintJSON(result)
+		mu.Lock()
+		txHash := result.TxHash
+		mu.Unlock()
+		// Print recovery info. In a CLI, os.Exit is necessary here because
+		// context cancellation alone cannot unblock synchronous HTTP calls
+		// in the build/sign/submit steps (the client package does not accept
+		// a context). The OS reclaims all resources on exit.
+		if txHash != "" {
+			fmt.Fprintf(os.Stderr, "\nInterrupted. Transaction may have been submitted. Check: andamio tx status %s\n", txHash)
 		}
 		cancel()
 		os.Exit(1)
@@ -191,31 +210,25 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	// --- Step 1: Build ---
+	mu.Lock()
 	result.Step = "build"
+	mu.Unlock()
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "  Building transaction: POST %s\n", endpoint)
 	}
 
 	var buildResp map[string]interface{}
 	if err := c.Post("/api"+endpoint, bodyData, &buildResp); err != nil {
-		result.Error = err.Error()
-		result.State = "build_failed"
-		if isJSON {
-			return outputRunResult(result)
-		}
-		return fmt.Errorf("build failed: %w", err)
+		return fail("build_failed", "build failed", err)
 	}
 
+	mu.Lock()
 	result.BuildResponse = buildResp
+	mu.Unlock()
 
 	unsignedTx, ok := buildResp["unsigned_tx"].(string)
 	if !ok || unsignedTx == "" {
-		result.Error = "build response missing unsigned_tx field"
-		result.State = "build_failed"
-		if isJSON {
-			return outputRunResult(result)
-		}
-		return fmt.Errorf("build response missing unsigned_tx field")
+		return fail("build_failed", "build failed", fmt.Errorf("response missing unsigned_tx field"))
 	}
 
 	if !isJSON {
@@ -223,47 +236,40 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// --- Step 2: Sign ---
+	mu.Lock()
 	result.Step = "sign"
+	mu.Unlock()
 
 	privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
 	if err != nil {
-		result.Error = err.Error()
-		result.State = "sign_failed"
-		if isJSON {
-			return outputRunResult(result)
-		}
-		return fmt.Errorf("sign failed: %w", err)
+		return fail("sign_failed", "sign failed", err)
 	}
 
 	signResult, err := cardano.SignTransaction(unsignedTx, privKey, pubKey)
 	if err != nil {
-		result.Error = err.Error()
-		result.State = "sign_failed"
-		if isJSON {
-			return outputRunResult(result)
-		}
-		return fmt.Errorf("sign failed: %w", err)
+		return fail("sign_failed", "sign failed", err)
 	}
 
+	mu.Lock()
 	result.TxHash = signResult.TxHash
+	mu.Unlock()
 	if !isJSON {
-		fmt.Fprintf(os.Stderr, "  \u2713 Signed with %s (tx: %s...)\n", skeyPath, truncateTxHash(signResult.TxHash))
+		fmt.Fprintf(os.Stderr, "  \u2713 Signed with %s (tx: %s...)\n", skeyPath, signResult.TxHash[:8])
 	}
 
 	// --- Step 3: Submit ---
+	mu.Lock()
 	result.Step = "submit"
+	mu.Unlock()
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "  Submitting to %s\n", submitURL)
 	}
 
 	if _, err := submit.SubmitTransaction(submitURL, signResult.SignedTx, headers); err != nil {
-		result.Error = err.Error()
-		result.State = "submit_failed"
-		if isJSON {
-			return outputRunResult(result)
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
 		}
-		fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-		return fmt.Errorf("submit failed (tx may be in mempool): %w", err)
+		return fail("submit_failed", "submit failed (tx may be in mempool)", err)
 	}
 
 	if !isJSON {
@@ -271,7 +277,9 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// --- Step 4: Register ---
+	mu.Lock()
 	result.Step = "register"
+	mu.Unlock()
 
 	registerPayload := map[string]interface{}{
 		"tx_hash": signResult.TxHash,
@@ -286,15 +294,12 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 
 	var registerResp map[string]interface{}
 	if err := c.Post("/api/v2/tx/register", registerPayload, &registerResp); err != nil {
-		result.Error = err.Error()
-		result.State = "register_failed"
-		if isJSON {
-			return outputRunResult(result)
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "  Warning: registration failed but TX is on-chain.\n")
+			fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
+			fmt.Fprintf(os.Stderr, "  Recovery: andamio tx register --tx-hash %s --tx-type %s\n", signResult.TxHash, txType)
 		}
-		fmt.Fprintf(os.Stderr, "  Warning: registration failed but TX is on-chain.\n")
-		fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-		fmt.Fprintf(os.Stderr, "  Recovery: andamio tx register --tx-hash %s --tx-type %s\n", signResult.TxHash, txType)
-		return fmt.Errorf("register failed: %w", err)
+		return fail("register_failed", "register failed", err)
 	}
 
 	if !isJSON {
@@ -303,57 +308,50 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 
 	// --- Step 5: Wait for confirmation ---
 	if noWait {
+		mu.Lock()
 		result.Step = "registered"
 		result.State = "registered"
+		mu.Unlock()
 		if isJSON {
-			return outputRunResult(result)
+			return output.PrintJSON(result)
 		}
 		fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
 		fmt.Fprintf(os.Stderr, "\nNext: andamio tx status %s\n", signResult.TxHash)
 		return nil
 	}
 
+	mu.Lock()
 	result.Step = "polling"
+	mu.Unlock()
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "  \u23f3 Waiting for confirmation...\n")
 	}
 
 	finalState, err := pollTxStatus(ctx, c, signResult.TxHash, timeout, isJSON)
 	if err != nil {
-		result.Error = err.Error()
-		result.State = finalState
-		if isJSON {
-			return outputRunResult(result)
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
+			fmt.Fprintf(os.Stderr, "\nCheck later: andamio tx status %s\n", signResult.TxHash)
 		}
-		fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-		fmt.Fprintf(os.Stderr, "\nCheck later: andamio tx status %s\n", signResult.TxHash)
-		return err
+		return fail(finalState, "poll failed", err)
 	}
 
+	mu.Lock()
 	result.State = finalState
 	result.Step = "complete"
+	mu.Unlock()
 
 	if isJSON {
-		return outputRunResult(result)
+		return output.PrintJSON(result)
 	}
 
-	switch finalState {
-	case "updated":
-		fmt.Fprintf(os.Stderr, "  \u2713 Confirmed on-chain\n")
-		fmt.Fprintf(os.Stderr, "  \u2713 DB updated \u2014 complete!\n")
-	case "failed":
-		fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-		return fmt.Errorf("transaction confirmed but DB update failed")
-	case "expired":
-		fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-		return fmt.Errorf("transaction expired without confirmation")
-	}
-
+	fmt.Fprintf(os.Stderr, "  \u2713 Confirmed on-chain\n")
+	fmt.Fprintf(os.Stderr, "  \u2713 DB updated \u2014 complete!\n")
 	return nil
 }
 
 // pollTxStatus polls GET /api/v2/tx/status/{tx_hash} every 5s until a terminal state
-// or timeout. Returns the final state string.
+// or timeout. Returns the final state and an error for non-success terminal states.
 func pollTxStatus(ctx context.Context, c *client.Client, txHash string, timeout time.Duration, isJSON bool) (string, error) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -401,9 +399,9 @@ func pollTxStatus(ctx context.Context, c *client.Client, txHash string, timeout 
 			case "updated":
 				return state, nil
 			case "failed":
-				return state, nil
+				return state, fmt.Errorf("transaction confirmed but DB update failed")
 			case "expired":
-				return state, nil
+				return state, fmt.Errorf("transaction expired without confirmation")
 			}
 		}
 	}
@@ -423,18 +421,4 @@ func parseMetadataFlags(flags []string) (map[string]string, error) {
 		m[parts[0]] = parts[1]
 	}
 	return m, nil
-}
-
-// outputRunResult prints the RunResult as JSON. Returns nil (not an error) because
-// the caller handles exit via the result's State field.
-func outputRunResult(r *RunResult) error {
-	return output.PrintJSON(r)
-}
-
-// truncateTxHash returns the first 8 characters of a tx hash for display.
-func truncateTxHash(hash string) string {
-	if len(hash) > 8 {
-		return hash[:8]
-	}
-	return hash
 }
