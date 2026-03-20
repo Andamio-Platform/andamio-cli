@@ -1,28 +1,11 @@
 package main
 
-import (
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
-	"github.com/Andamio-Platform/andamio-cli/internal/config"
-	"github.com/spf13/cobra"
-)
+import "github.com/spf13/cobra"
 
 var teacherCmd = &cobra.Command{
-	Use:   "teacher",
-	Short: "Teacher operations (requires user login)",
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Chain with root's PersistentPreRunE (output format)
-		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
-			return err
-		}
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
-	},
+	Use:               "teacher",
+	Short:             "Teacher operations (requires user login)",
+	PersistentPreRunE: jwtAuthPreRunE,
 }
 
 var teacherCoursesCmd = &cobra.Command{
