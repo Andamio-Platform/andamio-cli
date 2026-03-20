@@ -16,8 +16,8 @@ import (
 
 func init() {
 	courseCmd.AddCommand(courseImportAllCmd)
-	courseImportAllCmd.Flags().String("course-id", "", "Course ID to import into (required)")
-	courseImportAllCmd.MarkFlagRequired("course-id")
+	courseImportAllCmd.Flags().String("course-id", "", "Course ID to import into")
+	courseImportAllCmd.Flags().String("course", "", "Course name or substring (alternative to --course-id)")
 	courseImportAllCmd.Flags().Bool("create", false, "Create modules that don't exist")
 	courseImportAllCmd.Flags().Bool("dry-run", false, "Show what would be imported without sending")
 	courseImportAllCmd.Flags().Bool("continue-on-error", false, "Continue past failures")
@@ -31,9 +31,10 @@ var courseImportAllCmd = &cobra.Command{
 
 Scans for subdirectories containing outline.md and imports each one.
 
-Example:
+Examples:
   andamio course import-all ./compiled/my-course --course-id <id>
   andamio course import-all ./compiled/my-course --course-id <id> --create
+  andamio course import-all ./compiled/my-course --course "Intro to Cardano"
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.ExactArgs(1),
@@ -61,12 +62,25 @@ type ModuleImportSummary struct {
 
 func runImportAll(cmd *cobra.Command, args []string) error {
 	baseDir := args[0]
-	courseID, _ := cmd.Flags().GetString("course-id")
 	createMode, _ := cmd.Flags().GetBool("create")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	continueOnError, _ := cmd.Flags().GetBool("continue-on-error")
 	sortOrderStart, _ := cmd.Flags().GetInt("sort-order-start")
 	isJSON := output.GetFormat() == output.FormatJSON
+
+	// Resolve course ID from --course-id or --course flag
+	courseID, _ := cmd.Flags().GetString("course-id")
+	if courseID == "" {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		c := client.New(cfg)
+		courseID, err = resolveCourseID(c, nil, 0, cmd)
+		if err != nil {
+			return fmt.Errorf("--course-id or --course is required\n\nList your courses with:\n  andamio teacher courses")
+		}
+	}
 
 	// Find module subdirectories (contain outline.md)
 	entries, err := os.ReadDir(baseDir)

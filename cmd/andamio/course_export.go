@@ -22,7 +22,7 @@ import (
 )
 
 var courseExportCmd = &cobra.Command{
-	Use:   "export <course-id> <module-code>",
+	Use:   "export [course-id] <module-code>",
 	Short: "Export a course module to compiled/ format",
 	Long: `Export a course module to the compiled/ directory format used by lesson-coach.
 
@@ -35,8 +35,12 @@ This creates a directory structure that can be edited locally and re-imported:
   ├── assignment.md       # Module assignment (if present)
   └── assets/             # Downloaded images
 
+The course can be specified by ID (first arg) or by name (--course flag):
+  andamio course export <course-id> <module-code>
+  andamio course export <module-code> --course "Intro to Cardano"
+
 Requires user authentication via 'andamio user login'.`,
-	Args: cobra.ExactArgs(2),
+	Args: cobra.RangeArgs(1, 2),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		// Check user auth
 		cfg, err := config.Load()
@@ -55,6 +59,7 @@ func init() {
 	courseCmd.AddCommand(courseExportCmd)
 	courseExportCmd.Flags().String("output-dir", "", "Output directory (default: ./compiled/<course-slug>/<module-code>/)")
 	courseExportCmd.Flags().Bool("force", false, "Overwrite existing directory")
+	courseExportCmd.Flags().String("course", "", "Course name or substring (alternative to course-id arg)")
 }
 
 // ExportResult holds the result of an export operation for structured output
@@ -71,16 +76,27 @@ type ExportResult struct {
 }
 
 func runCourseExport(cmd *cobra.Command, args []string) error {
-	courseID := args[0]
-	moduleCode := args[1]
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-
 	c := client.New(cfg)
+
+	var courseID, moduleCode string
+	if len(args) == 2 {
+		// export <course-id> <module-code>
+		courseID = args[0]
+		moduleCode = args[1]
+	} else {
+		// export <module-code> --course "Name"
+		moduleCode = args[0]
+		courseID, err = resolveCourseID(c, nil, 0, cmd)
+		if err != nil {
+			return err
+		}
+	}
 
 	// Single teacher endpoint fetches everything
 	if !isJSON {

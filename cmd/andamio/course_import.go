@@ -39,8 +39,8 @@ var (
 
 func init() {
 	courseCmd.AddCommand(courseImportCmd)
-	courseImportCmd.Flags().String("course-id", "", "Course ID to import into (required)")
-	courseImportCmd.MarkFlagRequired("course-id")
+	courseImportCmd.Flags().String("course-id", "", "Course ID to import into")
+	courseImportCmd.Flags().String("course", "", "Course name or substring (alternative to --course-id)")
 	courseImportCmd.Flags().Bool("dry-run", false, "Show the API payload without sending it")
 	courseImportCmd.Flags().Bool("create", false, "Create the module if it doesn't exist")
 	courseImportCmd.Flags().Int("sort-order", 0, "Sort order when creating a new module (used with --create)")
@@ -57,8 +57,9 @@ The directory should contain:
   - introduction.md (optional)
   - assignment.md (optional)
 
-Example:
+Examples:
   andamio course import ./compiled/my-course/101 --course-id abc123
+  andamio course import ./compiled/my-course/101 --course "Intro to Cardano"
 
 New images in assets/ are automatically uploaded to the CDN.
 Previously uploaded images are preserved via .image-manifest.json.
@@ -278,11 +279,24 @@ func importModule(p ImportParams) (*ImportResult, error) {
 
 func runCourseImport(cmd *cobra.Command, args []string) error {
 	moduleDir := args[0]
-	courseID, _ := cmd.Flags().GetString("course-id")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	createMode, _ := cmd.Flags().GetBool("create")
 	sortOrder, _ := cmd.Flags().GetInt("sort-order")
 	isJSON := output.GetFormat() == output.FormatJSON
+
+	// Resolve course ID from --course-id or --course flag
+	courseID, _ := cmd.Flags().GetString("course-id")
+	if courseID == "" {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		c := client.New(cfg)
+		courseID, err = resolveCourseID(c, nil, 0, cmd)
+		if err != nil {
+			return fmt.Errorf("--course-id or --course is required\n\nList your courses with:\n  andamio teacher courses")
+		}
+	}
 
 	// Validate directory exists
 	info, err := os.Stat(moduleDir)

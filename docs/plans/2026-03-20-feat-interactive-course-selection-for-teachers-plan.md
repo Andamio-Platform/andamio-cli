@@ -1,7 +1,7 @@
 ---
 title: "feat: interactive course selection for teachers"
 type: feat
-status: proposed
+status: completed
 date: 2026-03-20
 issue: 6
 ---
