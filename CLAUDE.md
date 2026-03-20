@@ -135,6 +135,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |
 |---------|----------|------|-------------|
+| `tx run <endpoint> --skey <path> --tx-type <type>` | build+sign+submit+register+poll | jwt | Full lifecycle: build, sign, submit, register, poll. `--body`/`--body-file`, `--no-wait`, `--timeout`, `--metadata`, `--instance-id` |
 | `tx build <endpoint> --body <json>` | POST to `/api/v2/tx/*` | jwt | Build unsigned transaction via API. `--body-file` for file input |
 | `tx sign --tx <hex> --skey <path>` | local | none | Sign unsigned tx with local .skey file. `--tx-file` for file input |
 | `tx submit --tx <hex>` | configurable submit API | none | Submit signed tx to Cardano network. `--submit-url`, `--submit-header` |
