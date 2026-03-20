@@ -84,11 +84,15 @@ func runCourseExport(cmd *cobra.Command, args []string) error {
 
 	// Single teacher endpoint fetches everything
 	if !isJSON {
-		fmt.Printf("Fetching module %s from course %s...\n", moduleCode, courseID)
+		fmt.Fprintf(os.Stderr, "Fetching module %s from course %s...\n", moduleCode, courseID)
 	}
 	moduleData, err := fetchModuleData(c, courseID, moduleCode)
 	if err != nil {
 		return err
+	}
+
+	if !isJSON && len(moduleData.SLTs) == 0 {
+		fmt.Fprintf(os.Stderr, "Warning: module %s (%s) has no SLTs defined. Exported outline will be empty.\n", moduleCode, moduleData.Status)
 	}
 
 	// Determine output directory
@@ -104,7 +108,7 @@ func runCourseExport(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("output directory exists: %s. Use --force to overwrite", outputDir)
 		}
 		if !isJSON {
-			fmt.Printf("Warning: overwriting existing directory %s\n", outputDir)
+			fmt.Fprintf(os.Stderr, "Warning: overwriting existing directory %s\n", outputDir)
 		}
 	}
 
@@ -403,13 +407,13 @@ func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, erro
 
 		if err := downloadImages(assetsDir, imageURLs); err != nil {
 			if output.GetFormat() != output.FormatJSON {
-				fmt.Printf("Warning: some images failed to download: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Warning: some images failed to download: %v\n", err)
 			}
 		}
 
 		if err := writeImageManifest(assetsDir, imageURLs); err != nil {
 			if output.GetFormat() != output.FormatJSON {
-				fmt.Printf("Warning: failed to write image manifest: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Warning: failed to write image manifest: %v\n", err)
 			}
 		}
 
@@ -861,7 +865,7 @@ func downloadImages(assetsDir string, urls []string) error {
 	}
 
 	if output.GetFormat() != output.FormatJSON {
-		fmt.Printf("Downloading %d images...\n", len(uniqueURLs))
+		fmt.Fprintf(os.Stderr, "Downloading %d images...\n", len(uniqueURLs))
 	}
 
 	var wg sync.WaitGroup
@@ -875,13 +879,13 @@ func downloadImages(assetsDir string, urls []string) error {
 		parsed, err := url.Parse(imgURL)
 		if err != nil {
 			if output.GetFormat() != output.FormatJSON {
-				fmt.Printf("Warning: invalid image URL: %s\n", imgURL)
+				fmt.Fprintf(os.Stderr, "Warning: invalid image URL: %s\n", imgURL)
 			}
 			continue
 		}
 		if parsed.Scheme != "https" && parsed.Scheme != "http" {
 			if output.GetFormat() != output.FormatJSON {
-				fmt.Printf("Warning: skipping non-HTTP URL: %s\n", imgURL)
+				fmt.Fprintf(os.Stderr, "Warning: skipping non-HTTP URL: %s\n", imgURL)
 			}
 			continue
 		}
@@ -925,7 +929,7 @@ func downloadImages(assetsDir string, urls []string) error {
 			}
 
 			if output.GetFormat() != output.FormatJSON {
-				fmt.Printf("  Downloaded %s\n", filename)
+				fmt.Fprintf(os.Stderr, "  Downloaded %s\n", filename)
 			}
 		}(imgURL)
 	}
