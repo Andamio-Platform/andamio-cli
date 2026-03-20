@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -37,17 +38,31 @@ var courseGetCmd = &cobra.Command{
 }
 
 var courseModulesCmd = &cobra.Command{
-	Use:   "modules <course-id>",
+	Use:   "modules [course-id]",
 	Short: "List modules for a course",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runCourseModules,
+	Long: `List modules for a course.
+
+The course can be specified by ID (positional arg) or by name (--course flag):
+  andamio course modules <course-id>
+  andamio course modules --course "Intro to Cardano"
+
+Find your course IDs with: andamio teacher courses`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runCourseModules,
 }
 
 var courseSltsCmd = &cobra.Command{
-	Use:   "slts <course-id> <module-code>",
+	Use:   "slts [course-id] <module-code>",
 	Short: "List SLTs for a course module",
-	Args:  cobra.ExactArgs(2),
-	RunE:  runCourseSlts,
+	Long: `List SLTs for a course module.
+
+The course can be specified by ID (first positional arg) or by name (--course flag):
+  andamio course slts <course-id> <module-code>
+  andamio course slts <module-code> --course "Intro to Cardano"
+
+Find your course IDs with: andamio teacher courses`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: runCourseSlts,
 }
 
 var courseLessonCmd = &cobra.Command{
@@ -98,6 +113,10 @@ func init() {
 	courseCmd.AddCommand(courseLessonCmd)
 	courseCmd.AddCommand(courseAssignmentCmd)
 	courseCmd.AddCommand(courseIntroCmd)
+
+	// --course flag for name-based course resolution
+	courseModulesCmd.Flags().String("course", "", "Course name or substring (alternative to course-id arg)")
+	courseSltsCmd.Flags().String("course", "", "Course name or substring (alternative to course-id arg)")
 }
 
 // getJSON is a helper for simple GET endpoints that return JSON
@@ -193,10 +212,101 @@ func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
 	return output.PrintList(items, titleKey, idKey)
 }
 
-func runCourseModules(cmd *cobra.Command, args []string) error {
-	courseID := args[0]
+// teacherCourse holds the fields needed from the teacher courses list
+type teacherCourse struct {
+	CourseID string
+	Title    string
+}
 
+// fetchTeacherCourses calls POST /v2/course/teacher/courses/list and returns parsed courses
+func fetchTeacherCourses(c *client.Client) ([]teacherCourse, error) {
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/course/teacher/courses/list", nil, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list teacher courses: %w", err)
+	}
+
+	data, ok := resp["data"].([]interface{})
+	if !ok || len(data) == 0 {
+		return nil, nil
+	}
+
+	courses := make([]teacherCourse, 0, len(data))
+	for _, item := range data {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		tc := teacherCourse{}
+		tc.CourseID, _ = m["course_id"].(string)
+		if content, ok := m["content"].(map[string]interface{}); ok {
+			tc.Title, _ = content["title"].(string)
+		}
+		if tc.CourseID != "" {
+			courses = append(courses, tc)
+		}
+	}
+	return courses, nil
+}
+
+// resolveCourseID resolves a course ID from positional args or --course flag.
+// If a positional arg is provided, it is used directly. Otherwise, --course is
+// used for substring matching against the teacher courses list.
+func resolveCourseID(c *client.Client, args []string, argIndex int, cmd *cobra.Command) (string, error) {
+	// If positional arg is available, use it directly
+	if len(args) > argIndex {
+		return args[argIndex], nil
+	}
+
+	// Check --course flag
+	courseName, _ := cmd.Flags().GetString("course")
+	if courseName == "" {
+		return "", fmt.Errorf(
+			"course-id required\n\nList your courses with:\n  andamio teacher courses\n  andamio teacher courses --output json",
+		)
+	}
+
+	// Fetch teacher courses and match by title substring
+	courses, err := fetchTeacherCourses(c)
+	if err != nil {
+		return "", err
+	}
+	if len(courses) == 0 {
+		return "", fmt.Errorf("no teacher courses found")
+	}
+
+	var matches []teacherCourse
+	needle := strings.ToLower(courseName)
+	for _, course := range courses {
+		if strings.Contains(strings.ToLower(course.Title), needle) {
+			matches = append(matches, course)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("no course matching %q found\n\nList your courses:\n  andamio teacher courses", courseName)
+	case 1:
+		return matches[0].CourseID, nil
+	default:
+		var lines []string
+		for _, m := range matches {
+			lines = append(lines, fmt.Sprintf("  %s  %s", m.CourseID, m.Title))
+		}
+		return "", fmt.Errorf(
+			"%q matches multiple courses:\n%s\n\nUse a more specific name or pass the course-id directly.",
+			courseName, strings.Join(lines, "\n"),
+		)
+	}
+}
+
+func runCourseModules(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	c := client.New(cfg)
+
+	courseID, err := resolveCourseID(c, args, 0, cmd)
 	if err != nil {
 		return err
 	}
@@ -280,12 +390,24 @@ func runCourseModulesTeacher(cfg *config.Config, courseID string) error {
 }
 
 func runCourseSlts(cmd *cobra.Command, args []string) error {
-	courseID := args[0]
-	moduleCode := args[1]
-
 	cfg, err := config.Load()
 	if err != nil {
 		return err
+	}
+	c := client.New(cfg)
+
+	var courseID, moduleCode string
+	if len(args) == 2 {
+		// slts <course-id> <module-code>
+		courseID = args[0]
+		moduleCode = args[1]
+	} else {
+		// slts <module-code> --course "Name"
+		moduleCode = args[0]
+		courseID, err = resolveCourseID(c, nil, 0, cmd)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Use teacher endpoint for lesson presence data when JWT is available
