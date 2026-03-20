@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -56,6 +57,7 @@ Examples:
   andamio project task create <project-id> --title "Build API" --lovelace 5000000 --expiration 2026-04-01T00:00:00Z
   andamio project task create <project-id> --title "Fix bug" --lovelace 2000000 --expiration 2026-04-01T00:00:00Z --github-issue "org/repo#42"
   andamio project task create <project-id> --title "Design system" --lovelace 5000000 --expiration 2026-04-01 --content-file task.md
+  andamio project task create <project-id> --title "Earn XP" --lovelace 5000000 --expiration 2026-04-01 --token "policyid...,XP,50"
 
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.ExactArgs(1),
@@ -116,6 +118,7 @@ func init() {
 	projectTaskCreateCmd.Flags().String("content", "", "Plain text task description")
 	projectTaskCreateCmd.Flags().String("content-file", "", "Markdown file for rich task content (converted to Tiptap JSON)")
 	projectTaskCreateCmd.Flags().String("github-issue", "", "GitHub issue reference, e.g. org/repo#123 (prepended to title as [org/repo#123])")
+	projectTaskCreateCmd.Flags().StringArray("token", nil, `Native asset token (repeatable, format: "policy_id,asset_name,quantity")`)
 
 	// Get flags
 	projectTaskGetCmd.Flags().String("project-id", "", "Project ID (required)")
@@ -129,6 +132,7 @@ func init() {
 	projectTaskUpdateCmd.Flags().String("expiration", "", "New expiration time (ISO 8601)")
 	projectTaskUpdateCmd.Flags().String("content", "", "New plain text description")
 	projectTaskUpdateCmd.Flags().String("content-file", "", "Markdown file for rich task content (converted to Tiptap JSON)")
+	projectTaskUpdateCmd.Flags().StringArray("token", nil, `Native asset token (repeatable, format: "policy_id,asset_name,quantity")`)
 
 	// Delete flags
 	projectTaskDeleteCmd.Flags().String("project-id", "", "Project ID (required)")
@@ -322,6 +326,58 @@ func validateLovelace(lovelace string) error {
 	return nil
 }
 
+// parseTokenFlags parses --token flag values into TaskToken structs.
+// Each value must be "policy_id,asset_name,quantity". Empty asset_name is allowed.
+func parseTokenFlags(values []string) ([]TaskToken, error) {
+	tokens := make([]TaskToken, 0, len(values))
+	seen := make(map[string]bool)
+
+	for _, v := range values {
+		parts := strings.SplitN(v, ",", 3)
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("invalid --token format %q: expected \"policy_id,asset_name,quantity\"\n  Example: --token \"722c475bebb10...,XP,50\"", v)
+		}
+
+		policyID := strings.TrimSpace(parts[0])
+		assetName := strings.TrimSpace(parts[1])
+		quantity := strings.TrimSpace(parts[2])
+
+		if policyID == "" {
+			return nil, fmt.Errorf("invalid --token format %q: policy_id cannot be empty", v)
+		}
+		if len(policyID) != 56 {
+			return nil, fmt.Errorf("invalid --token policy_id %q: must be 56 hex characters", policyID)
+		}
+		if _, err := hex.DecodeString(policyID); err != nil {
+			return nil, fmt.Errorf("invalid --token policy_id %q: must be hexadecimal", policyID)
+		}
+		if quantity == "" {
+			return nil, fmt.Errorf("invalid --token format %q: quantity cannot be empty", v)
+		}
+
+		// Validate quantity is a non-negative integer
+		val, err := strconv.ParseInt(quantity, 10, 64)
+		if err != nil || val < 0 {
+			return nil, fmt.Errorf("invalid --token quantity %q: must be a non-negative integer", quantity)
+		}
+
+		// Check for duplicates
+		key := policyID + ":" + assetName
+		if seen[key] {
+			return nil, fmt.Errorf("duplicate token: policy_id %q + asset_name %q specified twice", policyID, assetName)
+		}
+		seen[key] = true
+
+		tokens = append(tokens, TaskToken{
+			PolicyID:  policyID,
+			AssetName: assetName,
+			Quantity:  quantity,
+		})
+	}
+
+	return tokens, nil
+}
+
 func runTaskCreate(cmd *cobra.Command, args []string) error {
 	title, _ := cmd.Flags().GetString("title")
 	lovelace, _ := cmd.Flags().GetString("lovelace")
@@ -383,6 +439,16 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		payload["content_json"] = contentJSON
+	}
+
+	// Parse and add token rewards
+	tokenStrs, _ := cmd.Flags().GetStringArray("token")
+	if len(tokenStrs) > 0 {
+		tokens, err := parseTokenFlags(tokenStrs)
+		if err != nil {
+			return err
+		}
+		payload["tokens"] = tokens
 	}
 
 	var resp map[string]interface{}
@@ -498,6 +564,14 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		payload["content_json"] = contentJSON
+	}
+	if cmd.Flags().Changed("token") {
+		tokenStrs, _ := cmd.Flags().GetStringArray("token")
+		tokens, err := parseTokenFlags(tokenStrs)
+		if err != nil {
+			return err
+		}
+		payload["tokens"] = tokens
 	}
 
 	if !isJSON {
