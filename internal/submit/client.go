@@ -26,8 +26,6 @@ func SubmitTransaction(submitURL, signedCBORHex string, headers []string) ([]byt
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/cbor")
-
 	for _, h := range headers {
 		parts := strings.SplitN(h, ":", 2)
 		if len(parts) != 2 {
@@ -35,6 +33,10 @@ func SubmitTransaction(submitURL, signedCBORHex string, headers []string) ([]byt
 		}
 		req.Header.Set(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
 	}
+
+	// Set Content-Type after user headers to prevent accidental override.
+	// The submit API requires application/cbor — overriding this breaks submission.
+	req.Header.Set("Content-Type", "application/cbor")
 
 	client := &http.Client{Timeout: submitTimeout}
 	resp, err := client.Do(req)

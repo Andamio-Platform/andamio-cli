@@ -104,7 +104,10 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	isJSON := output.GetFormat() == output.FormatJSON
 
-	// Validate body flags
+	// Validate flags
+	if timeout <= 0 {
+		return fmt.Errorf("--timeout must be positive (got %s)", timeout)
+	}
 	if bodyStr == "" && bodyFile == "" {
 		return fmt.Errorf("either --body or --body-file is required")
 	}
@@ -142,7 +145,11 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	// JWT expiry pre-check
 	if cfg.JWTExpiresAt != "" {
 		expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt)
-		if err == nil {
+		if err != nil {
+			if !isJSON {
+				fmt.Fprintf(os.Stderr, "Warning: could not parse JWT expiry %q — skipping expiry pre-check\n", cfg.JWTExpiresAt)
+			}
+		} else {
 			remaining := time.Until(expiresAt)
 			if remaining <= 0 {
 				return &apierr.AuthError{Message: "JWT has expired. Run 'andamio user login' to refresh"}
@@ -356,12 +363,8 @@ func pollTxStatus(ctx context.Context, c *client.Client, txHash string, timeout 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	var deadline <-chan time.Time
-	if timeout > 0 {
-		timer := time.NewTimer(timeout)
-		defer timer.Stop()
-		deadline = timer.C
-	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
 	consecutiveErrors := 0
 	lastState := ""
@@ -371,7 +374,7 @@ func pollTxStatus(ctx context.Context, c *client.Client, txHash string, timeout 
 		select {
 		case <-ctx.Done():
 			return lastState, fmt.Errorf("interrupted")
-		case <-deadline:
+		case <-timer.C:
 			return lastState, fmt.Errorf("timed out waiting for confirmation (last state: %s)", lastState)
 		case <-ticker.C:
 			var resp map[string]interface{}
