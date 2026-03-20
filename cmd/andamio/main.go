@@ -53,6 +53,16 @@ func init() {
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		exitCode := 1
+
+		// ReportedError means the command already printed structured output to
+		// stdout (e.g., a JSON RunResult). Unwrap for exit code mapping but
+		// skip printing a second error message.
+		var reported *apierr.ReportedError
+		alreadyReported := errors.As(err, &reported)
+		if alreadyReported {
+			err = reported.Err
+		}
+
 		var notFound *apierr.NotFoundError
 		var authErr *apierr.AuthError
 		switch {
@@ -62,11 +72,13 @@ func main() {
 			exitCode = 3
 		}
 
-		if output.GetFormat() == output.FormatJSON {
-			b, _ := json.Marshal(map[string]string{"error": err.Error()})
-			fmt.Println(string(b))
-		} else {
-			fmt.Fprintln(os.Stderr, err)
+		if !alreadyReported {
+			if output.GetFormat() == output.FormatJSON {
+				b, _ := json.Marshal(map[string]string{"error": err.Error()})
+				fmt.Println(string(b))
+			} else {
+				fmt.Fprintln(os.Stderr, err)
+			}
 		}
 		os.Exit(exitCode)
 	}
