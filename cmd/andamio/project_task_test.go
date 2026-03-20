@@ -1,7 +1,14 @@
 package main
 
 import (
+	"strings"
 	"testing"
+)
+
+// Valid 56-char hex policy IDs for tests
+const (
+	testPolicyA = "722c475bebb106799b109fc95301c9b796e1a37b6afc601359d54a04"
+	testPolicyB = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8"
 )
 
 func TestParseTokenFlags(t *testing.T) {
@@ -13,31 +20,31 @@ func TestParseTokenFlags(t *testing.T) {
 	}{
 		{
 			name:  "single token",
-			input: []string{"abc123,XP,50"},
-			want:  []TaskToken{{PolicyID: "abc123", AssetName: "XP", Quantity: "50"}},
+			input: []string{testPolicyA + ",XP,50"},
+			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "XP", Quantity: "50"}},
 		},
 		{
 			name:  "multiple tokens",
-			input: []string{"abc123,XP,50", "def456,RewardToken,100"},
+			input: []string{testPolicyA + ",XP,50", testPolicyB + ",RewardToken,100"},
 			want: []TaskToken{
-				{PolicyID: "abc123", AssetName: "XP", Quantity: "50"},
-				{PolicyID: "def456", AssetName: "RewardToken", Quantity: "100"},
+				{PolicyID: testPolicyA, AssetName: "XP", Quantity: "50"},
+				{PolicyID: testPolicyB, AssetName: "RewardToken", Quantity: "100"},
 			},
 		},
 		{
 			name:  "empty asset name allowed",
-			input: []string{"abc123,,50"},
-			want:  []TaskToken{{PolicyID: "abc123", AssetName: "", Quantity: "50"}},
+			input: []string{testPolicyA + ",,50"},
+			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "", Quantity: "50"}},
 		},
 		{
 			name:  "whitespace trimmed",
-			input: []string{"abc123 , XP , 50"},
-			want:  []TaskToken{{PolicyID: "abc123", AssetName: "XP", Quantity: "50"}},
+			input: []string{testPolicyA + " , XP , 50"},
+			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "XP", Quantity: "50"}},
 		},
 		{
 			name:    "wrong field count - too few",
-			input:   []string{"abc123,XP"},
-			wantErr: `invalid --token format "abc123,XP"`,
+			input:   []string{testPolicyA + ",XP"},
+			wantErr: `invalid --token format`,
 		},
 		{
 			name:    "single value no commas",
@@ -50,29 +57,38 @@ func TestParseTokenFlags(t *testing.T) {
 			wantErr: "policy_id cannot be empty",
 		},
 		{
+			name:    "policy_id wrong length",
+			input:   []string{"abc123,XP,50"},
+			wantErr: "must be 56 hex characters",
+		},
+		{
+			name:    "policy_id not hex",
+			input:   []string{"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz,XP,50"},
+			wantErr: "must be hexadecimal",
+		},
+		{
 			name:    "empty quantity",
-			input:   []string{"abc123,XP,"},
+			input:   []string{testPolicyA + ",XP,"},
 			wantErr: "quantity cannot be empty",
 		},
 		{
 			name:    "non-numeric quantity",
-			input:   []string{"abc123,XP,abc"},
+			input:   []string{testPolicyA + ",XP,abc"},
 			wantErr: `invalid --token quantity "abc"`,
 		},
 		{
 			name:    "negative quantity",
-			input:   []string{"abc123,XP,-5"},
+			input:   []string{testPolicyA + ",XP,-5"},
 			wantErr: `invalid --token quantity "-5"`,
 		},
 		{
 			name:    "duplicate token",
-			input:   []string{"abc123,XP,50", "abc123,XP,100"},
+			input:   []string{testPolicyA + ",XP,50", testPolicyA + ",XP,100"},
 			wantErr: "duplicate token",
 		},
 		{
-			name:  "extra commas preserved in quantity field via SplitN",
-			input: []string{"abc123,XP,50,extra"},
-			// SplitN(v, ",", 3) means "50,extra" is the quantity field, which fails validation
+			name:    "extra commas preserved in quantity field via SplitN",
+			input:   []string{testPolicyA + ",XP,50,extra"},
 			wantErr: `invalid --token quantity "50,extra"`,
 		},
 	}
@@ -84,7 +100,7 @@ func TestParseTokenFlags(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
 				}
-				if !contains(err.Error(), tt.wantErr) {
+				if !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("expected error containing %q, got %q", tt.wantErr, err.Error())
 				}
 				return
@@ -102,17 +118,4 @@ func TestParseTokenFlags(t *testing.T) {
 			}
 		})
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

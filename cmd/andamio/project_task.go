@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -343,6 +344,12 @@ func parseTokenFlags(values []string) ([]TaskToken, error) {
 
 		if policyID == "" {
 			return nil, fmt.Errorf("invalid --token format %q: policy_id cannot be empty", v)
+		}
+		if len(policyID) != 56 {
+			return nil, fmt.Errorf("invalid --token policy_id %q: must be 56 hex characters", policyID)
+		}
+		if _, err := hex.DecodeString(policyID); err != nil {
+			return nil, fmt.Errorf("invalid --token policy_id %q: must be hexadecimal", policyID)
 		}
 		if quantity == "" {
 			return nil, fmt.Errorf("invalid --token format %q: quantity cannot be empty", v)
