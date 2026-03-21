@@ -210,6 +210,85 @@ func blake2b224(data []byte) []byte {
 	return h.Sum(nil)
 }
 
+// MessageSignResult contains the output of CIP-8 message signing.
+type MessageSignResult struct {
+	Signature string `json:"signature"` // COSE_Sign1 hex
+	Key       string `json:"key"`       // COSE_Key hex
+	KeyHash   string `json:"key_hash"`  // Blake2b-224 of pubKey, hex
+}
+
+// SignMessage produces a CIP-8/CIP-30 compatible message signature.
+// It builds a COSE_Sign1 structure and a COSE_Key, matching the output
+// of the CIP-30 wallet signData API.
+func SignMessage(message []byte, privKey ed25519.PrivateKey, pubKey ed25519.PublicKey) (*MessageSignResult, error) {
+	keyHash := blake2b224(pubKey)
+
+	// Build protected headers as a CBOR map:
+	// { 1: -8 (EdDSA), "address": keyHash }
+	protectedMap := map[interface{}]interface{}{
+		uint(1):   int(-8), // algorithm: EdDSA
+		"address": keyHash,
+	}
+	protectedBytes, err := cbor.Marshal(protectedMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode protected headers: %w", err)
+	}
+
+	// Build SigStructure: ["Signature1", protected, external_aad, payload]
+	sigStructure := []interface{}{
+		"Signature1",
+		protectedBytes,
+		[]byte{}, // external_aad: empty
+		message,  // payload: the nonce
+	}
+	sigStructureBytes, err := cbor.Marshal(sigStructure)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode SigStructure: %w", err)
+	}
+
+	// Sign the SigStructure directly (CIP-8 signs the raw bytes, not a hash)
+	signature := ed25519.Sign(privKey, sigStructureBytes)
+
+	// Build COSE_Sign1: [protected, unprotected, payload, signature]
+	// CIP-30 uses a 4-element array with Tag 18
+	coseSign1 := cbor.RawMessage{}
+	inner := []interface{}{
+		protectedBytes,
+		map[interface{}]interface{}{}, // unprotected headers: empty
+		message,                       // payload
+		signature,                     // signature
+	}
+	innerBytes, err := cbor.Marshal(inner)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode COSE_Sign1 inner: %w", err)
+	}
+
+	// Wrap in CBOR Tag 18 (COSE_Sign1)
+	coseSign1Tagged, err := cbor.Marshal(cbor.Tag{Number: 18, Content: cbor.RawMessage(innerBytes)})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode COSE_Sign1 tag: %w", err)
+	}
+	_ = coseSign1
+
+	// Build COSE_Key: { 1: 1 (OKP), 3: -8 (EdDSA), -1: 6 (Ed25519), -2: pubKey }
+	coseKey := map[int]interface{}{
+		1:  1,             // kty: OKP
+		3:  -8,            // alg: EdDSA
+		-1: 6,             // crv: Ed25519
+		-2: []byte(pubKey), // x: public key bytes
+	}
+	coseKeyBytes, err := cbor.Marshal(coseKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode COSE_Key: %w", err)
+	}
+
+	return &MessageSignResult{
+		Signature: hex.EncodeToString(coseSign1Tagged),
+		Key:       hex.EncodeToString(coseKeyBytes),
+		KeyHash:   hex.EncodeToString(keyHash),
+	}, nil
+}
+
 // checkKeyFilePermissions warns if the .skey file has overly permissive permissions.
 func checkKeyFilePermissions(path string) {
 	if runtime.GOOS == "windows" {
