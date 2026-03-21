@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -120,4 +121,39 @@ func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
 	}
 
 	return output.PrintList(items, titleKey, idKey)
+}
+
+// isHex returns true if s is a valid hex-encoded string (even length, all hex chars).
+func isHex(s string) bool {
+	if len(s) == 0 || len(s)%2 != 0 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+// hexEncodeAssetName hex-encodes an asset name if it is not already hex.
+// Empty strings are passed through unchanged.
+func hexEncodeAssetName(name string) string {
+	if name == "" || isHex(name) {
+		return name
+	}
+	return hex.EncodeToString([]byte(name))
+}
+
+// hexDecodeAssetName attempts to decode a hex-encoded asset name to UTF-8.
+// Returns the original string if decoding fails or produces non-UTF-8.
+func hexDecodeAssetName(name string) string {
+	if name == "" {
+		return name
+	}
+	decoded, err := hex.DecodeString(name)
+	if err != nil {
+		return name
+	}
+	s := string(decoded)
+	if !utf8.ValidString(s) {
+		return name
+	}
+	return s
 }

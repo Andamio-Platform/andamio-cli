@@ -247,7 +247,11 @@ func createTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirati
 		payload["content_json"] = contentJSON
 	}
 	if len(fm.Tokens) > 0 {
-		payload["tokens"] = fm.Tokens
+		tokens := make([]TaskToken, len(fm.Tokens))
+		for i, t := range fm.Tokens {
+			tokens[i] = TaskToken{PolicyID: t.PolicyID, AssetName: hexEncodeAssetName(t.AssetName), Quantity: t.Quantity}
+		}
+		payload["tokens"] = tokens
 	}
 
 	if dryRun {
@@ -285,7 +289,11 @@ func updateTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirati
 		payload["content_json"] = contentJSON
 	}
 	if len(fm.Tokens) > 0 {
-		payload["tokens"] = fm.Tokens
+		tokens := make([]TaskToken, len(fm.Tokens))
+		for i, t := range fm.Tokens {
+			tokens[i] = TaskToken{PolicyID: t.PolicyID, AssetName: hexEncodeAssetName(t.AssetName), Quantity: t.Quantity}
+		}
+		payload["tokens"] = tokens
 	}
 
 	if !isJSON && !dryRun {
