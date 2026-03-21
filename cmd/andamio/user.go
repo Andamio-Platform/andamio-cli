@@ -111,7 +111,7 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 	if skeyPath != "" {
 		alias, _ := cmd.Flags().GetString("alias")
 		if alias == "" {
-			return fmt.Errorf("--alias is required with --skey")
+			return fmt.Errorf("--alias is required with --skey\n\nCheck aliases with: andamio user exists <alias>")
 		}
 		return runHeadlessLogin(cfg, skeyPath, alias)
 	}

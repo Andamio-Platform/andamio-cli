@@ -225,11 +225,16 @@ func SignMessage(message []byte, privKey ed25519.PrivateKey, pubKey ed25519.Publ
 
 	// Build protected headers as a CBOR map:
 	// { 1: -8 (EdDSA), "address": keyHash }
+	// Use canonical CBOR encoding for deterministic byte ordering (required for signature verification).
 	protectedMap := map[interface{}]interface{}{
 		uint(1):   int(-8), // algorithm: EdDSA
 		"address": keyHash,
 	}
-	protectedBytes, err := cbor.Marshal(protectedMap)
+	canonicalEnc, err := cbor.EncOptions{Sort: cbor.SortCanonical}.EncMode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create canonical encoder: %w", err)
+	}
+	protectedBytes, err := canonicalEnc.Marshal(protectedMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode protected headers: %w", err)
 	}
@@ -251,7 +256,6 @@ func SignMessage(message []byte, privKey ed25519.PrivateKey, pubKey ed25519.Publ
 
 	// Build COSE_Sign1: [protected, unprotected, payload, signature]
 	// CIP-30 uses a 4-element array with Tag 18
-	coseSign1 := cbor.RawMessage{}
 	inner := []interface{}{
 		protectedBytes,
 		map[interface{}]interface{}{}, // unprotected headers: empty
@@ -268,7 +272,6 @@ func SignMessage(message []byte, privKey ed25519.PrivateKey, pubKey ed25519.Publ
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode COSE_Sign1 tag: %w", err)
 	}
-	_ = coseSign1
 
 	// Build COSE_Key: { 1: 1 (OKP), 3: -8 (EdDSA), -1: 6 (Ed25519), -2: pubKey }
 	coseKey := map[int]interface{}{

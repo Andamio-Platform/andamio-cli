@@ -1155,7 +1155,13 @@ func updateModuleContent(c *client.Client, courseID string, data *ImportData, ex
 
 	// Merge: local files take precedence, existing API lessons fill gaps.
 	// This prevents the replace-all semantic from deleting lessons that have no local file.
+	// When SLTCount is 0 (new module), use local lessons directly without merge.
 	var lessons []map[string]interface{}
+	if existing.SLTCount == 0 {
+		for _, l := range localByIndex {
+			lessons = append(lessons, l)
+		}
+	}
 	for i := 1; i <= existing.SLTCount; i++ {
 		if local, ok := localByIndex[i]; ok {
 			lessons = append(lessons, local)
