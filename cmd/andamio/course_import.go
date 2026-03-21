@@ -1114,9 +1114,19 @@ func fetchExistingModule(c *client.Client, courseID, moduleCode string) (*Existi
 }
 
 func updateModuleContent(c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool, dryRun bool) (map[string]interface{}, error) {
-	// Build lessons payload with H1-extracted titles
-	lessons := make([]map[string]interface{}, len(data.Lessons))
-	for i, lesson := range data.Lessons {
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	// Build local lessons indexed by SLT number
+	localByIndex := map[int]map[string]interface{}{}
+	for _, lesson := range data.Lessons {
+		// Warn and skip lessons beyond SLT count
+		if existing.SLTCount > 0 && lesson.Index > existing.SLTCount {
+			if !isJSON {
+				fmt.Fprintf(os.Stderr, "  Warning: lesson-%d.md references SLT %d but module only has %d SLTs — skipping\n", lesson.Index, lesson.Index, existing.SLTCount)
+			}
+			continue
+		}
+
 		l := map[string]interface{}{
 			"slt_index":    lesson.Index,
 			"content_json": lesson.TiptapJSON,
@@ -1140,7 +1150,28 @@ func updateModuleContent(c *client.Client, courseID string, data *ImportData, ex
 			}
 		}
 
-		lessons[i] = l
+		localByIndex[lesson.Index] = l
+	}
+
+	// Merge: local files take precedence, existing API lessons fill gaps.
+	// This prevents the replace-all semantic from deleting lessons that have no local file.
+	var lessons []map[string]interface{}
+	for i := 1; i <= existing.SLTCount; i++ {
+		if local, ok := localByIndex[i]; ok {
+			lessons = append(lessons, local)
+		} else if existingLesson, ok := existing.Lessons[i]; ok {
+			// Preserve existing lesson from API (no local file for this SLT)
+			preserved := map[string]interface{}{"slt_index": i}
+			for _, field := range []string{"title", "content_json", "description", "image_url", "video_url"} {
+				if v, ok := existingLesson[field]; ok && v != nil {
+					preserved[field] = v
+				}
+			}
+			lessons = append(lessons, preserved)
+			if !isJSON {
+				fmt.Fprintf(os.Stderr, "  Preserved existing lesson for SLT %d (no local file)\n", i)
+			}
+		}
 	}
 
 	payload := map[string]interface{}{
@@ -1149,7 +1180,7 @@ func updateModuleContent(c *client.Client, courseID string, data *ImportData, ex
 		"title":              data.Title,
 	}
 
-	// Only include lessons if files were provided (omitting = preserve existing per API contract)
+	// Only include lessons if there are any to send (omitting = preserve existing per API contract)
 	if len(lessons) > 0 {
 		payload["lessons"] = lessons
 	}
