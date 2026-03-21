@@ -123,6 +123,40 @@ func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
 	return output.PrintList(items, titleKey, idKey)
 }
 
+// printListPost fetches a POST list endpoint with a payload and prints using PrintList.
+// Use this for role-based list endpoints that require a body (e.g., project-id filter).
+func printListPost(path string, payload interface{}, emptyMsg, titleKey, idKey string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	c := client.New(cfg)
+	var response map[string]interface{}
+	if err := c.Post(path, payload, &response); err != nil {
+		return err
+	}
+
+	if output.GetFormat() == output.FormatJSON {
+		return output.PrintJSON(response)
+	}
+
+	data, ok := response["data"].([]interface{})
+	if !ok || len(data) == 0 {
+		fmt.Fprintln(os.Stderr, emptyMsg)
+		return nil
+	}
+
+	items := make([]map[string]interface{}, 0, len(data))
+	for _, item := range data {
+		if m, ok := item.(map[string]interface{}); ok {
+			items = append(items, m)
+		}
+	}
+
+	return output.PrintList(items, titleKey, idKey)
+}
+
 // isHex returns true if s is a valid hex-encoded string (even length, all hex chars).
 func isHex(s string) bool {
 	if len(s) == 0 || len(s)%2 != 0 {
