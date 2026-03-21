@@ -102,6 +102,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | Command | Endpoint | Auth | Description |
 |---------|----------|------|-------------|
 | `user login` | browser flow | wallet | Authenticate via browser wallet signing, stores JWT |
+| `user login --skey <path> --alias <name>` | `/v2/auth/login/session` + `/v2/auth/login/validate` | api-key | Headless CIP-8 login for CI/CD |
 | `user logout` | local | none | Clear stored JWT |
 | `user status` | local | none | Show auth status (API key + JWT + session remaining) |
 | `user me` | `/api/v1/user/me` | either | Current user info |
