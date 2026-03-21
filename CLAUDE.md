@@ -118,6 +118,11 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course lesson <id> <module> <slt>` | `/api/v2/course/user/lesson/{id}/{module}/{slt}` | either | Lesson content |
 | `course assignment <id> <module>` | `/api/v2/course/user/assignment/{id}/{module}` | either | Module assignment |
 | `course intro <id> <module>` | `/api/v2/course/user/introduction/{id}/{module}` | either | Module introduction |
+| `course owner list` | `/v2/course/owner/courses/list` | jwt | List courses you own |
+| `course owner create --title <t>` | `/v2/course/owner/course/create` | jwt | Create course. `--description`, `--image-url`, `--video-url`, `--category`, `--public` |
+| `course owner update --course-id <id>` | `/v2/course/owner/course/update` | jwt | Update course metadata. Only changed flags sent |
+| `course owner register --course-id <id>` | `/v2/course/owner/course/register` | jwt | Register on-chain course with off-chain metadata |
+| `course owner teachers --course-id <id>` | `/v2/course/owner/teachers/update` | jwt | Set teacher list. `--teacher` (repeatable) |
 
 ### project — Project data
 | Command | Endpoint | Auth | Description |

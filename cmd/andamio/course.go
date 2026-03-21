@@ -119,6 +119,22 @@ func init() {
 	courseSltsCmd.Flags().String("course", "", "Course name or substring (alternative to course-id arg)")
 }
 
+// jwtAuthPreRunE is a shared PersistentPreRunE that chains with root (for --output flag)
+// and checks for JWT authentication. Used by all role-based parent commands.
+func jwtAuthPreRunE(cmd *cobra.Command, args []string) error {
+	if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if !cfg.HasUserAuth() {
+		return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
+	}
+	return nil
+}
+
 // getJSON is a helper for simple GET endpoints that return JSON
 func getJSON(path string) error {
 	cfg, err := config.Load()
