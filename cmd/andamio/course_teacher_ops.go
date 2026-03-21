@@ -189,6 +189,10 @@ func runCourseTeacherReview(cmd *cobra.Command, args []string) error {
 	feedback, _ := cmd.Flags().GetString("feedback")
 	isJSON := output.GetFormat() == output.FormatJSON
 
+	if decision != "approve" && decision != "reject" {
+		return fmt.Errorf("--decision must be 'approve' or 'reject', got %q", decision)
+	}
+
 	payload := map[string]interface{}{
 		"course_id":     courseID,
 		"commitment_id": commitmentID,
@@ -223,36 +227,10 @@ func runCourseTeacherReview(cmd *cobra.Command, args []string) error {
 
 func runCourseTeacherCommitments(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
-	isJSON := output.GetFormat() == output.FormatJSON
-
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
-	c := client.New(cfg)
-	payload := map[string]string{"course_id": courseID}
-	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/assignment-commitments/list", payload, &resp); err != nil {
-		return fmt.Errorf("failed to list commitments: %w", err)
-	}
-
-	if isJSON {
-		return output.PrintJSON(resp)
-	}
-
-	data, ok := resp["data"].([]interface{})
-	if !ok || len(data) == 0 {
-		fmt.Fprintln(os.Stderr, "No pending reviews found.")
-		return nil
-	}
-
-	items := make([]map[string]interface{}, 0, len(data))
-	for _, item := range data {
-		if m, ok := item.(map[string]interface{}); ok {
-			items = append(items, m)
-		}
-	}
-
-	return output.PrintList(items, "content.title", "commitment_id")
+	return printListPost(
+		"/api/v2/course/teacher/assignment-commitments/list",
+		map[string]string{"course_id": courseID},
+		"No pending reviews found.",
+		"content.title", "commitment_id",
+	)
 }

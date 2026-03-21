@@ -1,13 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"net/url"
-	"os"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/client"
-	"github.com/Andamio-Platform/andamio-cli/internal/config"
-	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -54,37 +49,10 @@ func init() {
 }
 
 func runProjectTasksPublic(cmd *cobra.Command, args []string) error {
-	projectID := args[0]
-	isJSON := output.GetFormat() == output.FormatJSON
-
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
-	c := client.New(cfg)
-	payload := map[string]string{"project_id": projectID}
-	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/user/tasks/list", payload, &resp); err != nil {
-		return fmt.Errorf("failed to list tasks: %w", err)
-	}
-
-	if isJSON {
-		return output.PrintJSON(resp)
-	}
-
-	data, ok := resp["data"].([]interface{})
-	if !ok || len(data) == 0 {
-		fmt.Fprintln(os.Stderr, "No tasks found.")
-		return nil
-	}
-
-	items := make([]map[string]interface{}, 0, len(data))
-	for _, item := range data {
-		if m, ok := item.(map[string]interface{}); ok {
-			items = append(items, m)
-		}
-	}
-
-	return output.PrintList(items, "content.title", "task_index")
+	return printListPost(
+		"/api/v2/project/user/tasks/list",
+		map[string]string{"project_id": args[0]},
+		"No tasks found.",
+		"content.title", "task_index",
+	)
 }
