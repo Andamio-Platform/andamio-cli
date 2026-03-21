@@ -28,8 +28,31 @@ var projectGetCmd = &cobra.Command{
 	},
 }
 
+var projectTasksPublicCmd = &cobra.Command{
+	Use:   "tasks <project-id>",
+	Short: "List tasks for a project (public view)",
+	Long: `List tasks for a project. Unlike 'project task list' (manager endpoint),
+this uses the public user endpoint and does not require manager role.
+
+Examples:
+  andamio project tasks <project-id>
+  andamio project tasks <project-id> --output json`,
+	Args: cobra.ExactArgs(1),
+	RunE: runProjectTasksPublic,
+}
+
 func init() {
 	rootCmd.AddCommand(projectCmd)
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectGetCmd)
+	projectCmd.AddCommand(projectTasksPublicCmd)
+}
+
+func runProjectTasksPublic(cmd *cobra.Command, args []string) error {
+	return printListPost(
+		"/api/v2/project/user/tasks/list",
+		map[string]string{"project_id": args[0]},
+		"No tasks found.",
+		"content.title", "task_index",
+	)
 }
