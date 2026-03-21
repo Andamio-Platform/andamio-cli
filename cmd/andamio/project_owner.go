@@ -215,6 +215,9 @@ func runProjectOwnerUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Project updated.\n")
+	if id, ok := resp["project_id"].(string); ok {
+		fmt.Printf("project_id: %s\n", id)
+	}
 	return nil
 }
 
@@ -268,5 +271,8 @@ func runProjectOwnerRegister(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Project registered.\n")
+	if id, ok := resp["project_id"].(string); ok {
+		fmt.Printf("project_id: %s\n", id)
+	}
 	return nil
 }

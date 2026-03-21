@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -16,22 +15,9 @@ import (
 )
 
 var projectTaskCmd = &cobra.Command{
-	Use:   "task",
-	Short: "Manage project tasks (manager role)",
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Chain with root's PersistentPreRunE (output format)
-		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
-			return err
-		}
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
-	},
+	Use:               "task",
+	Short:             "Manage project tasks (manager role)",
+	PersistentPreRunE: jwtAuthPreRunE,
 }
 
 var projectTaskListCmd = &cobra.Command{
