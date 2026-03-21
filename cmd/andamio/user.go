@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"os"
+
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -41,16 +44,16 @@ var userExistsCmd = &cobra.Command{
 
 var userLoginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authenticate via browser wallet signing",
-	Long: `Opens your browser to sign in with your Cardano wallet.
+	Short: "Authenticate via browser wallet signing or .skey file",
+	Long: `Authenticate to use owner and manager commands.
 
-This authenticates you as an Access Token holder, enabling you to:
-- Edit courses you own
-- Manage course modules and content
-- Edit projects you manage
+Browser login (default):
+  andamio user login
+  Opens your browser for wallet signing.
 
-The CLI starts a local server, opens your browser for wallet signing,
-then stores the resulting JWT for future API calls.`,
+Headless login (for CI/CD, scripting, agents):
+  andamio user login --skey ./payment.skey --alias myalias
+  Signs a nonce with your .skey file — no browser needed.`,
 	RunE: runUserLogin,
 }
 
@@ -73,6 +76,10 @@ func init() {
 	userCmd.AddCommand(userLoginCmd)
 	userCmd.AddCommand(userLogoutCmd)
 	userCmd.AddCommand(userStatusCmd)
+
+	// Headless login flags
+	userLoginCmd.Flags().String("skey", "", "Path to .skey file for headless authentication (no browser)")
+	userLoginCmd.Flags().String("alias", "", "Andamio alias (required with --skey)")
 }
 
 // generateState creates a cryptographically secure random state parameter
@@ -99,7 +106,17 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Check if already authenticated
+	// Headless login via --skey
+	skeyPath, _ := cmd.Flags().GetString("skey")
+	if skeyPath != "" {
+		alias, _ := cmd.Flags().GetString("alias")
+		if alias == "" {
+			return fmt.Errorf("--alias is required with --skey\n\nCheck aliases with: andamio user exists <alias>")
+		}
+		return runHeadlessLogin(cfg, skeyPath, alias)
+	}
+
+	// Check if already authenticated (browser flow only)
 	if cfg.HasUserAuth() {
 		fmt.Printf("Already authenticated as: %s\n", cfg.UserAlias)
 		fmt.Println("Run 'andamio user logout' first to re-authenticate.")
@@ -231,6 +248,99 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Session expires: %s\n", result.ExpiresAt)
 	}
 	fmt.Println("\nYou can now use owner commands to edit courses and projects.")
+
+	return nil
+}
+
+// runHeadlessLogin authenticates using a .skey file via CIP-8 message signing.
+// Flow: get nonce → sign with .skey → validate signature → store JWT.
+func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	// Load signing key
+	privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
+	if err != nil {
+		return fmt.Errorf("failed to load signing key: %w", err)
+	}
+
+	c := client.New(cfg)
+
+	// Step 1: Get login session with nonce
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Requesting login session...\n")
+	}
+
+	var session struct {
+		ID        string `json:"id"`
+		Nonce     string `json:"nonce"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := c.Post("/api/v2/auth/login/session", nil, &session); err != nil {
+		return fmt.Errorf("failed to get login session: %w", err)
+	}
+
+	if session.Nonce == "" || session.ID == "" {
+		return fmt.Errorf("invalid login session response: missing nonce or session ID")
+	}
+
+	// Step 2: Sign the nonce using CIP-8
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Signing nonce with %s...\n", skeyPath)
+	}
+
+	signResult, err := cardano.SignMessage([]byte(session.Nonce), privKey, pubKey)
+	if err != nil {
+		return fmt.Errorf("failed to sign nonce: %w", err)
+	}
+
+	// Step 3: Validate signature with API
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Validating signature...\n")
+	}
+
+	validatePayload := map[string]interface{}{
+		"session_id": session.ID,
+		"signature": map[string]string{
+			"signature": signResult.Signature,
+			"key":       signResult.Key,
+		},
+	}
+
+	var tokenResp struct {
+		Token     string `json:"token"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := c.Post("/api/v2/auth/login/validate", validatePayload, &tokenResp); err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	if tokenResp.Token == "" {
+		return fmt.Errorf("authentication failed: no token received")
+	}
+
+	// Step 4: Store JWT in config
+	cfg.UserJWT = tokenResp.Token
+	cfg.JWTExpiresAt = tokenResp.ExpiresAt
+	cfg.UserAlias = alias
+	cfg.UserID = "" // headless flow may not return user_id
+
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(map[string]interface{}{
+			"alias":      alias,
+			"expires_at": tokenResp.ExpiresAt,
+			"key_hash":   signResult.KeyHash,
+		})
+	}
+
+	fmt.Fprintf(os.Stderr, "\nAuthenticated as: %s\n", alias)
+	if tokenResp.ExpiresAt != "" {
+		fmt.Fprintf(os.Stderr, "Session expires: %s\n", tokenResp.ExpiresAt)
+	}
+	fmt.Fprintf(os.Stderr, "Key hash: %s\n", signResult.KeyHash)
 
 	return nil
 }

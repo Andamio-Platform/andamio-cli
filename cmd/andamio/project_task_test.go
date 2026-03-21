@@ -19,17 +19,22 @@ func TestParseTokenFlags(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:  "single token",
+			name:  "single token - human-readable auto-hex-encoded",
 			input: []string{testPolicyA + ",XP,50"},
-			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "XP", Quantity: "50"}},
+			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "5850", Quantity: "50"}},
 		},
 		{
-			name:  "multiple tokens",
+			name:  "multiple tokens - auto-hex-encoded",
 			input: []string{testPolicyA + ",XP,50", testPolicyB + ",RewardToken,100"},
 			want: []TaskToken{
-				{PolicyID: testPolicyA, AssetName: "XP", Quantity: "50"},
-				{PolicyID: testPolicyB, AssetName: "RewardToken", Quantity: "100"},
+				{PolicyID: testPolicyA, AssetName: "5850", Quantity: "50"},
+				{PolicyID: testPolicyB, AssetName: "526577617264546f6b656e", Quantity: "100"},
 			},
+		},
+		{
+			name:  "already-hex asset name passed through",
+			input: []string{testPolicyA + ",5850,50"},
+			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "5850", Quantity: "50"}},
 		},
 		{
 			name:  "empty asset name allowed",
@@ -37,9 +42,14 @@ func TestParseTokenFlags(t *testing.T) {
 			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "", Quantity: "50"}},
 		},
 		{
-			name:  "whitespace trimmed",
+			name:  "whitespace trimmed then hex-encoded",
 			input: []string{testPolicyA + " , XP , 50"},
-			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "XP", Quantity: "50"}},
+			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "5850", Quantity: "50"}},
+		},
+		{
+			name:  "odd-length hex-like string is encoded (not valid hex)",
+			input: []string{testPolicyA + ",ABC,50"},
+			want:  []TaskToken{{PolicyID: testPolicyA, AssetName: "414243", Quantity: "50"}},
 		},
 		{
 			name:    "wrong field count - too few",
@@ -82,7 +92,7 @@ func TestParseTokenFlags(t *testing.T) {
 			wantErr: `invalid --token quantity "-5"`,
 		},
 		{
-			name:    "duplicate token",
+			name:    "duplicate token (after hex encoding)",
 			input:   []string{testPolicyA + ",XP,50", testPolicyA + ",XP,100"},
 			wantErr: "duplicate token",
 		},
@@ -117,5 +127,62 @@ func TestParseTokenFlags(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHexEncodeAssetName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"human-readable", "XP", "5850"},
+		{"already hex", "5850", "5850"},
+		{"empty", "", ""},
+		{"long hex", "526577617264546f6b656e", "526577617264546f6b656e"},
+		{"odd-length not hex", "ABC", "414243"},
+		{"unicode", "caf\u00e9", "636166c3a9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hexEncodeAssetName(tt.input)
+			if got != tt.want {
+				t.Errorf("hexEncodeAssetName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHexDecodeAssetName(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"decode XP", "5850", "XP"},
+		{"decode RewardToken", "526577617264546f6b656e", "RewardToken"},
+		{"empty", "", ""},
+		{"invalid hex", "zzzz", "zzzz"},
+		{"already text (odd length)", "XP", "XP"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hexDecodeAssetName(tt.input)
+			if got != tt.want {
+				t.Errorf("hexDecodeAssetName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHexRoundTrip(t *testing.T) {
+	// Encode then decode should return original
+	names := []string{"XP", "RewardToken", "MyToken123"}
+	for _, name := range names {
+		encoded := hexEncodeAssetName(name)
+		decoded := hexDecodeAssetName(encoded)
+		if decoded != name {
+			t.Errorf("round-trip failed for %q: encoded=%q decoded=%q", name, encoded, decoded)
+		}
 	}
 }

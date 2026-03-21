@@ -104,7 +104,7 @@ func init() {
 	projectTaskCreateCmd.Flags().String("content", "", "Plain text task description")
 	projectTaskCreateCmd.Flags().String("content-file", "", "Markdown file for rich task content (converted to Tiptap JSON)")
 	projectTaskCreateCmd.Flags().String("github-issue", "", "GitHub issue reference, e.g. org/repo#123 (prepended to title as [org/repo#123])")
-	projectTaskCreateCmd.Flags().StringArray("token", nil, `Native asset token (repeatable, format: "policy_id,asset_name,quantity")`)
+	projectTaskCreateCmd.Flags().StringArray("token", nil, `Native asset token (repeatable, format: "policy_id,asset_name,quantity"). asset_name is auto-hex-encoded if not already hex`)
 
 	// Get flags
 	projectTaskGetCmd.Flags().String("project-id", "", "Project ID (required)")
@@ -118,7 +118,7 @@ func init() {
 	projectTaskUpdateCmd.Flags().String("expiration", "", "New expiration time (ISO 8601)")
 	projectTaskUpdateCmd.Flags().String("content", "", "New plain text description")
 	projectTaskUpdateCmd.Flags().String("content-file", "", "Markdown file for rich task content (converted to Tiptap JSON)")
-	projectTaskUpdateCmd.Flags().StringArray("token", nil, `Native asset token (repeatable, format: "policy_id,asset_name,quantity")`)
+	projectTaskUpdateCmd.Flags().StringArray("token", nil, `Native asset token (repeatable, format: "policy_id,asset_name,quantity"). asset_name is auto-hex-encoded if not already hex`)
 
 	// Delete flags
 	projectTaskDeleteCmd.Flags().String("project-id", "", "Project ID (required)")
@@ -325,7 +325,7 @@ func parseTokenFlags(values []string) ([]TaskToken, error) {
 		}
 
 		policyID := strings.TrimSpace(parts[0])
-		assetName := strings.TrimSpace(parts[1])
+		assetName := hexEncodeAssetName(strings.TrimSpace(parts[1]))
 		quantity := strings.TrimSpace(parts[2])
 
 		if policyID == "" {

@@ -195,7 +195,7 @@ func exportTask(dir string, item map[string]interface{}, projectID, policyID str
 				}
 			}
 			fm.WriteString(fmt.Sprintf("  - policy_id: %q\n", policyIDToken))
-			fm.WriteString(fmt.Sprintf("    asset_name: %q\n", assetName))
+			fm.WriteString(fmt.Sprintf("    asset_name: %q\n", hexDecodeAssetName(assetName)))
 			fm.WriteString(fmt.Sprintf("    quantity: %q\n", quantity))
 		}
 	}
