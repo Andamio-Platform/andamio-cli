@@ -129,6 +129,10 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 |---------|----------|------|-------------|
 | `project list` | `/api/v2/project/user/projects/list` | either | List projects |
 | `project get <id>` | `/api/v2/project/user/project/{id}` | either | Project details |
+| `project owner list` | `/v2/project/owner/projects/list` | jwt | List projects you own |
+| `project owner create --title <t>` | `/v2/project/owner/project/create` | jwt | Create project. `--description`, `--image-url`, `--video-url`, `--category`, `--public` |
+| `project owner update --project-id <id>` | `/v2/project/owner/project/update` | jwt | Update project metadata. Only changed flags sent |
+| `project owner register --project-id <id>` | `/v2/project/owner/project/register` | jwt | Register on-chain project with off-chain metadata |
 | `project task list <project-id>` | `/v2/project/manager/tasks/list` | jwt | List tasks (manager) |
 | `project task get <index> --project-id <id>` | `/v2/project/manager/tasks/list` | jwt | Get task by index (filters from list) |
 | `project task create <project-id>` | `/v2/project/manager/task/create` | jwt | Create task. Flags: --title, --lovelace, --expiration, --github-issue |
