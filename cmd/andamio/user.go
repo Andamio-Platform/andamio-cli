@@ -299,7 +299,7 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 	}
 
 	validatePayload := map[string]interface{}{
-		"session_id": session.ID,
+		"id": session.ID,
 		"signature": map[string]string{
 			"signature": signResult.Signature,
 			"key":       signResult.Key,
@@ -307,22 +307,31 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 	}
 
 	var tokenResp struct {
-		Token     string `json:"token"`
-		ExpiresAt string `json:"expires_at"`
+		JWT  string `json:"jwt"`
+		User struct {
+			ID                string  `json:"id"`
+			CardanoBech32Addr *string `json:"cardano_bech32_addr"`
+			AccessTokenAlias  *string `json:"access_token_alias"`
+		} `json:"user"`
 	}
 	if err := c.Post("/api/v2/auth/login/validate", validatePayload, &tokenResp); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
-	if tokenResp.Token == "" {
+	if tokenResp.JWT == "" {
 		return fmt.Errorf("authentication failed: no token received")
 	}
 
 	// Step 4: Store JWT in config
-	cfg.UserJWT = tokenResp.Token
-	cfg.JWTExpiresAt = tokenResp.ExpiresAt
-	cfg.UserAlias = alias
-	cfg.UserID = "" // headless flow may not return user_id
+	cfg.UserJWT = tokenResp.JWT
+	cfg.JWTExpiresAt = "" // headless flow does not return expiry; extract from JWT if needed
+	// Use alias from response if available, fall back to flag
+	if tokenResp.User.AccessTokenAlias != nil && *tokenResp.User.AccessTokenAlias != "" {
+		cfg.UserAlias = *tokenResp.User.AccessTokenAlias
+	} else {
+		cfg.UserAlias = alias
+	}
+	cfg.UserID = tokenResp.User.ID
 
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
@@ -330,16 +339,14 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 
 	if isJSON {
 		return output.PrintJSON(map[string]interface{}{
-			"alias":      alias,
-			"expires_at": tokenResp.ExpiresAt,
-			"key_hash":   signResult.KeyHash,
+			"alias":    cfg.UserAlias,
+			"user_id":  cfg.UserID,
+			"key_hash": signResult.KeyHash,
 		})
 	}
 
-	fmt.Fprintf(os.Stderr, "\nAuthenticated as: %s\n", alias)
-	if tokenResp.ExpiresAt != "" {
-		fmt.Fprintf(os.Stderr, "Session expires: %s\n", tokenResp.ExpiresAt)
-	}
+	fmt.Fprintf(os.Stderr, "\nAuthenticated as: %s\n", cfg.UserAlias)
+	fmt.Fprintf(os.Stderr, "User ID: %s\n", cfg.UserID)
 	fmt.Fprintf(os.Stderr, "Key hash: %s\n", signResult.KeyHash)
 
 	return nil
