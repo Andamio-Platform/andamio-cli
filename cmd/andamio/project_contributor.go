@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -57,7 +58,7 @@ var projectContributorCommitCmd = &cobra.Command{
 
 Examples:
   andamio project contributor commit --project-id <id> --task-index 3`,
-	RunE: runProjectContributorAction("/api/v2/project/contributor/commitment/create", "Committing to task"),
+	RunE: runProjectContributorCommit,
 }
 
 var projectContributorUpdateCmd = &cobra.Command{
@@ -77,7 +78,7 @@ var projectContributorDeleteCmd = &cobra.Command{
 
 Examples:
   andamio project contributor delete --project-id <id> --task-index 3`,
-	RunE: runProjectContributorAction("/api/v2/project/contributor/commitment/delete", "Deleting commitment"),
+	RunE: runProjectContributorDelete,
 }
 
 func init() {
@@ -110,19 +111,40 @@ func init() {
 	projectContributorUpdateCmd.Flags().String("evidence-file", "", "Path to evidence file (Markdown)")
 }
 
-func runProjectContributorCommitment(cmd *cobra.Command, args []string) error {
+// loadClientAndResolveTask loads config, creates a client, and resolves task_hash from project_id + task_index.
+func loadClientAndResolveTask(cmd *cobra.Command) (*client.Client, string, int, error) {
 	projectID, _ := cmd.Flags().GetString("project-id")
-	taskIndex, _ := cmd.Flags().GetString("task-index")
+	taskIndexStr, _ := cmd.Flags().GetString("task-index")
+
+	taskIndex, err := strconv.Atoi(taskIndexStr)
+	if err != nil {
+		return nil, "", 0, fmt.Errorf("invalid task-index %q: must be a number", taskIndexStr)
+	}
 
 	cfg, err := config.Load()
+	if err != nil {
+		return nil, "", 0, err
+	}
+
+	c := client.New(cfg)
+	taskHash, err := resolveTaskHash(c, projectID, taskIndex)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	return c, taskHash, taskIndex, nil
+}
+
+func runProjectContributorCommitment(cmd *cobra.Command, args []string) error {
+	projectID, _ := cmd.Flags().GetString("project-id")
+
+	c, taskHash, _, err := loadClientAndResolveTask(cmd)
 	if err != nil {
 		return err
 	}
 
-	c := client.New(cfg)
 	payload := map[string]string{
 		"project_id": projectID,
-		"task_index": taskIndex,
+		"task_hash":  taskHash,
 	}
 	var resp map[string]interface{}
 	if err := c.Post("/api/v2/project/contributor/commitment/get", payload, &resp); err != nil {
@@ -132,46 +154,37 @@ func runProjectContributorCommitment(cmd *cobra.Command, args []string) error {
 	return output.PrintJSON(resp)
 }
 
-// runProjectContributorAction returns a RunE for simple project-id + task-index POST commands.
-func runProjectContributorAction(endpoint, verb string) func(cmd *cobra.Command, args []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		projectID, _ := cmd.Flags().GetString("project-id")
-		taskIndex, _ := cmd.Flags().GetString("task-index")
-		isJSON := output.GetFormat() == output.FormatJSON
+func runProjectContributorCommit(cmd *cobra.Command, args []string) error {
+	isJSON := output.GetFormat() == output.FormatJSON
 
-		payload := map[string]interface{}{
-			"project_id": projectID,
-			"task_index": taskIndex,
-		}
-
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-
-		if !isJSON {
-			fmt.Fprintf(os.Stderr, "%s %s...\n", verb, taskIndex)
-		}
-
-		c := client.New(cfg)
-		var resp map[string]interface{}
-		if err := c.Post(endpoint, payload, &resp); err != nil {
-			return fmt.Errorf("failed: %w", err)
-		}
-
-		if isJSON {
-			return output.PrintJSON(resp)
-		}
-
-		fmt.Fprintf(os.Stderr, "Done.\n")
-		return nil
+	c, taskHash, taskIndex, err := loadClientAndResolveTask(cmd)
+	if err != nil {
+		return err
 	}
+
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Committing to task %d...\n", taskIndex)
+	}
+
+	payload := map[string]interface{}{
+		"task_hash": taskHash,
+	}
+
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/project/contributor/commitment/create", payload, &resp); err != nil {
+		return fmt.Errorf("failed: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(resp)
+	}
+
+	fmt.Fprintf(os.Stderr, "Done.\n")
+	return nil
 }
 
 // runProjectContributorUpdate sends evidence as Tiptap JSON with a Blake2b-256 content hash.
 func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
-	projectID, _ := cmd.Flags().GetString("project-id")
-	taskIndex, _ := cmd.Flags().GetString("task-index")
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	evidence, err := readEvidenceFlag(cmd)
@@ -179,28 +192,26 @@ func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	tiptapJSON, evidenceHash, err := wrapEvidence(evidence)
+	tiptapDoc, evidenceHash, err := wrapEvidence(evidence)
 	if err != nil {
 		return fmt.Errorf("failed to format evidence: %w", err)
 	}
 
-	payload := map[string]interface{}{
-		"project_id":    projectID,
-		"task_index":    taskIndex,
-		"evidence":      tiptapJSON,
-		"evidence_hash": evidenceHash,
-	}
-
-	cfg, err := config.Load()
+	c, taskHash, taskIndex, err := loadClientAndResolveTask(cmd)
 	if err != nil {
 		return err
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Updating commitment evidence for task %s...\n", taskIndex)
+		fmt.Fprintf(os.Stderr, "Updating commitment evidence for task %d...\n", taskIndex)
 	}
 
-	c := client.New(cfg)
+	payload := map[string]interface{}{
+		"task_hash":     taskHash,
+		"evidence":      tiptapDoc,
+		"evidence_hash": evidenceHash,
+	}
+
 	var resp map[string]interface{}
 	if err := c.Post("/api/v2/project/contributor/commitment/update", payload, &resp); err != nil {
 		return fmt.Errorf("failed to update commitment: %w", err)
@@ -211,5 +222,34 @@ func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Commitment updated.\n")
+	return nil
+}
+
+func runProjectContributorDelete(cmd *cobra.Command, args []string) error {
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	c, taskHash, taskIndex, err := loadClientAndResolveTask(cmd)
+	if err != nil {
+		return err
+	}
+
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Deleting commitment for task %d...\n", taskIndex)
+	}
+
+	payload := map[string]interface{}{
+		"task_hash": taskHash,
+	}
+
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/project/contributor/commitment/delete", payload, &resp); err != nil {
+		return fmt.Errorf("failed: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(resp)
+	}
+
+	fmt.Fprintf(os.Stderr, "Done.\n")
 	return nil
 }
