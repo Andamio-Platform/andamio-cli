@@ -163,6 +163,29 @@ When `--output json` is set, headless login prints a structured result:
 
 All progress messages are gated with `if !isJSON` and written to stderr, following the CLI's composability rules.
 
+### Post-merge fix: API contract alignment (2026-03-22)
+
+Testing headless login in the CLI-to-XP scenario revealed two field name mismatches between the CLI and the API:
+
+**1. Validate payload field name**
+
+The CLI sent `{"session_id": "..."}` but the DB API expects `{"id": "..."}`:
+
+| Layer | Field | JSON tag |
+|-------|-------|----------|
+| CLI (before fix) | `session_id` | `json:"session_id"` |
+| Gateway `api_types` | `SessionID` | `json:"session_id"` |
+| Gateway `andamio_db_client` (generated) | `Id` | `json:"id"` |
+| DB API | `ID` | `json:"id"` |
+
+The gateway handler parses into `andamio_db_client.ValidateSignatureRequest` (line 92 of `auth_handlers.go`), not `api_types.ValidateSignatureRequest`. The generated client matches the DB API contract; the swagger annotation types do not. Fix: CLI sends `"id"` to match the actual contract.
+
+**2. Response field name**
+
+The CLI expected `{"token": "..."}` but the DB API returns `{"jwt": "...", "user": {...}}`. Fix: parse `jwt` field and extract `user.id` and `user.access_token_alias` from the response.
+
+Both fixes in `cmd/andamio/user.go`, `runHeadlessLogin()` function.
+
 ## Review Findings Also Fixed
 
 During code review of the initial implementation, four additional issues were identified and resolved:
