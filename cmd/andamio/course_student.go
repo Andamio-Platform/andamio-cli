@@ -79,7 +79,7 @@ var courseStudentSubmitCmd = &cobra.Command{
 
 Examples:
   andamio course student submit --course-id <id> --module-code 101 --evidence "https://github.com/..."`,
-	RunE: runCourseStudentSubmitOrUpdate("/api/v2/course/student/commitment/submit", "Submitting"),
+	RunE: runCourseStudentSubmit,
 }
 
 var courseStudentUpdateCmd = &cobra.Command{
@@ -89,7 +89,7 @@ var courseStudentUpdateCmd = &cobra.Command{
 
 Examples:
   andamio course student update --course-id <id> --module-code 101 --evidence "https://github.com/..."`,
-	RunE: runCourseStudentSubmitOrUpdate("/api/v2/course/student/commitment/update", "Updating"),
+	RunE: runCourseStudentUpdate,
 }
 
 var courseStudentLeaveCmd = &cobra.Command{
@@ -142,7 +142,7 @@ func init() {
 		cmd.MarkFlagRequired("module-code")
 	}
 
-	// Submit/update flags (add --evidence)
+	// Submit/update flags (add --evidence / --evidence-file)
 	for _, cmd := range []*cobra.Command{
 		courseStudentSubmitCmd,
 		courseStudentUpdateCmd,
@@ -151,8 +151,8 @@ func init() {
 		cmd.MarkFlagRequired("course-id")
 		cmd.Flags().String("module-code", "", "Module code (required)")
 		cmd.MarkFlagRequired("module-code")
-		cmd.Flags().String("evidence", "", "Evidence URL or description (required)")
-		cmd.MarkFlagRequired("evidence")
+		cmd.Flags().String("evidence", "", "Evidence text or URL (Markdown supported)")
+		cmd.Flags().String("evidence-file", "", "Path to evidence file (Markdown)")
 	}
 }
 
@@ -214,40 +214,103 @@ func runCourseStudentAction(endpoint, verb string) func(cmd *cobra.Command, args
 	}
 }
 
-// runCourseStudentSubmitOrUpdate handles submit and update which add --evidence.
-func runCourseStudentSubmitOrUpdate(endpoint, verb string) func(cmd *cobra.Command, args []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		courseID, _ := cmd.Flags().GetString("course-id")
-		moduleCode, _ := cmd.Flags().GetString("module-code")
-		evidence, _ := cmd.Flags().GetString("evidence")
-		isJSON := output.GetFormat() == output.FormatJSON
+// runCourseStudentSubmit handles evidence submission. Resolves slt_hash from module code
+// per SubmitAssignmentCommitmentV2Request schema.
+func runCourseStudentSubmit(cmd *cobra.Command, args []string) error {
+	courseID, _ := cmd.Flags().GetString("course-id")
+	moduleCode, _ := cmd.Flags().GetString("module-code")
+	isJSON := output.GetFormat() == output.FormatJSON
 
-		payload := map[string]interface{}{
-			"course_id":          courseID,
-			"course_module_code": moduleCode,
-			"evidence":           evidence,
-		}
-
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-
-		if !isJSON {
-			fmt.Fprintf(os.Stderr, "%s evidence for module %s...\n", verb, moduleCode)
-		}
-
-		c := client.New(cfg)
-		var resp map[string]interface{}
-		if err := c.Post(endpoint, payload, &resp); err != nil {
-			return fmt.Errorf("failed: %w", err)
-		}
-
-		if isJSON {
-			return output.PrintJSON(resp)
-		}
-
-		fmt.Fprintf(os.Stderr, "Done.\n")
-		return nil
+	evidence, err := readEvidenceFlag(cmd)
+	if err != nil {
+		return err
 	}
+
+	tiptapDoc, evidenceHash, err := wrapEvidence(evidence)
+	if err != nil {
+		return fmt.Errorf("failed to format evidence: %w", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	c := client.New(cfg)
+
+	// Submit endpoint requires slt_hash (on-chain module identifier)
+	sltHash, err := resolveSltHash(c, courseID, moduleCode)
+	if err != nil {
+		return err
+	}
+
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Submitting evidence for module %s...\n", moduleCode)
+	}
+
+	payload := map[string]interface{}{
+		"course_id":     courseID,
+		"slt_hash":      sltHash,
+		"evidence":      tiptapDoc,
+		"evidence_hash": evidenceHash,
+	}
+
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/course/student/commitment/submit", payload, &resp); err != nil {
+		return fmt.Errorf("failed: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(resp)
+	}
+
+	fmt.Fprintf(os.Stderr, "Done.\n")
+	return nil
+}
+
+// runCourseStudentUpdate handles evidence updates per UpdateAssignmentCommitmentV2Request schema.
+func runCourseStudentUpdate(cmd *cobra.Command, args []string) error {
+	courseID, _ := cmd.Flags().GetString("course-id")
+	moduleCode, _ := cmd.Flags().GetString("module-code")
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	evidence, err := readEvidenceFlag(cmd)
+	if err != nil {
+		return err
+	}
+
+	tiptapDoc, evidenceHash, err := wrapEvidence(evidence)
+	if err != nil {
+		return fmt.Errorf("failed to format evidence: %w", err)
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Updating evidence for module %s...\n", moduleCode)
+	}
+
+	c := client.New(cfg)
+
+	payload := map[string]interface{}{
+		"course_id":          courseID,
+		"course_module_code": moduleCode,
+		"evidence":           tiptapDoc,
+		"evidence_hash":      evidenceHash,
+	}
+
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/course/student/commitment/update", payload, &resp); err != nil {
+		return fmt.Errorf("failed: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(resp)
+	}
+
+	fmt.Fprintf(os.Stderr, "Done.\n")
+	return nil
 }

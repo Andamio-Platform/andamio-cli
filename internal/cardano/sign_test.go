@@ -80,11 +80,11 @@ func TestExtractRawArrayElement_InvalidCBOR(t *testing.T) {
 
 func TestBlake2b256(t *testing.T) {
 	// Known test vector: empty input
-	hash := blake2b256([]byte{})
+	hash := Blake2b256([]byte{})
 	expected := "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8"
 	got := hex.EncodeToString(hash)
 	if got != expected {
-		t.Errorf("blake2b256 of empty input\n  got:  %s\n  want: %s", got, expected)
+		t.Errorf("Blake2b256 of empty input\n  got:  %s\n  want: %s", got, expected)
 	}
 
 	// Verify hash is 32 bytes

@@ -49,11 +49,11 @@ Examples:
 var courseTeacherReviewCmd = &cobra.Command{
 	Use:   "review",
 	Short: "Review a student assignment commitment",
-	Long: `Review a student's assignment submission. Approve or reject with optional feedback.
+	Long: `Review a student's assignment submission. Accept or refuse.
 
 Examples:
-  andamio course teacher review --course-id <id> --commitment-id <cid> --decision approve
-  andamio course teacher review --course-id <id> --commitment-id <cid> --decision reject --feedback "Needs more detail"`,
+  andamio course teacher review --course-id <id> --module-code 101 --participant-alias student1 --decision accept
+  andamio course teacher review --course-id <id> --module-code 101 --participant-alias student1 --decision refuse`,
 	RunE: runCourseTeacherReview,
 }
 
@@ -99,11 +99,12 @@ func init() {
 	// review flags
 	courseTeacherReviewCmd.Flags().String("course-id", "", "Course ID (required)")
 	courseTeacherReviewCmd.MarkFlagRequired("course-id")
-	courseTeacherReviewCmd.Flags().String("commitment-id", "", "Commitment ID (required)")
-	courseTeacherReviewCmd.MarkFlagRequired("commitment-id")
-	courseTeacherReviewCmd.Flags().String("decision", "", "Review decision: approve or reject (required)")
+	courseTeacherReviewCmd.Flags().String("module-code", "", "Module code (required)")
+	courseTeacherReviewCmd.MarkFlagRequired("module-code")
+	courseTeacherReviewCmd.Flags().String("participant-alias", "", "Student alias (required)")
+	courseTeacherReviewCmd.MarkFlagRequired("participant-alias")
+	courseTeacherReviewCmd.Flags().String("decision", "", "Review decision: accept or refuse (required)")
 	courseTeacherReviewCmd.MarkFlagRequired("decision")
-	courseTeacherReviewCmd.Flags().String("feedback", "", "Optional feedback message")
 
 	// commitments flags
 	courseTeacherCommitmentsCmd.Flags().String("course-id", "", "Course ID (required)")
@@ -184,22 +185,20 @@ func runCourseTeacherUpdateModuleStatus(cmd *cobra.Command, args []string) error
 
 func runCourseTeacherReview(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
-	commitmentID, _ := cmd.Flags().GetString("commitment-id")
+	moduleCode, _ := cmd.Flags().GetString("module-code")
+	participantAlias, _ := cmd.Flags().GetString("participant-alias")
 	decision, _ := cmd.Flags().GetString("decision")
-	feedback, _ := cmd.Flags().GetString("feedback")
 	isJSON := output.GetFormat() == output.FormatJSON
 
-	if decision != "approve" && decision != "reject" {
-		return fmt.Errorf("--decision must be 'approve' or 'reject', got %q", decision)
+	if decision != "accept" && decision != "refuse" {
+		return fmt.Errorf("--decision must be 'accept' or 'refuse', got %q", decision)
 	}
 
 	payload := map[string]interface{}{
-		"course_id":     courseID,
-		"commitment_id": commitmentID,
-		"decision":      decision,
-	}
-	if feedback != "" {
-		payload["feedback"] = feedback
+		"course_id":          courseID,
+		"course_module_code": moduleCode,
+		"participant_alias":  participantAlias,
+		"decision":           decision,
 	}
 
 	cfg, err := config.Load()
@@ -208,7 +207,7 @@ func runCourseTeacherReview(cmd *cobra.Command, args []string) error {
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Reviewing commitment %s: %s\n", commitmentID, decision)
+		fmt.Fprintf(os.Stderr, "Reviewing %s (module %s): %s\n", participantAlias, moduleCode, decision)
 	}
 
 	c := client.New(cfg)
