@@ -2,12 +2,16 @@ package main
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -190,4 +194,141 @@ func hexDecodeAssetName(name string) string {
 		return name
 	}
 	return s
+}
+
+// normalizeForHashing normalizes a value for deterministic hashing.
+// Primary purpose: trims whitespace from strings to match @andamio/core
+// computeCommitmentHash. Go's json.Marshal already sorts map keys alphabetically;
+// this function adds string trimming and recursive normalization.
+func normalizeForHashing(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+	switch val := v.(type) {
+	case string:
+		return strings.TrimSpace(val)
+	case map[string]interface{}:
+		sorted := make(map[string]interface{}, len(val))
+		for k, child := range val {
+			sorted[k] = normalizeForHashing(child)
+		}
+		return sorted
+	case []interface{}:
+		out := make([]interface{}, len(val))
+		for i, child := range val {
+			out[i] = normalizeForHashing(child)
+		}
+		return out
+	default:
+		return v // numbers, booleans
+	}
+}
+
+// wrapEvidence converts evidence text to a Tiptap JSON document and computes its Blake2b-256 content hash.
+// The hash matches @andamio/core computeCommitmentHash: normalize → JSON.stringify → Blake2b-256.
+// Returns the Tiptap document as a map (for embedding as a JSON object in payloads) and the hex hash.
+func wrapEvidence(text string) (map[string]interface{}, string, error) {
+	tiptapDoc, err := markdownToTiptap(text, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("markdown to tiptap: %w", err)
+	}
+
+	// Normalize to match frontend: sort keys, trim strings
+	normalized := normalizeForHashing(tiptapDoc)
+
+	jsonBytes, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, "", fmt.Errorf("json marshal: %w", err)
+	}
+
+	hash := cardano.Blake2b256(jsonBytes)
+	// Return the normalized doc (what the hash was computed from)
+	normalizedDoc, _ := normalized.(map[string]interface{})
+	return normalizedDoc, hex.EncodeToString(hash), nil
+}
+
+// resolveTaskHash looks up the task_hash for a given project + task index.
+// Fetches the user-visible task list and matches by task_index.
+func resolveTaskHash(c *client.Client, projectID string, taskIndex int) (string, error) {
+	body := map[string]string{"project_id": projectID}
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/project/user/tasks/list", body, &resp); err != nil {
+		return "", fmt.Errorf("failed to list tasks: %w", err)
+	}
+
+	data, ok := resp["data"].([]interface{})
+	if !ok {
+		return "", fmt.Errorf("no tasks found for project %s", projectID)
+	}
+
+	for _, item := range data {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		idx, _ := m["task_index"].(float64)
+		if int(idx) == taskIndex {
+			hash, _ := m["task_hash"].(string)
+			if hash == "" {
+				return "", fmt.Errorf("task %d has no task_hash (may not be on-chain yet)", taskIndex)
+			}
+			return hash, nil
+		}
+	}
+	return "", fmt.Errorf("task index %d not found in project %s\n\nList tasks with:\n  andamio project tasks %s --output json", taskIndex, projectID, projectID)
+}
+
+// resolveSltHash looks up the slt_hash for a given course + module code.
+// Fetches the course modules list and matches by module code.
+func resolveSltHash(c *client.Client, courseID, moduleCode string) (string, error) {
+	path := "/api/v2/course/user/modules/" + url.PathEscape(courseID)
+	var resp map[string]interface{}
+	if err := c.Get(path, &resp); err != nil {
+		return "", fmt.Errorf("failed to list modules: %w", err)
+	}
+
+	data, ok := resp["data"].([]interface{})
+	if !ok {
+		return "", fmt.Errorf("no modules found for course %s", courseID)
+	}
+
+	for _, item := range data {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		code, _ := m["course_module_code"].(string)
+		if code == moduleCode {
+			hash, _ := m["slt_hash"].(string)
+			if hash == "" {
+				return "", fmt.Errorf("module %s has no slt_hash (may not be on-chain yet)", moduleCode)
+			}
+			return hash, nil
+		}
+	}
+	return "", fmt.Errorf("module %s not found in course %s\n\nList modules with:\n  andamio course modules %s --output json", moduleCode, courseID, courseID)
+}
+
+// readEvidenceFlag reads the evidence text from either --evidence or --evidence-file.
+// The two flags are mutually exclusive; at least one must be set.
+func readEvidenceFlag(cmd *cobra.Command) (string, error) {
+	evidence, _ := cmd.Flags().GetString("evidence")
+	evidenceFile, _ := cmd.Flags().GetString("evidence-file")
+
+	if evidence != "" && evidenceFile != "" {
+		return "", fmt.Errorf("--evidence and --evidence-file are mutually exclusive")
+	}
+
+	if evidenceFile != "" {
+		data, err := os.ReadFile(evidenceFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read evidence file %s: %w", evidenceFile, err)
+		}
+		evidence = strings.TrimSpace(string(data))
+	}
+
+	if evidence == "" {
+		return "", fmt.Errorf("evidence is required: use --evidence or --evidence-file")
+	}
+	return evidence, nil
 }

@@ -62,7 +62,7 @@ func SignTransaction(unsignedCBORHex string, privKey ed25519.PrivateKey, pubKey 
 	}
 
 	// Hash body with Blake2b-256
-	bodyHash := blake2b256(bodyBytes)
+	bodyHash := Blake2b256(bodyBytes)
 
 	// Sign the hash
 	signature := ed25519.Sign(privKey, bodyHash)
@@ -165,8 +165,8 @@ func assembleSignedTx(txBytes []byte, pubKey ed25519.PublicKey, signature []byte
 	return cbor.Marshal(rawElements)
 }
 
-// blake2b256 computes the Blake2b-256 hash of data.
-func blake2b256(data []byte) []byte {
+// Blake2b256 computes the Blake2b-256 hash of data.
+func Blake2b256(data []byte) []byte {
 	h, _ := blake2b.New256(nil) // nil key = unkeyed hash, never errors
 	h.Write(data)
 	return h.Sum(nil)

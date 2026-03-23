@@ -128,15 +128,15 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course teacher publish-module` | `/v2/course/teacher/course-module/publish` | jwt | Publish module. `--course-id`, `--module-code` |
 | `course teacher delete-module` | `/v2/course/teacher/course-module/delete` | jwt | Delete module. `--course-id`, `--module-code` |
 | `course teacher update-module-status` | `/v2/course/teacher/course-module/update-status` | jwt | Update module status. `--course-id`, `--module-code`, `--status` |
-| `course teacher review` | `/v2/course/teacher/assignment-commitment/review` | jwt | Review commitment. `--course-id`, `--commitment-id`, `--decision`, `--feedback` |
+| `course teacher review` | `/v2/course/teacher/assignment-commitment/review` | jwt | Review commitment. `--course-id`, `--module-code`, `--participant-alias`, `--decision` (accept/refuse) |
 | `course teacher commitments` | `/v2/course/teacher/assignment-commitments/list` | jwt | List pending reviews. `--course-id` |
 | `course student courses` | `/v2/course/student/courses/list` | jwt | List enrolled courses |
 | `course student credentials` | `/v2/course/student/credentials/list` | jwt | List earned credentials |
 | `course student commitments` | `/v2/course/student/assignment-commitments/list` | jwt | List assignment commitments |
 | `course student commitment` | `/v2/course/student/assignment-commitment/get` | jwt | Get commitment. `--course-id`, `--module-code` |
 | `course student create` | `/v2/course/student/commitment/create` | jwt | Enroll in module. `--course-id`, `--module-code` |
-| `course student submit` | `/v2/course/student/commitment/submit` | jwt | Submit evidence. `--course-id`, `--module-code`, `--evidence` |
-| `course student update` | `/v2/course/student/commitment/update` | jwt | Update evidence. `--course-id`, `--module-code`, `--evidence` |
+| `course student submit` | `/v2/course/student/commitment/submit` | jwt | Submit evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
+| `course student update` | `/v2/course/student/commitment/update` | jwt | Update evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
 | `course student leave` | `/v2/course/student/commitment/leave` | jwt | Leave commitment. `--course-id`, `--module-code` |
 | `course student claim` | `/v2/course/student/commitment/claim` | jwt | Claim credential. `--course-id`, `--module-code` |
 
@@ -155,7 +155,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project contributor commitments` | `/v2/project/contributor/commitments/list` | jwt | List task commitments |
 | `project contributor commitment` | `/v2/project/contributor/commitment/get` | jwt | Get commitment. `--project-id`, `--task-index` |
 | `project contributor commit` | `/v2/project/contributor/commitment/create` | jwt | Commit to task. `--project-id`, `--task-index` |
-| `project contributor update` | `/v2/project/contributor/commitment/update` | jwt | Update evidence. `--project-id`, `--task-index`, `--evidence` |
+| `project contributor update` | `/v2/project/contributor/commitment/update` | jwt | Update evidence. `--project-id`, `--task-index`, `--evidence` or `--evidence-file` (Markdown) |
 | `project contributor delete` | `/v2/project/contributor/commitment/delete` | jwt | Delete commitment. `--project-id`, `--task-index` |
 | `project task list <project-id>` | `/v2/project/manager/tasks/list` | jwt | List tasks (manager) |
 | `project task get <index> --project-id <id>` | `/v2/project/manager/tasks/list` | jwt | Get task by index (filters from list) |
