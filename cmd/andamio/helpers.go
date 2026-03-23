@@ -278,6 +278,28 @@ func resolveTaskHash(c *client.Client, projectID string, taskIndex int) (string,
 	return "", fmt.Errorf("task index %d not found in project %s\n\nList tasks with:\n  andamio project tasks %s --output json", taskIndex, projectID, projectID)
 }
 
+// resolveSltHashFromFlags reads --slt-hash and --module-code flags and returns the slt_hash.
+// When --slt-hash is provided directly, skips API resolution (needed for chain-only modules).
+// Returns (sltHash, moduleCode, error). moduleCode may be empty when --slt-hash is used.
+func resolveSltHashFromFlags(cmd *cobra.Command, c *client.Client, courseID string) (string, string, error) {
+	sltHash, _ := cmd.Flags().GetString("slt-hash")
+	moduleCode, _ := cmd.Flags().GetString("module-code")
+
+	if sltHash != "" && moduleCode != "" {
+		return "", "", fmt.Errorf("--slt-hash and --module-code are mutually exclusive")
+	}
+	if sltHash == "" && moduleCode == "" {
+		return "", "", fmt.Errorf("either --module-code or --slt-hash is required\n\nUse --module-code for modules with a code, or --slt-hash for chain-only modules.\nList modules with:\n  andamio course modules %s --output json", courseID)
+	}
+
+	if sltHash != "" {
+		return sltHash, "", nil
+	}
+
+	hash, err := resolveSltHash(c, courseID, moduleCode)
+	return hash, moduleCode, err
+}
+
 // resolveSltHash looks up the slt_hash for a given course + module code.
 // Fetches the course modules list and matches by module code.
 func resolveSltHash(c *client.Client, courseID, moduleCode string) (string, error) {
