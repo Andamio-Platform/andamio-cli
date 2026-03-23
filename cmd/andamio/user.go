@@ -337,6 +337,19 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 	}
 	cfg.UserKeyHash = signResult.KeyHash
 
+	// Derive enterprise address from skey if API didn't return one
+	if cfg.UserAddress == "" {
+		derived, deriveErr := cardano.DeriveEnterpriseAddress(pubKey, cfg.IsMainnet())
+		if deriveErr == nil {
+			cfg.UserAddress = derived
+			if !isJSON {
+				fmt.Fprintf(os.Stderr, "Derived address from signing key: %s\n", derived)
+			}
+		} else if !isJSON {
+			fmt.Fprintf(os.Stderr, "Warning: could not derive address from signing key: %v\n", deriveErr)
+		}
+	}
+
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
@@ -352,6 +365,7 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 
 	fmt.Fprintf(os.Stderr, "\nAuthenticated as: %s\n", cfg.UserAlias)
 	fmt.Fprintf(os.Stderr, "User ID: %s\n", cfg.UserID)
+	fmt.Fprintf(os.Stderr, "Address: %s\n", cfg.UserAddress)
 	fmt.Fprintf(os.Stderr, "Key hash: %s\n", signResult.KeyHash)
 
 	return nil
