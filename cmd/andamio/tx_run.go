@@ -139,7 +139,9 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// JWT expiry pre-check
-	checkJWTExpiry(cfg, isJSON)
+	if err := checkJWTExpiry(cfg, isJSON); err != nil {
+		return err
+	}
 
 	c := client.New(cfg)
 

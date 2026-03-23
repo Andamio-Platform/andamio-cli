@@ -360,19 +360,10 @@ func runCourseStudentUpdate(cmd *cobra.Command, args []string) error {
 
 // CommitTxResult extends RunResult with domain-specific fields for commit-tx commands.
 type CommitTxResult struct {
-	TxHash        string                 `json:"tx_hash,omitempty"`
-	TxType        string                 `json:"tx_type"`
-	State         string                 `json:"state"`
-	Step          string                 `json:"step"`
-	BuildResponse map[string]interface{} `json:"build_response,omitempty"`
-	EvidenceHash  string                 `json:"evidence_hash,omitempty"`
-	SltHash       string                 `json:"slt_hash,omitempty"`
-	TaskHash      string                 `json:"task_hash,omitempty"`
-	CourseID      string                 `json:"course_id,omitempty"`
-	ModuleCode    string                 `json:"course_module_code,omitempty"`
-	ProjectID     string                 `json:"project_id,omitempty"`
-	TaskIndex     int                    `json:"task_index,omitempty"`
-	Error         string                 `json:"error,omitempty"`
+	RunResult
+	EvidenceHash string `json:"evidence_hash,omitempty"`
+	SltHash      string `json:"slt_hash,omitempty"`
+	TaskHash     string `json:"task_hash,omitempty"`
 }
 
 // runCourseStudentCommitTx handles the full on-chain assignment commitment with evidence.
@@ -419,11 +410,7 @@ func runCourseStudentCommitTx(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to format evidence: %w", err)
 		}
 		if !isJSON {
-			hashPreview := evidenceHash
-			if len(hashPreview) > 16 {
-				hashPreview = hashPreview[:16] + "..."
-			}
-			fmt.Fprintf(os.Stderr, "  \u2713 Evidence hashed (blake2b-256: %s)\n", hashPreview)
+			fmt.Fprintf(os.Stderr, "  \u2713 Evidence hashed (blake2b-256: %s...)\n", evidenceHash[:16])
 		}
 	}
 
@@ -502,19 +489,12 @@ func runCourseStudentCommitTx(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Print final result in JSON mode
-	if isJSON {
+	// Print final result in JSON mode (skip if noWait already printed via executeTxLifecycle)
+	if isJSON && result.State != "registered" {
 		commitResult := CommitTxResult{
-			TxHash:        result.TxHash,
-			TxType:        result.TxType,
-			State:         result.State,
-			Step:          result.Step,
-			BuildResponse: result.BuildResponse,
-			EvidenceHash:  evidenceHash,
-			SltHash:       sltHash,
-			CourseID:      courseID,
-			ModuleCode:    moduleCode,
-			Error:         result.Error,
+			RunResult:    *result,
+			EvidenceHash: evidenceHash,
+			SltHash:      sltHash,
 		}
 		return output.PrintJSON(commitResult)
 	}
@@ -522,31 +502,3 @@ func runCourseStudentCommitTx(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveContributorStateID looks up contributor_state_id from the contributor projects list.
-func resolveContributorStateID(c *client.Client, projectID string) (string, error) {
-	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/contributor/projects/list", nil, &resp); err != nil {
-		return "", fmt.Errorf("failed to list contributor projects: %w", err)
-	}
-
-	data, ok := resp["data"].([]interface{})
-	if !ok {
-		return "", fmt.Errorf("no contributor projects found")
-	}
-
-	for _, item := range data {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		pid, _ := m["project_id"].(string)
-		if pid == projectID {
-			csid, _ := m["contributor_state_id"].(string)
-			if csid == "" {
-				return "", fmt.Errorf("project %s has no contributor_state_id (may not be on-chain yet)", projectID)
-			}
-			return csid, nil
-		}
-	}
-	return "", fmt.Errorf("project %s not found in your contributor projects\n\nList your projects with:\n  andamio project contributor list --output json", projectID)
-}

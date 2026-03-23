@@ -320,11 +320,7 @@ func runProjectContributorCommitTx(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to format evidence: %w", err)
 		}
 		if !isJSON {
-			hashPreview := evidenceHash
-			if len(hashPreview) > 16 {
-				hashPreview = hashPreview[:16] + "..."
-			}
-			fmt.Fprintf(os.Stderr, "  \u2713 Evidence hashed (blake2b-256: %s)\n", hashPreview)
+			fmt.Fprintf(os.Stderr, "  \u2713 Evidence hashed (blake2b-256: %s...)\n", evidenceHash[:16])
 		}
 	}
 
@@ -393,9 +389,10 @@ func runProjectContributorCommitTx(cmd *cobra.Command, args []string) error {
 		}
 
 		offchainPayload := map[string]interface{}{
-			"task_hash":     taskHash,
-			"evidence":      tiptapDoc,
-			"evidence_hash": evidenceHash,
+			"task_hash":       taskHash,
+			"evidence":        tiptapDoc,
+			"evidence_hash":   evidenceHash,
+			"pending_tx_hash": result.TxHash,
 		}
 
 		var offchainResp map[string]interface{}
@@ -410,19 +407,12 @@ func runProjectContributorCommitTx(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Print final result in JSON mode
-	if isJSON {
+	// Print final result in JSON mode (skip if noWait already printed via executeTxLifecycle)
+	if isJSON && result.State != "registered" {
 		commitResult := CommitTxResult{
-			TxHash:        result.TxHash,
-			TxType:        result.TxType,
-			State:         result.State,
-			Step:          result.Step,
-			BuildResponse: result.BuildResponse,
-			EvidenceHash:  evidenceHash,
-			TaskHash:      taskHash,
-			ProjectID:     projectID,
-			TaskIndex:     taskIndex,
-			Error:         result.Error,
+			RunResult:    *result,
+			EvidenceHash: evidenceHash,
+			TaskHash:     taskHash,
 		}
 		return output.PrintJSON(commitResult)
 	}
