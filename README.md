@@ -55,6 +55,9 @@ andamio auth login --api-key <your-api-key>
 # 3. Authenticate with your wallet (for editing courses/projects)
 andamio user login
 
+# Or authenticate headlessly with a .skey file (for CI/CD and scripting)
+andamio user login --skey ./payment.skey --alias myalias
+
 # 4. Verify everything works
 andamio user status
 andamio course list
