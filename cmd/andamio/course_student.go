@@ -142,7 +142,7 @@ func init() {
 		cmd.MarkFlagRequired("module-code")
 	}
 
-	// Submit/update flags (add --evidence)
+	// Submit/update flags (add --evidence / --evidence-file)
 	for _, cmd := range []*cobra.Command{
 		courseStudentSubmitCmd,
 		courseStudentUpdateCmd,
@@ -151,8 +151,8 @@ func init() {
 		cmd.MarkFlagRequired("course-id")
 		cmd.Flags().String("module-code", "", "Module code (required)")
 		cmd.MarkFlagRequired("module-code")
-		cmd.Flags().String("evidence", "", "Evidence URL or description (required)")
-		cmd.MarkFlagRequired("evidence")
+		cmd.Flags().String("evidence", "", "Evidence text or URL (Markdown supported)")
+		cmd.Flags().String("evidence-file", "", "Path to evidence file (Markdown)")
 	}
 }
 
@@ -215,17 +215,28 @@ func runCourseStudentAction(endpoint, verb string) func(cmd *cobra.Command, args
 }
 
 // runCourseStudentSubmitOrUpdate handles submit and update which add --evidence.
+// Evidence text is converted to Tiptap JSON and a Blake2b-256 content hash is computed.
 func runCourseStudentSubmitOrUpdate(endpoint, verb string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		courseID, _ := cmd.Flags().GetString("course-id")
 		moduleCode, _ := cmd.Flags().GetString("module-code")
-		evidence, _ := cmd.Flags().GetString("evidence")
 		isJSON := output.GetFormat() == output.FormatJSON
+
+		evidence, err := readEvidenceFlag(cmd)
+		if err != nil {
+			return err
+		}
+
+		tiptapJSON, evidenceHash, err := wrapEvidence(evidence)
+		if err != nil {
+			return fmt.Errorf("failed to format evidence: %w", err)
+		}
 
 		payload := map[string]interface{}{
 			"course_id":          courseID,
 			"course_module_code": moduleCode,
-			"evidence":           evidence,
+			"evidence":           tiptapJSON,
+			"evidence_hash":      evidenceHash,
 		}
 
 		cfg, err := config.Load()

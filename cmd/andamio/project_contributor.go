@@ -101,13 +101,13 @@ func init() {
 		cmd.MarkFlagRequired("task-index")
 	}
 
-	// Update flags (add --evidence)
+	// Update flags (add --evidence / --evidence-file)
 	projectContributorUpdateCmd.Flags().String("project-id", "", "Project ID (required)")
 	projectContributorUpdateCmd.MarkFlagRequired("project-id")
 	projectContributorUpdateCmd.Flags().String("task-index", "", "Task index (required)")
 	projectContributorUpdateCmd.MarkFlagRequired("task-index")
-	projectContributorUpdateCmd.Flags().String("evidence", "", "Evidence URL or description (required)")
-	projectContributorUpdateCmd.MarkFlagRequired("evidence")
+	projectContributorUpdateCmd.Flags().String("evidence", "", "Evidence text or URL (Markdown supported)")
+	projectContributorUpdateCmd.Flags().String("evidence-file", "", "Path to evidence file (Markdown)")
 }
 
 func runProjectContributorCommitment(cmd *cobra.Command, args []string) error {
@@ -168,16 +168,27 @@ func runProjectContributorAction(endpoint, verb string) func(cmd *cobra.Command,
 	}
 }
 
+// runProjectContributorUpdate sends evidence as Tiptap JSON with a Blake2b-256 content hash.
 func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
 	projectID, _ := cmd.Flags().GetString("project-id")
 	taskIndex, _ := cmd.Flags().GetString("task-index")
-	evidence, _ := cmd.Flags().GetString("evidence")
 	isJSON := output.GetFormat() == output.FormatJSON
 
+	evidence, err := readEvidenceFlag(cmd)
+	if err != nil {
+		return err
+	}
+
+	tiptapJSON, evidenceHash, err := wrapEvidence(evidence)
+	if err != nil {
+		return fmt.Errorf("failed to format evidence: %w", err)
+	}
+
 	payload := map[string]interface{}{
-		"project_id": projectID,
-		"task_index": taskIndex,
-		"evidence":   evidence,
+		"project_id":    projectID,
+		"task_index":    taskIndex,
+		"evidence":      tiptapJSON,
+		"evidence_hash": evidenceHash,
 	}
 
 	cfg, err := config.Load()

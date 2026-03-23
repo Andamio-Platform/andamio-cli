@@ -2,12 +2,15 @@ package main
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -190,4 +193,46 @@ func hexDecodeAssetName(name string) string {
 		return name
 	}
 	return s
+}
+
+// wrapEvidence converts evidence text to Tiptap JSON and computes its Blake2b-256 content hash.
+// Input is treated as Markdown and converted via markdownToTiptap (supports URLs, lists, code).
+// Returns (tiptapJSONString, blake2b256HexHash, error).
+func wrapEvidence(text string) (string, string, error) {
+	tiptapDoc, err := markdownToTiptap(text, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("markdown to tiptap: %w", err)
+	}
+
+	jsonBytes, err := json.Marshal(tiptapDoc)
+	if err != nil {
+		return "", "", fmt.Errorf("json marshal: %w", err)
+	}
+
+	hash := cardano.Blake2b256(jsonBytes)
+	return string(jsonBytes), hex.EncodeToString(hash), nil
+}
+
+// readEvidenceFlag reads the evidence text from either --evidence or --evidence-file.
+// The two flags are mutually exclusive; at least one must be set.
+func readEvidenceFlag(cmd *cobra.Command) (string, error) {
+	evidence, _ := cmd.Flags().GetString("evidence")
+	evidenceFile, _ := cmd.Flags().GetString("evidence-file")
+
+	if evidence != "" && evidenceFile != "" {
+		return "", fmt.Errorf("--evidence and --evidence-file are mutually exclusive")
+	}
+
+	if evidenceFile != "" {
+		data, err := os.ReadFile(evidenceFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read evidence file %s: %w", evidenceFile, err)
+		}
+		evidence = strings.TrimSpace(string(data))
+	}
+
+	if evidence == "" {
+		return "", fmt.Errorf("evidence is required: use --evidence or --evidence-file")
+	}
+	return evidence, nil
 }
