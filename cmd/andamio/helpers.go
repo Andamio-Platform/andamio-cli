@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -196,8 +197,9 @@ func hexDecodeAssetName(name string) string {
 }
 
 // normalizeForHashing normalizes a value for deterministic hashing.
-// Matches @andamio/core normalizeForHashing: sorts object keys, trims strings,
-// converts nil to null, preserves array order.
+// Primary purpose: trims whitespace from strings to match @andamio/core
+// computeCommitmentHash. Go's json.Marshal already sorts map keys alphabetically;
+// this function adds string trimming and recursive normalization.
 func normalizeForHashing(v interface{}) interface{} {
 	if v == nil {
 		return nil
@@ -279,7 +281,7 @@ func resolveTaskHash(c *client.Client, projectID string, taskIndex int) (string,
 // resolveSltHash looks up the slt_hash for a given course + module code.
 // Fetches the course modules list and matches by module code.
 func resolveSltHash(c *client.Client, courseID, moduleCode string) (string, error) {
-	path := fmt.Sprintf("/api/v2/course/user/modules/%s", courseID)
+	path := "/api/v2/course/user/modules/" + url.PathEscape(courseID)
 	var resp map[string]interface{}
 	if err := c.Get(path, &resp); err != nil {
 		return "", fmt.Errorf("failed to list modules: %w", err)

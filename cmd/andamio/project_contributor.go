@@ -58,7 +58,7 @@ var projectContributorCommitCmd = &cobra.Command{
 
 Examples:
   andamio project contributor commit --project-id <id> --task-index 3`,
-	RunE: runProjectContributorCommit,
+	RunE: runTaskHashAction("/api/v2/project/contributor/commitment/create", "Committing to task"),
 }
 
 var projectContributorUpdateCmd = &cobra.Command{
@@ -78,7 +78,7 @@ var projectContributorDeleteCmd = &cobra.Command{
 
 Examples:
   andamio project contributor delete --project-id <id> --task-index 3`,
-	RunE: runProjectContributorDelete,
+	RunE: runTaskHashAction("/api/v2/project/contributor/commitment/delete", "Deleting commitment"),
 }
 
 func init() {
@@ -154,33 +154,36 @@ func runProjectContributorCommitment(cmd *cobra.Command, args []string) error {
 	return output.PrintJSON(resp)
 }
 
-func runProjectContributorCommit(cmd *cobra.Command, args []string) error {
-	isJSON := output.GetFormat() == output.FormatJSON
+// runTaskHashAction returns a RunE for commands that resolve task_hash and POST with it.
+func runTaskHashAction(endpoint, verb string) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		isJSON := output.GetFormat() == output.FormatJSON
 
-	c, taskHash, taskIndex, err := loadClientAndResolveTask(cmd)
-	if err != nil {
-		return err
+		c, taskHash, taskIndex, err := loadClientAndResolveTask(cmd)
+		if err != nil {
+			return err
+		}
+
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "%s %d...\n", verb, taskIndex)
+		}
+
+		payload := map[string]interface{}{
+			"task_hash": taskHash,
+		}
+
+		var resp map[string]interface{}
+		if err := c.Post(endpoint, payload, &resp); err != nil {
+			return fmt.Errorf("failed: %w", err)
+		}
+
+		if isJSON {
+			return output.PrintJSON(resp)
+		}
+
+		fmt.Fprintf(os.Stderr, "Done.\n")
+		return nil
 	}
-
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Committing to task %d...\n", taskIndex)
-	}
-
-	payload := map[string]interface{}{
-		"task_hash": taskHash,
-	}
-
-	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/contributor/commitment/create", payload, &resp); err != nil {
-		return fmt.Errorf("failed: %w", err)
-	}
-
-	if isJSON {
-		return output.PrintJSON(resp)
-	}
-
-	fmt.Fprintf(os.Stderr, "Done.\n")
-	return nil
 }
 
 // runProjectContributorUpdate sends evidence as Tiptap JSON with a Blake2b-256 content hash.
@@ -225,31 +228,3 @@ func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runProjectContributorDelete(cmd *cobra.Command, args []string) error {
-	isJSON := output.GetFormat() == output.FormatJSON
-
-	c, taskHash, taskIndex, err := loadClientAndResolveTask(cmd)
-	if err != nil {
-		return err
-	}
-
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Deleting commitment for task %d...\n", taskIndex)
-	}
-
-	payload := map[string]interface{}{
-		"task_hash": taskHash,
-	}
-
-	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/contributor/commitment/delete", payload, &resp); err != nil {
-		return fmt.Errorf("failed: %w", err)
-	}
-
-	if isJSON {
-		return output.PrintJSON(resp)
-	}
-
-	fmt.Fprintf(os.Stderr, "Done.\n")
-	return nil
-}
