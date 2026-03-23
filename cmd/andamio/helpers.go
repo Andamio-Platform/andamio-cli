@@ -195,22 +195,22 @@ func hexDecodeAssetName(name string) string {
 	return s
 }
 
-// wrapEvidence converts evidence text to Tiptap JSON and computes its Blake2b-256 content hash.
+// wrapEvidence converts evidence text to a Tiptap JSON document and computes its Blake2b-256 content hash.
 // Input is treated as Markdown and converted via markdownToTiptap (supports URLs, lists, code).
-// Returns (tiptapJSONString, blake2b256HexHash, error).
-func wrapEvidence(text string) (string, string, error) {
+// Returns the Tiptap document as a map (for embedding as a JSON object in payloads) and the hex hash.
+func wrapEvidence(text string) (map[string]interface{}, string, error) {
 	tiptapDoc, err := markdownToTiptap(text, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("markdown to tiptap: %w", err)
+		return nil, "", fmt.Errorf("markdown to tiptap: %w", err)
 	}
 
 	jsonBytes, err := json.Marshal(tiptapDoc)
 	if err != nil {
-		return "", "", fmt.Errorf("json marshal: %w", err)
+		return nil, "", fmt.Errorf("json marshal: %w", err)
 	}
 
 	hash := cardano.Blake2b256(jsonBytes)
-	return string(jsonBytes), hex.EncodeToString(hash), nil
+	return tiptapDoc, hex.EncodeToString(hash), nil
 }
 
 // readEvidenceFlag reads the evidence text from either --evidence or --evidence-file.

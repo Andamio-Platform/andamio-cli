@@ -6,15 +6,9 @@ import (
 )
 
 func TestWrapEvidence_PlainText(t *testing.T) {
-	jsonStr, hash, err := wrapEvidence("My evidence submission")
+	doc, hash, err := wrapEvidence("My evidence submission")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Must be valid JSON
-	var doc map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &doc); err != nil {
-		t.Fatalf("output is not valid JSON: %v", err)
 	}
 
 	// Must be a Tiptap document
@@ -30,18 +24,19 @@ func TestWrapEvidence_PlainText(t *testing.T) {
 	if len(hash) != 64 {
 		t.Errorf("expected 64-char hex hash, got %d chars: %s", len(hash), hash)
 	}
+
+	// Must survive JSON round-trip
+	if _, err := json.Marshal(doc); err != nil {
+		t.Fatalf("document is not JSON-serializable: %v", err)
+	}
 }
 
 func TestWrapEvidence_URL(t *testing.T) {
-	jsonStr, hash, err := wrapEvidence("https://github.com/user/repo")
+	doc, hash, err := wrapEvidence("https://github.com/user/repo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var doc map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &doc); err != nil {
-		t.Fatalf("not valid JSON: %v", err)
-	}
 	if doc["type"] != "doc" {
 		t.Errorf("expected type=doc, got %v", doc["type"])
 	}
@@ -52,18 +47,16 @@ func TestWrapEvidence_URL(t *testing.T) {
 
 func TestWrapEvidence_MarkdownList(t *testing.T) {
 	input := "- item 1\n- item 2\n- item 3"
-	jsonStr, _, err := wrapEvidence(input)
+	doc, _, err := wrapEvidence(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var doc map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &doc); err != nil {
-		t.Fatalf("not valid JSON: %v", err)
-	}
-
 	// Should contain a bulletList node
-	content := doc["content"].([]interface{})
+	content, ok := doc["content"].([]interface{})
+	if !ok {
+		t.Fatal("expected content array")
+	}
 	found := false
 	for _, node := range content {
 		if m, ok := node.(map[string]interface{}); ok && m["type"] == "bulletList" {
@@ -72,20 +65,20 @@ func TestWrapEvidence_MarkdownList(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected bulletList node in output, got: %s", jsonStr)
+		jsonBytes, _ := json.Marshal(doc)
+		t.Errorf("expected bulletList node in output, got: %s", string(jsonBytes))
 	}
 }
 
 func TestWrapEvidence_Unicode(t *testing.T) {
 	input := "Evidence with CJK: \u4f60\u597d and emoji"
-	jsonStr, hash, err := wrapEvidence(input)
+	doc, hash, err := wrapEvidence(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var doc map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &doc); err != nil {
-		t.Fatalf("not valid JSON: %v", err)
+	if doc["type"] != "doc" {
+		t.Errorf("expected type=doc, got %v", doc["type"])
 	}
 	if len(hash) != 64 {
 		t.Errorf("expected 64-char hash, got %d", len(hash))
@@ -94,15 +87,19 @@ func TestWrapEvidence_Unicode(t *testing.T) {
 
 func TestWrapEvidence_SpecialChars(t *testing.T) {
 	input := `He said "hello" and used a \ backslash`
-	jsonStr, _, err := wrapEvidence(input)
+	doc, _, err := wrapEvidence(input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Must survive JSON round-trip
-	var doc map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &doc); err != nil {
-		t.Fatalf("not valid JSON: %v", err)
+	jsonBytes, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("not JSON-serializable: %v", err)
+	}
+	var roundtrip map[string]interface{}
+	if err := json.Unmarshal(jsonBytes, &roundtrip); err != nil {
+		t.Fatalf("JSON round-trip failed: %v", err)
 	}
 }
 
