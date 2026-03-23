@@ -361,9 +361,10 @@ func runCourseStudentUpdate(cmd *cobra.Command, args []string) error {
 // CommitTxResult extends RunResult with domain-specific fields for commit-tx commands.
 type CommitTxResult struct {
 	RunResult
-	EvidenceHash string `json:"evidence_hash,omitempty"`
-	SltHash      string `json:"slt_hash,omitempty"`
-	TaskHash     string `json:"task_hash,omitempty"`
+	EvidenceHash  string `json:"evidence_hash,omitempty"`
+	SltHash       string `json:"slt_hash,omitempty"`
+	TaskHash      string `json:"task_hash,omitempty"`
+	OffchainError string `json:"offchain_error,omitempty"`
 }
 
 // runCourseStudentCommitTx handles the full on-chain assignment commitment with evidence.
@@ -391,11 +392,15 @@ func runCourseStudentCommitTx(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no wallet address in config\n\nRe-login with your signing key to store your address:\n  andamio user login --skey <path> --alias <name>")
 	}
 
+	// Validate skey matches stored identity
+	warnSkeyMismatch(skeyPath, cfg, isJSON)
+
 	c := client.New(cfg)
 
 	// Prepare evidence (optional)
 	var tiptapDoc map[string]interface{}
 	var evidenceHash string
+	var offchainError string
 	hasEvidence := cmd.Flags().Changed("evidence") || cmd.Flags().Changed("evidence-file")
 	if hasEvidence {
 		evidence, err := readEvidenceFlag(cmd)
@@ -480,6 +485,7 @@ func runCourseStudentCommitTx(cmd *cobra.Command, args []string) error {
 		var offchainResp map[string]interface{}
 		if offchainErr := c.Post("/api/v2/course/student/commitment/submit", offchainPayload, &offchainResp); offchainErr != nil {
 			// Warning only — the on-chain tx is already submitted
+			offchainError = offchainErr.Error()
 			if !isJSON {
 				fmt.Fprintf(os.Stderr, "  Warning: off-chain evidence submission failed: %v\n", offchainErr)
 				fmt.Fprintf(os.Stderr, "  Recovery: andamio course student submit --course-id %s --module-code %s --evidence-file <path>\n", courseID, moduleCode)
@@ -492,9 +498,10 @@ func runCourseStudentCommitTx(cmd *cobra.Command, args []string) error {
 	// Print final result in JSON mode (skip if noWait already printed via executeTxLifecycle)
 	if isJSON && result.State != "registered" {
 		commitResult := CommitTxResult{
-			RunResult:    *result,
-			EvidenceHash: evidenceHash,
-			SltHash:      sltHash,
+			RunResult:     *result,
+			EvidenceHash:  evidenceHash,
+			SltHash:       sltHash,
+			OffchainError: offchainError,
 		}
 		return output.PrintJSON(commitResult)
 	}

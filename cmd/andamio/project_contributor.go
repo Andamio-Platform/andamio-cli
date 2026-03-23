@@ -122,7 +122,7 @@ func init() {
 	// commit-tx flags
 	projectContributorCommitTxCmd.Flags().String("project-id", "", "Project ID (required)")
 	projectContributorCommitTxCmd.MarkFlagRequired("project-id")
-	projectContributorCommitTxCmd.Flags().String("task-index", "", "Task index (required)")
+	projectContributorCommitTxCmd.Flags().Int("task-index", -1, "Task index (required)")
 	projectContributorCommitTxCmd.MarkFlagRequired("task-index")
 	projectContributorCommitTxCmd.Flags().String("skey", "", "Path to Cardano .skey file for signing (required)")
 	projectContributorCommitTxCmd.MarkFlagRequired("skey")
@@ -274,18 +274,13 @@ func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
 // runProjectContributorCommitTx handles the full on-chain task commitment with evidence.
 func runProjectContributorCommitTx(cmd *cobra.Command, args []string) error {
 	projectID, _ := cmd.Flags().GetString("project-id")
-	taskIndexStr, _ := cmd.Flags().GetString("task-index")
+	taskIndex, _ := cmd.Flags().GetInt("task-index")
 	skeyPath, _ := cmd.Flags().GetString("skey")
 	submitURL, _ := cmd.Flags().GetString("submit-url")
 	headers, _ := cmd.Flags().GetStringArray("submit-header")
 	noWait, _ := cmd.Flags().GetBool("no-wait")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	isJSON := output.GetFormat() == output.FormatJSON
-
-	taskIndex, err := strconv.Atoi(taskIndexStr)
-	if err != nil {
-		return fmt.Errorf("invalid task-index %q: must be a number", taskIndexStr)
-	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -301,11 +296,15 @@ func runProjectContributorCommitTx(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no wallet address in config\n\nRe-login with your signing key to store your address:\n  andamio user login --skey <path> --alias <name>")
 	}
 
+	// Validate skey matches stored identity
+	warnSkeyMismatch(skeyPath, cfg, isJSON)
+
 	c := client.New(cfg)
 
 	// Prepare evidence (optional)
 	var tiptapDoc map[string]interface{}
 	var evidenceHash string
+	var offchainError string
 	hasEvidence := cmd.Flags().Changed("evidence") || cmd.Flags().Changed("evidence-file")
 	if hasEvidence {
 		evidence, err := readEvidenceFlag(cmd)
@@ -398,6 +397,7 @@ func runProjectContributorCommitTx(cmd *cobra.Command, args []string) error {
 		var offchainResp map[string]interface{}
 		if offchainErr := c.Post("/api/v2/project/contributor/commitment/update", offchainPayload, &offchainResp); offchainErr != nil {
 			// Warning only — the on-chain tx is already submitted
+			offchainError = offchainErr.Error()
 			if !isJSON {
 				fmt.Fprintf(os.Stderr, "  Warning: off-chain evidence submission failed: %v\n", offchainErr)
 				fmt.Fprintf(os.Stderr, "  Recovery: andamio project contributor update --project-id %s --task-index %d --evidence-file <path>\n", projectID, taskIndex)
@@ -410,9 +410,10 @@ func runProjectContributorCommitTx(cmd *cobra.Command, args []string) error {
 	// Print final result in JSON mode (skip if noWait already printed via executeTxLifecycle)
 	if isJSON && result.State != "registered" {
 		commitResult := CommitTxResult{
-			RunResult:    *result,
-			EvidenceHash: evidenceHash,
-			TaskHash:     taskHash,
+			RunResult:     *result,
+			EvidenceHash:  evidenceHash,
+			TaskHash:      taskHash,
+			OffchainError: offchainError,
 		}
 		return output.PrintJSON(commitResult)
 	}

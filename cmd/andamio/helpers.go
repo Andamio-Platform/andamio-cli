@@ -338,6 +338,9 @@ func resolveContributorStateID(c *client.Client, projectID string) (string, erro
 	return "", fmt.Errorf("project %s not found in your contributor projects\n\nList your projects with:\n  andamio project contributor list --output json", projectID)
 }
 
+// maxEvidenceFileSize is the maximum allowed evidence file size (1 MB).
+const maxEvidenceFileSize = 1 << 20
+
 // readEvidenceFlag reads the evidence text from either --evidence or --evidence-file.
 // The two flags are mutually exclusive; at least one must be set.
 func readEvidenceFlag(cmd *cobra.Command) (string, error) {
@@ -349,6 +352,13 @@ func readEvidenceFlag(cmd *cobra.Command) (string, error) {
 	}
 
 	if evidenceFile != "" {
+		info, err := os.Stat(evidenceFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read evidence file %s: %w", evidenceFile, err)
+		}
+		if info.Size() > maxEvidenceFileSize {
+			return "", fmt.Errorf("evidence file %s is too large (%d bytes, max %d)", evidenceFile, info.Size(), maxEvidenceFileSize)
+		}
 		data, err := os.ReadFile(evidenceFile)
 		if err != nil {
 			return "", fmt.Errorf("failed to read evidence file %s: %w", evidenceFile, err)
@@ -360,4 +370,25 @@ func readEvidenceFlag(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("evidence is required: use --evidence or --evidence-file")
 	}
 	return evidence, nil
+}
+
+// warnSkeyMismatch loads the skey, computes its key hash, and warns if it doesn't match
+// the stored key hash from login. This catches accidental use of a mismatched signing key.
+func warnSkeyMismatch(skeyPath string, cfg *config.Config, isJSON bool) {
+	if cfg.UserKeyHash == "" {
+		return // no stored key hash to compare against
+	}
+	_, pubKey, err := cardano.LoadSigningKey(skeyPath)
+	if err != nil {
+		return // signing will fail later with a proper error
+	}
+	skeyHash := cardano.PubKeyHash(pubKey)
+	if skeyHash != cfg.UserKeyHash {
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "Warning: signing key %s does not match the authenticated user's key\n", skeyPath)
+			fmt.Fprintf(os.Stderr, "  skey key hash:  %s\n", skeyHash)
+			fmt.Fprintf(os.Stderr, "  login key hash: %s\n", cfg.UserKeyHash)
+			fmt.Fprintf(os.Stderr, "  The transaction may fail or send funds to a wrong change address.\n")
+		}
+	}
 }
