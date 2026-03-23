@@ -332,6 +332,9 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 		cfg.UserAlias = alias
 	}
 	cfg.UserID = tokenResp.User.ID
+	if tokenResp.User.CardanoBech32Addr != nil {
+		cfg.UserAddress = *tokenResp.User.CardanoBech32Addr
+	}
 
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
@@ -341,6 +344,7 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 		return output.PrintJSON(map[string]interface{}{
 			"alias":    cfg.UserAlias,
 			"user_id":  cfg.UserID,
+			"address":  cfg.UserAddress,
 			"key_hash": signResult.KeyHash,
 		})
 	}

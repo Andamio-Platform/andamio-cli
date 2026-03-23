@@ -6,17 +6,13 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/signal"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
-	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
-	"github.com/Andamio-Platform/andamio-cli/internal/submit"
 	"github.com/spf13/cobra"
 )
 
@@ -143,217 +139,53 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// JWT expiry pre-check
-	if cfg.JWTExpiresAt != "" {
-		expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt)
-		if err != nil {
-			if !isJSON {
-				fmt.Fprintf(os.Stderr, "Warning: could not parse JWT expiry %q — skipping expiry pre-check\n", cfg.JWTExpiresAt)
-			}
-		} else {
-			remaining := time.Until(expiresAt)
-			if remaining <= 0 {
-				return &apierr.AuthError{Message: "JWT has expired. Run 'andamio user login' to refresh"}
-			}
-			if remaining < 5*time.Minute && !isJSON {
-				fmt.Fprintf(os.Stderr, "Warning: JWT expires in %s — pipeline may fail at register step. Run 'andamio user login' to refresh.\n", remaining.Truncate(time.Second))
-			}
-		}
-	}
-
-	// Resolve submit URL: flag > config > error
-	if submitURL == "" {
-		submitURL = cfg.SubmitURL
-	}
-	if submitURL == "" {
-		return fmt.Errorf("no submit URL configured\n\nSet one with:\n  andamio config set-submit-url <url>\n\nOr pass --submit-url <url>")
-	}
-	if err := config.ValidateSubmitURL(submitURL); err != nil {
-		return err
-	}
-
-	// Set up context with SIGINT handling
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var mu sync.Mutex
-	result := &RunResult{TxType: txType}
-
-	// fail prints the RunResult as JSON (if in JSON mode) and returns the appropriate error.
-	// In JSON mode it wraps the error as ReportedError so main.go sets the exit code
-	// without printing a second error message.
-	fail := func(state, msg string, origErr error) error {
-		mu.Lock()
-		result.State = state
-		result.Error = origErr.Error()
-		mu.Unlock()
-		if isJSON {
-			mu.Lock()
-			_ = output.PrintJSON(result)
-			mu.Unlock()
-			return &apierr.ReportedError{Err: fmt.Errorf("%s: %w", msg, origErr)}
-		}
-		return fmt.Errorf("%s: %w", msg, origErr)
-	}
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt)
-	defer signal.Stop(sigCh)
-	go func() {
-		<-sigCh
-		mu.Lock()
-		txHash := result.TxHash
-		mu.Unlock()
-		// Print recovery info. In a CLI, os.Exit is necessary here because
-		// context cancellation alone cannot unblock synchronous HTTP calls
-		// in the build/sign/submit steps (the client package does not accept
-		// a context). The OS reclaims all resources on exit.
-		if txHash != "" {
-			fmt.Fprintf(os.Stderr, "\nInterrupted. Transaction may have been submitted. Check: andamio tx status %s\n", txHash)
-		}
-		cancel()
-		os.Exit(1)
-	}()
+	checkJWTExpiry(cfg, isJSON)
 
 	c := client.New(cfg)
 
-	// --- Step 1: Build ---
-	mu.Lock()
-	result.Step = "build"
-	mu.Unlock()
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "  Building transaction: POST %s\n", endpoint)
-	}
+	result, err := executeTxLifecycle(c, cfg, TxLifecycleParams{
+		Endpoint:   endpoint,
+		Body:       bodyData,
+		SkeyPath:   skeyPath,
+		TxType:     txType,
+		InstanceID: instanceID,
+		Metadata:   metadata,
+		NoWait:     noWait,
+		Timeout:    timeout,
+		SubmitURL:  submitURL,
+		Headers:    headers,
+	})
 
-	var buildResp map[string]interface{}
-	if err := c.Post("/api"+endpoint, bodyData, &buildResp); err != nil {
-		return fail("build_failed", "build failed", err)
-	}
-
-	mu.Lock()
-	result.BuildResponse = buildResp
-	mu.Unlock()
-
-	unsignedTx, ok := buildResp["unsigned_tx"].(string)
-	if !ok || unsignedTx == "" {
-		return fail("build_failed", "build failed", fmt.Errorf("response missing unsigned_tx field"))
-	}
-
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "  \u2713 Built unsigned TX\n")
-	}
-
-	// --- Step 2: Sign ---
-	mu.Lock()
-	result.Step = "sign"
-	mu.Unlock()
-
-	privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
 	if err != nil {
-		return fail("sign_failed", "sign failed", err)
+		return err
 	}
 
-	signResult, err := cardano.SignTransaction(unsignedTx, privKey, pubKey)
-	if err != nil {
-		return fail("sign_failed", "sign failed", err)
-	}
-
-	mu.Lock()
-	result.TxHash = signResult.TxHash
-	mu.Unlock()
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "  \u2713 Signed with %s (tx: %s...)\n", skeyPath, signResult.TxHash[:8])
-	}
-
-	// --- Step 3: Submit ---
-	mu.Lock()
-	result.Step = "submit"
-	mu.Unlock()
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "  Submitting to %s\n", submitURL)
-	}
-
-	if _, err := submit.SubmitTransaction(submitURL, signResult.SignedTx, headers); err != nil {
-		if !isJSON {
-			fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-		}
-		return fail("submit_failed", "submit failed (tx may be in mempool)", err)
-	}
-
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "  \u2713 Submitted to network\n")
-	}
-
-	// --- Step 4: Register ---
-	mu.Lock()
-	result.Step = "register"
-	mu.Unlock()
-
-	registerPayload := map[string]interface{}{
-		"tx_hash": signResult.TxHash,
-		"tx_type": txType,
-	}
-	if instanceID != "" {
-		registerPayload["instance_id"] = instanceID
-	}
-	if len(metadata) > 0 {
-		registerPayload["metadata"] = metadata
-	}
-
-	var registerResp map[string]interface{}
-	if err := c.Post("/api/v2/tx/register", registerPayload, &registerResp); err != nil {
-		if !isJSON {
-			fmt.Fprintf(os.Stderr, "  Warning: registration failed but TX is on-chain.\n")
-			fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-			fmt.Fprintf(os.Stderr, "  Recovery: andamio tx register --tx-hash %s --tx-type %s\n", signResult.TxHash, txType)
-		}
-		return fail("register_failed", "register failed", err)
-	}
-
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "  \u2713 Registered as %s\n", txType)
-	}
-
-	// --- Step 5: Wait for confirmation ---
-	if noWait {
-		mu.Lock()
-		result.Step = "registered"
-		result.State = "registered"
-		mu.Unlock()
-		if isJSON {
-			return output.PrintJSON(result)
-		}
-		fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-		fmt.Fprintf(os.Stderr, "\nNext: andamio tx status %s\n", signResult.TxHash)
-		return nil
-	}
-
-	mu.Lock()
-	result.Step = "polling"
-	mu.Unlock()
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "  \u23f3 Waiting for confirmation...\n")
-	}
-
-	finalState, err := pollTxStatus(ctx, c, signResult.TxHash, timeout, isJSON)
-	if err != nil {
-		if !isJSON {
-			fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-			fmt.Fprintf(os.Stderr, "\nCheck later: andamio tx status %s\n", signResult.TxHash)
-		}
-		return fail(finalState, "poll failed", err)
-	}
-
-	mu.Lock()
-	result.State = finalState
-	result.Step = "complete"
-	mu.Unlock()
-
-	if isJSON {
+	// For non-noWait success in JSON mode, print the final result
+	if isJSON && result.State != "registered" {
 		return output.PrintJSON(result)
 	}
+	return nil
+}
 
-	fmt.Fprintf(os.Stderr, "  \u2713 Confirmed on-chain\n")
-	fmt.Fprintf(os.Stderr, "  \u2713 DB updated \u2014 complete!\n")
+// checkJWTExpiry warns about or rejects expired JWTs. Returns an error only if expired.
+func checkJWTExpiry(cfg *config.Config, isJSON bool) error {
+	if cfg.JWTExpiresAt == "" {
+		return nil
+	}
+	expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt)
+	if err != nil {
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "Warning: could not parse JWT expiry %q — skipping expiry pre-check\n", cfg.JWTExpiresAt)
+		}
+		return nil
+	}
+	remaining := time.Until(expiresAt)
+	if remaining <= 0 {
+		return &apierr.AuthError{Message: "JWT has expired. Run 'andamio user login' to refresh"}
+	}
+	if remaining < 5*time.Minute && !isJSON {
+		fmt.Fprintf(os.Stderr, "Warning: JWT expires in %s — pipeline may fail at register step. Run 'andamio user login' to refresh.\n", remaining.Truncate(time.Second))
+	}
 	return nil
 }
 
