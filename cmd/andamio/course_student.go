@@ -156,8 +156,8 @@ func init() {
 	// commit-tx flags
 	courseStudentCommitTxCmd.Flags().String("course-id", "", "Course ID (required)")
 	courseStudentCommitTxCmd.MarkFlagRequired("course-id")
-	courseStudentCommitTxCmd.Flags().String("module-code", "", "Module code (required)")
-	courseStudentCommitTxCmd.MarkFlagRequired("module-code")
+	courseStudentCommitTxCmd.Flags().String("module-code", "", "Module code (use --slt-hash for chain-only modules)")
+	courseStudentCommitTxCmd.Flags().String("slt-hash", "", "SLT hash (use instead of --module-code for chain-only modules)")
 	courseStudentCommitTxCmd.Flags().String("skey", "", "Path to Cardano .skey file for signing (required)")
 	courseStudentCommitTxCmd.MarkFlagRequired("skey")
 	courseStudentCommitTxCmd.Flags().String("evidence", "", "Evidence text or URL (Markdown supported)")
@@ -185,18 +185,21 @@ func init() {
 		cmd.MarkFlagRequired("module-code")
 	}
 
-	// Submit/update flags (add --evidence / --evidence-file)
-	for _, cmd := range []*cobra.Command{
-		courseStudentSubmitCmd,
-		courseStudentUpdateCmd,
-	} {
-		cmd.Flags().String("course-id", "", "Course ID (required)")
-		cmd.MarkFlagRequired("course-id")
-		cmd.Flags().String("module-code", "", "Module code (required)")
-		cmd.MarkFlagRequired("module-code")
-		cmd.Flags().String("evidence", "", "Evidence text or URL (Markdown supported)")
-		cmd.Flags().String("evidence-file", "", "Path to evidence file (Markdown)")
-	}
+	// Submit flags (--slt-hash alternative for chain-only modules)
+	courseStudentSubmitCmd.Flags().String("course-id", "", "Course ID (required)")
+	courseStudentSubmitCmd.MarkFlagRequired("course-id")
+	courseStudentSubmitCmd.Flags().String("module-code", "", "Module code (use --slt-hash for chain-only modules)")
+	courseStudentSubmitCmd.Flags().String("slt-hash", "", "SLT hash (use instead of --module-code for chain-only modules)")
+	courseStudentSubmitCmd.Flags().String("evidence", "", "Evidence text or URL (Markdown supported)")
+	courseStudentSubmitCmd.Flags().String("evidence-file", "", "Path to evidence file (Markdown)")
+
+	// Update flags (no --slt-hash needed — uses course_module_code directly)
+	courseStudentUpdateCmd.Flags().String("course-id", "", "Course ID (required)")
+	courseStudentUpdateCmd.MarkFlagRequired("course-id")
+	courseStudentUpdateCmd.Flags().String("module-code", "", "Module code (required)")
+	courseStudentUpdateCmd.MarkFlagRequired("module-code")
+	courseStudentUpdateCmd.Flags().String("evidence", "", "Evidence text or URL (Markdown supported)")
+	courseStudentUpdateCmd.Flags().String("evidence-file", "", "Path to evidence file (Markdown)")
 }
 
 func runCourseStudentCommitment(cmd *cobra.Command, args []string) error {
@@ -261,7 +264,6 @@ func runCourseStudentAction(endpoint, verb string) func(cmd *cobra.Command, args
 // per SubmitAssignmentCommitmentV2Request schema.
 func runCourseStudentSubmit(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
-	moduleCode, _ := cmd.Flags().GetString("module-code")
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	evidence, err := readEvidenceFlag(cmd)
@@ -282,13 +284,17 @@ func runCourseStudentSubmit(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	// Submit endpoint requires slt_hash (on-chain module identifier)
-	sltHash, err := resolveSltHash(c, courseID, moduleCode)
+	sltHash, moduleCode, err := resolveSltHashFromFlags(cmd, c, courseID)
 	if err != nil {
 		return err
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Submitting evidence for module %s...\n", moduleCode)
+		label := moduleCode
+		if label == "" {
+			label = sltHash[:16] + "..."
+		}
+		fmt.Fprintf(os.Stderr, "Submitting evidence for module %s...\n", label)
 	}
 
 	payload := map[string]interface{}{
@@ -370,7 +376,6 @@ type CommitTxResult struct {
 // runCourseStudentCommitTx handles the full on-chain assignment commitment with evidence.
 func runCourseStudentCommitTx(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
-	moduleCode, _ := cmd.Flags().GetString("module-code")
 	skeyPath, _ := cmd.Flags().GetString("skey")
 	submitURL, _ := cmd.Flags().GetString("submit-url")
 	headers, _ := cmd.Flags().GetStringArray("submit-header")
@@ -419,13 +424,17 @@ func runCourseStudentCommitTx(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Resolve slt_hash
-	sltHash, err := resolveSltHash(c, courseID, moduleCode)
+	// Resolve slt_hash (from --module-code or --slt-hash)
+	sltHash, moduleCode, err := resolveSltHashFromFlags(cmd, c, courseID)
 	if err != nil {
 		return err
 	}
 	if !isJSON {
-		fmt.Fprintf(os.Stderr, "  \u2713 Resolved slt_hash for module %s\n", moduleCode)
+		label := moduleCode
+		if label == "" {
+			label = sltHash[:16] + "..."
+		}
+		fmt.Fprintf(os.Stderr, "  \u2713 Resolved slt_hash for module %s\n", label)
 	}
 
 	// Build the on-chain tx body
