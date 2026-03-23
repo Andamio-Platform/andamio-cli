@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -523,20 +522,6 @@ func runCourseStudentCommitTx(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// readOptionalEvidenceFlag reads evidence if either flag is set.
-// Returns empty string and nil error if neither flag is provided.
-func readOptionalEvidenceFlag(cmd *cobra.Command) (string, bool, error) {
-	hasEvidence := cmd.Flags().Changed("evidence") || cmd.Flags().Changed("evidence-file")
-	if !hasEvidence {
-		return "", false, nil
-	}
-	evidence, err := readEvidenceFlag(cmd)
-	if err != nil {
-		return "", false, err
-	}
-	return evidence, true, nil
-}
-
 // resolveContributorStateID looks up contributor_state_id from the contributor projects list.
 func resolveContributorStateID(c *client.Client, projectID string) (string, error) {
 	var resp map[string]interface{}
@@ -564,13 +549,4 @@ func resolveContributorStateID(c *client.Client, projectID string) (string, erro
 		}
 	}
 	return "", fmt.Errorf("project %s not found in your contributor projects\n\nList your projects with:\n  andamio project contributor list --output json", projectID)
-}
-
-// marshalEvidenceForMetadata serializes the Tiptap evidence as a JSON string for metadata.
-func marshalEvidenceForMetadata(tiptapDoc map[string]interface{}) string {
-	b, err := json.Marshal(tiptapDoc)
-	if err != nil {
-		return ""
-	}
-	return string(b)
 }
