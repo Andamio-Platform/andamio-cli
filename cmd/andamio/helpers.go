@@ -469,23 +469,3 @@ func readEvidenceFlag(cmd *cobra.Command) (string, error) {
 	return evidence, nil
 }
 
-// warnSkeyMismatch loads the skey, computes its key hash, and warns if it doesn't match
-// the stored key hash from login. This catches accidental use of a mismatched signing key.
-func warnSkeyMismatch(skeyPath string, cfg *config.Config, isJSON bool) {
-	if cfg.UserKeyHash == "" {
-		return // no stored key hash to compare against
-	}
-	_, pubKey, err := cardano.LoadSigningKey(skeyPath)
-	if err != nil {
-		return // signing will fail later with a proper error
-	}
-	skeyHash := cardano.PubKeyHash(pubKey)
-	if skeyHash != cfg.UserKeyHash {
-		if !isJSON {
-			fmt.Fprintf(os.Stderr, "Warning: signing key %s does not match the authenticated user's key\n", skeyPath)
-			fmt.Fprintf(os.Stderr, "  skey key hash:  %s\n", skeyHash)
-			fmt.Fprintf(os.Stderr, "  login key hash: %s\n", cfg.UserKeyHash)
-			fmt.Fprintf(os.Stderr, "  The transaction may fail or send funds to a wrong change address.\n")
-		}
-	}
-}
