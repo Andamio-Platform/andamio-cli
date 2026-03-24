@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -323,13 +324,37 @@ func runProjectContributorCommitTx(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Resolve task_hash
-	taskHash, err := resolveTaskHash(c, projectID, taskIndex)
+	// Resolve task data and verify hash
+	resolved, err := resolveTaskData(c, projectID, taskIndex)
 	if err != nil {
 		return err
 	}
+	taskHash := resolved.TaskHash
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "  \u2713 Resolved task_hash for task %d\n", taskIndex)
+	}
+
+	// Verify API hash matches locally-computed hash (catches missing assets)
+	computedHash, computeErr := cardano.ComputeTaskHash(resolved.TaskData)
+	if computeErr != nil {
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "  Warning: could not verify task hash: %v\n", computeErr)
+		}
+	} else if computedHash != taskHash {
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "  Warning: API task_hash does not match computed hash\n")
+			fmt.Fprintf(os.Stderr, "    API hash:      %s\n", taskHash)
+			fmt.Fprintf(os.Stderr, "    Computed hash:  %s\n", computedHash)
+			fmt.Fprintf(os.Stderr, "    Content: %q, Expiration: %d, Lovelace: %d, Assets: %d\n",
+				resolved.TaskData.ProjectContent,
+				resolved.TaskData.ExpirationTime,
+				resolved.TaskData.LovelaceAmount,
+				len(resolved.TaskData.NativeAssets))
+			fmt.Fprintf(os.Stderr, "    Using computed hash (includes all task data)\n")
+		}
+		taskHash = computedHash
+	} else if !isJSON {
+		fmt.Fprintf(os.Stderr, "  \u2713 Task hash verified (matches computed hash)\n")
 	}
 
 	// Resolve contributor_state_id

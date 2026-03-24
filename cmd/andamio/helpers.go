@@ -247,18 +247,35 @@ func wrapEvidence(text string) (map[string]interface{}, string, error) {
 	return normalizedDoc, hex.EncodeToString(hash), nil
 }
 
+// ResolvedTask contains the full task data needed for hash verification and commit-tx.
+type ResolvedTask struct {
+	TaskHash  string
+	TaskData  cardano.TaskData
+	TaskIndex int
+}
+
 // resolveTaskHash looks up the task_hash for a given project + task index.
 // Fetches the user-visible task list and matches by task_index.
 func resolveTaskHash(c *client.Client, projectID string, taskIndex int) (string, error) {
+	resolved, err := resolveTaskData(c, projectID, taskIndex)
+	if err != nil {
+		return "", err
+	}
+	return resolved.TaskHash, nil
+}
+
+// resolveTaskData looks up the full task data for a given project + task index.
+// Returns the API task_hash plus the task data needed for local hash verification.
+func resolveTaskData(c *client.Client, projectID string, taskIndex int) (*ResolvedTask, error) {
 	body := map[string]string{"project_id": projectID}
 	var resp map[string]interface{}
 	if err := c.Post("/api/v2/project/user/tasks/list", body, &resp); err != nil {
-		return "", fmt.Errorf("failed to list tasks: %w", err)
+		return nil, fmt.Errorf("failed to list tasks: %w", err)
 	}
 
 	data, ok := resp["data"].([]interface{})
 	if !ok {
-		return "", fmt.Errorf("no tasks found for project %s", projectID)
+		return nil, fmt.Errorf("no tasks found for project %s", projectID)
 	}
 
 	for _, item := range data {
@@ -267,15 +284,73 @@ func resolveTaskHash(c *client.Client, projectID string, taskIndex int) (string,
 			continue
 		}
 		idx, _ := m["task_index"].(float64)
-		if int(idx) == taskIndex {
-			hash, _ := m["task_hash"].(string)
-			if hash == "" {
-				return "", fmt.Errorf("task %d has no task_hash (may not be on-chain yet)", taskIndex)
-			}
-			return hash, nil
+		if int(idx) != taskIndex {
+			continue
 		}
+
+		hash, _ := m["task_hash"].(string)
+		if hash == "" {
+			return nil, fmt.Errorf("task %d has no task_hash (may not be on-chain yet)", taskIndex)
+		}
+
+		// Extract on_chain_content (the project_content used for hashing)
+		onChainContent, _ := m["on_chain_content"].(string)
+		projectContent := ""
+		if onChainContent != "" {
+			// on_chain_content is hex-encoded UTF-8
+			decoded, err := hex.DecodeString(onChainContent)
+			if err == nil {
+				projectContent = string(decoded)
+			}
+		}
+		// Fallback to title if on_chain_content is missing
+		if projectContent == "" {
+			if content, ok := m["content"].(map[string]interface{}); ok {
+				projectContent, _ = content["title"].(string)
+			}
+		}
+
+		expirationPosix, _ := m["expiration_posix"].(float64)
+		lovelaceAmount, _ := m["lovelace_amount"].(float64)
+
+		// Extract native assets
+		var nativeAssets []cardano.NativeAsset
+		if assets, ok := m["assets"].([]interface{}); ok {
+			for _, a := range assets {
+				am, ok := a.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				policyID, _ := am["policy_id"].(string)
+				name, _ := am["name"].(string)
+				amountStr, _ := am["amount"].(string)
+				// Amount is a string in the API response
+				var quantity uint64
+				if amountStr != "" {
+					fmt.Sscanf(amountStr, "%d", &quantity)
+				}
+				// Token name must be hex-encoded for hashing
+				tokenNameHex := hexEncodeAssetName(name)
+				nativeAssets = append(nativeAssets, cardano.NativeAsset{
+					PolicyID:  policyID,
+					TokenName: tokenNameHex,
+					Quantity:  quantity,
+				})
+			}
+		}
+
+		return &ResolvedTask{
+			TaskHash:  hash,
+			TaskIndex: taskIndex,
+			TaskData: cardano.TaskData{
+				ProjectContent: projectContent,
+				ExpirationTime: uint64(expirationPosix),
+				LovelaceAmount: uint64(lovelaceAmount),
+				NativeAssets:   nativeAssets,
+			},
+		}, nil
 	}
-	return "", fmt.Errorf("task index %d not found in project %s\n\nList tasks with:\n  andamio project tasks %s --output json", taskIndex, projectID, projectID)
+	return nil, fmt.Errorf("task index %d not found in project %s\n\nList tasks with:\n  andamio project tasks %s --output json", taskIndex, projectID, projectID)
 }
 
 // resolveSltHashFromFlags reads --slt-hash and --module-code flags and returns the slt_hash.
