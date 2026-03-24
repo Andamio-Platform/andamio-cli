@@ -309,9 +309,8 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 	var tokenResp struct {
 		JWT  string `json:"jwt"`
 		User struct {
-			ID                string  `json:"id"`
-			CardanoBech32Addr *string `json:"cardano_bech32_addr"`
-			AccessTokenAlias  *string `json:"access_token_alias"`
+			ID               string  `json:"id"`
+			AccessTokenAlias *string `json:"access_token_alias"`
 		} `json:"user"`
 	}
 	if err := c.Post("/api/v2/auth/login/validate", validatePayload, &tokenResp); err != nil {
@@ -332,23 +331,7 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 		cfg.UserAlias = alias
 	}
 	cfg.UserID = tokenResp.User.ID
-	if tokenResp.User.CardanoBech32Addr != nil {
-		cfg.UserAddress = *tokenResp.User.CardanoBech32Addr
-	}
 	cfg.UserKeyHash = signResult.KeyHash
-
-	// Derive enterprise address from skey if API didn't return one
-	if cfg.UserAddress == "" {
-		derived, deriveErr := cardano.DeriveEnterpriseAddress(pubKey, cfg.IsMainnet())
-		if deriveErr == nil {
-			cfg.UserAddress = derived
-			if !isJSON {
-				fmt.Fprintf(os.Stderr, "Derived address from signing key: %s\n", derived)
-			}
-		} else if !isJSON {
-			fmt.Fprintf(os.Stderr, "Warning: could not derive address from signing key: %v\n", deriveErr)
-		}
-	}
 
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
@@ -358,14 +341,12 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 		return output.PrintJSON(map[string]interface{}{
 			"alias":    cfg.UserAlias,
 			"user_id":  cfg.UserID,
-			"address":  cfg.UserAddress,
 			"key_hash": signResult.KeyHash,
 		})
 	}
 
 	fmt.Fprintf(os.Stderr, "\nAuthenticated as: %s\n", cfg.UserAlias)
 	fmt.Fprintf(os.Stderr, "User ID: %s\n", cfg.UserID)
-	fmt.Fprintf(os.Stderr, "Address: %s\n", cfg.UserAddress)
 	fmt.Fprintf(os.Stderr, "Key hash: %s\n", signResult.KeyHash)
 
 	return nil
