@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -247,7 +248,34 @@ func wrapEvidence(text string) (map[string]interface{}, string, error) {
 	return normalizedDoc, hex.EncodeToString(hash), nil
 }
 
-// ResolvedTask contains the full task data needed for hash verification and commit-tx.
+// resolveTaskHashFromFlags reads --task-hash and --task-index flags and returns the task_hash.
+// When --task-hash is provided directly, skips API resolution (needed for chain-only tasks).
+// Returns (taskHash, taskIndex, error). taskIndex is -1 when --task-hash is used.
+func resolveTaskHashFromFlags(cmd *cobra.Command, c *client.Client, projectID string) (string, int, error) {
+	taskHash, _ := cmd.Flags().GetString("task-hash")
+	taskIndexStr, _ := cmd.Flags().GetString("task-index")
+
+	if taskHash != "" && taskIndexStr != "" {
+		return "", 0, fmt.Errorf("--task-hash and --task-index are mutually exclusive")
+	}
+	if taskHash == "" && taskIndexStr == "" {
+		return "", 0, fmt.Errorf("either --task-index or --task-hash is required\n\nUse --task-index for merged tasks, or --task-hash for chain-only tasks.\nList tasks with:\n  andamio project tasks %s --output json", projectID)
+	}
+
+	if taskHash != "" {
+		return taskHash, -1, nil
+	}
+
+	taskIndex, err := strconv.Atoi(taskIndexStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid task-index %q: must be a number", taskIndexStr)
+	}
+
+	hash, err := resolveTaskHash(c, projectID, taskIndex)
+	return hash, taskIndex, err
+}
+
+// ResolvedTask contains the full task data needed for hash verification.
 type ResolvedTask struct {
 	TaskHash  string
 	TaskData  cardano.TaskData

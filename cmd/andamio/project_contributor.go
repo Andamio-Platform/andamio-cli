@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -98,28 +97,23 @@ func init() {
 	} {
 		cmd.Flags().String("project-id", "", "Project ID (required)")
 		cmd.MarkFlagRequired("project-id")
-		cmd.Flags().String("task-index", "", "Task index (required)")
-		cmd.MarkFlagRequired("task-index")
+		cmd.Flags().String("task-index", "", "Task index (use --task-hash for chain-only tasks)")
+		cmd.Flags().String("task-hash", "", "Task hash (use instead of --task-index for chain-only tasks)")
 	}
 
-	// Update flags (add --evidence / --evidence-file)
+	// Update flags (add --evidence / --evidence-file + --task-hash)
 	projectContributorUpdateCmd.Flags().String("project-id", "", "Project ID (required)")
 	projectContributorUpdateCmd.MarkFlagRequired("project-id")
-	projectContributorUpdateCmd.Flags().String("task-index", "", "Task index (required)")
-	projectContributorUpdateCmd.MarkFlagRequired("task-index")
+	projectContributorUpdateCmd.Flags().String("task-index", "", "Task index (use --task-hash for chain-only tasks)")
+	projectContributorUpdateCmd.Flags().String("task-hash", "", "Task hash (use instead of --task-index for chain-only tasks)")
 	projectContributorUpdateCmd.Flags().String("evidence", "", "Evidence text or URL (Markdown supported)")
 	projectContributorUpdateCmd.Flags().String("evidence-file", "", "Path to evidence file (Markdown)")
 }
 
-// loadClientAndResolveTask loads config, creates a client, and resolves task_hash from project_id + task_index.
+// loadClientAndResolveTask loads config, creates a client, and resolves task_hash
+// from --task-index or --task-hash flags.
 func loadClientAndResolveTask(cmd *cobra.Command) (*client.Client, string, int, error) {
 	projectID, _ := cmd.Flags().GetString("project-id")
-	taskIndexStr, _ := cmd.Flags().GetString("task-index")
-
-	taskIndex, err := strconv.Atoi(taskIndexStr)
-	if err != nil {
-		return nil, "", 0, fmt.Errorf("invalid task-index %q: must be a number", taskIndexStr)
-	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -127,7 +121,7 @@ func loadClientAndResolveTask(cmd *cobra.Command) (*client.Client, string, int, 
 	}
 
 	c := client.New(cfg)
-	taskHash, err := resolveTaskHash(c, projectID, taskIndex)
+	taskHash, taskIndex, err := resolveTaskHashFromFlags(cmd, c, projectID)
 	if err != nil {
 		return nil, "", 0, err
 	}
@@ -165,7 +159,11 @@ func runTaskHashAction(endpoint, verb string) func(cmd *cobra.Command, args []st
 		}
 
 		if !isJSON {
-			fmt.Fprintf(os.Stderr, "%s %d...\n", verb, taskIndex)
+			if taskIndex >= 0 {
+				fmt.Fprintf(os.Stderr, "%s %d...\n", verb, taskIndex)
+			} else {
+				fmt.Fprintf(os.Stderr, "%s %s...\n", verb, taskHash[:16]+"...")
+			}
 		}
 
 		payload := map[string]interface{}{
@@ -206,7 +204,11 @@ func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Updating commitment evidence for task %d...\n", taskIndex)
+		if taskIndex >= 0 {
+			fmt.Fprintf(os.Stderr, "Updating commitment evidence for task %d...\n", taskIndex)
+		} else {
+			fmt.Fprintf(os.Stderr, "Updating commitment evidence for task %s...\n", taskHash[:16]+"...")
+		}
 	}
 
 	payload := map[string]interface{}{
