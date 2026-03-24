@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -247,18 +248,65 @@ func wrapEvidence(text string) (map[string]interface{}, string, error) {
 	return normalizedDoc, hex.EncodeToString(hash), nil
 }
 
+// resolveTaskHashFromFlags reads --task-hash and --task-index flags and returns the task_hash.
+// When --task-hash is provided directly, skips API resolution (needed for chain-only tasks).
+// Returns (taskHash, taskIndex, error). taskIndex is -1 when --task-hash is used.
+func resolveTaskHashFromFlags(cmd *cobra.Command, c *client.Client, projectID string) (string, int, error) {
+	taskHash, _ := cmd.Flags().GetString("task-hash")
+	taskIndexStr, _ := cmd.Flags().GetString("task-index")
+
+	if taskHash != "" && taskIndexStr != "" {
+		return "", 0, fmt.Errorf("--task-hash and --task-index are mutually exclusive")
+	}
+	if taskHash == "" && taskIndexStr == "" {
+		return "", 0, fmt.Errorf("either --task-index or --task-hash is required\n\nUse --task-index for merged tasks, or --task-hash for chain-only tasks.\nList tasks with:\n  andamio project tasks %s --output json", projectID)
+	}
+
+	if taskHash != "" {
+		if len(taskHash) != 64 || !isHex(taskHash) {
+			return "", 0, fmt.Errorf("--task-hash must be a 64-character hex string (Blake2b-256 hash)")
+		}
+		return taskHash, -1, nil
+	}
+
+	taskIndex, err := strconv.Atoi(taskIndexStr)
+	if err != nil {
+		return "", 0, fmt.Errorf("invalid task-index %q: must be a number", taskIndexStr)
+	}
+
+	hash, err := resolveTaskHash(c, projectID, taskIndex)
+	return hash, taskIndex, err
+}
+
+// ResolvedTask contains the full task data needed for hash verification.
+type ResolvedTask struct {
+	TaskHash  string
+	TaskData  cardano.TaskData
+	TaskIndex int
+}
+
 // resolveTaskHash looks up the task_hash for a given project + task index.
 // Fetches the user-visible task list and matches by task_index.
 func resolveTaskHash(c *client.Client, projectID string, taskIndex int) (string, error) {
+	resolved, err := resolveTaskData(c, projectID, taskIndex)
+	if err != nil {
+		return "", err
+	}
+	return resolved.TaskHash, nil
+}
+
+// resolveTaskData looks up the full task data for a given project + task index.
+// Returns the API task_hash plus the task data needed for local hash verification.
+func resolveTaskData(c *client.Client, projectID string, taskIndex int) (*ResolvedTask, error) {
 	body := map[string]string{"project_id": projectID}
 	var resp map[string]interface{}
 	if err := c.Post("/api/v2/project/user/tasks/list", body, &resp); err != nil {
-		return "", fmt.Errorf("failed to list tasks: %w", err)
+		return nil, fmt.Errorf("failed to list tasks: %w", err)
 	}
 
 	data, ok := resp["data"].([]interface{})
 	if !ok {
-		return "", fmt.Errorf("no tasks found for project %s", projectID)
+		return nil, fmt.Errorf("no tasks found for project %s", projectID)
 	}
 
 	for _, item := range data {
@@ -267,15 +315,73 @@ func resolveTaskHash(c *client.Client, projectID string, taskIndex int) (string,
 			continue
 		}
 		idx, _ := m["task_index"].(float64)
-		if int(idx) == taskIndex {
-			hash, _ := m["task_hash"].(string)
-			if hash == "" {
-				return "", fmt.Errorf("task %d has no task_hash (may not be on-chain yet)", taskIndex)
-			}
-			return hash, nil
+		if int(idx) != taskIndex {
+			continue
 		}
+
+		hash, _ := m["task_hash"].(string)
+		if hash == "" {
+			return nil, fmt.Errorf("task %d has no task_hash (may not be on-chain yet)", taskIndex)
+		}
+
+		// Extract on_chain_content (the project_content used for hashing)
+		onChainContent, _ := m["on_chain_content"].(string)
+		projectContent := ""
+		if onChainContent != "" {
+			// on_chain_content is hex-encoded UTF-8
+			decoded, err := hex.DecodeString(onChainContent)
+			if err == nil {
+				projectContent = string(decoded)
+			}
+		}
+		// Fallback to title if on_chain_content is missing
+		if projectContent == "" {
+			if content, ok := m["content"].(map[string]interface{}); ok {
+				projectContent, _ = content["title"].(string)
+			}
+		}
+
+		expirationPosix, _ := m["expiration_posix"].(float64)
+		lovelaceAmount, _ := m["lovelace_amount"].(float64)
+
+		// Extract native assets
+		var nativeAssets []cardano.NativeAsset
+		if assets, ok := m["assets"].([]interface{}); ok {
+			for _, a := range assets {
+				am, ok := a.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				policyID, _ := am["policy_id"].(string)
+				name, _ := am["name"].(string)
+				amountStr, _ := am["amount"].(string)
+				// Amount is a string in the API response
+				var quantity uint64
+				if amountStr != "" {
+					fmt.Sscanf(amountStr, "%d", &quantity)
+				}
+				// Token name must be hex-encoded for hashing
+				tokenNameHex := hexEncodeAssetName(name)
+				nativeAssets = append(nativeAssets, cardano.NativeAsset{
+					PolicyID:  policyID,
+					TokenName: tokenNameHex,
+					Quantity:  quantity,
+				})
+			}
+		}
+
+		return &ResolvedTask{
+			TaskHash:  hash,
+			TaskIndex: taskIndex,
+			TaskData: cardano.TaskData{
+				ProjectContent: projectContent,
+				ExpirationTime: uint64(expirationPosix),
+				LovelaceAmount: uint64(lovelaceAmount),
+				NativeAssets:   nativeAssets,
+			},
+		}, nil
 	}
-	return "", fmt.Errorf("task index %d not found in project %s\n\nList tasks with:\n  andamio project tasks %s --output json", taskIndex, projectID, projectID)
+	return nil, fmt.Errorf("task index %d not found in project %s\n\nList tasks with:\n  andamio project tasks %s --output json", taskIndex, projectID, projectID)
 }
 
 // resolveSltHashFromFlags reads --slt-hash and --module-code flags and returns the slt_hash.
@@ -293,6 +399,9 @@ func resolveSltHashFromFlags(cmd *cobra.Command, c *client.Client, courseID stri
 	}
 
 	if sltHash != "" {
+		if len(sltHash) != 64 || !isHex(sltHash) {
+			return "", "", fmt.Errorf("--slt-hash must be a 64-character hex string (Blake2b-256 hash)")
+		}
 		return sltHash, "", nil
 	}
 
@@ -331,35 +440,6 @@ func resolveSltHash(c *client.Client, courseID, moduleCode string) (string, erro
 	return "", fmt.Errorf("module %s not found in course %s\n\nList modules with:\n  andamio course modules %s --output json", moduleCode, courseID, courseID)
 }
 
-// resolveContributorStateID looks up contributor_state_id from the contributor projects list.
-func resolveContributorStateID(c *client.Client, projectID string) (string, error) {
-	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/contributor/projects/list", nil, &resp); err != nil {
-		return "", fmt.Errorf("failed to list contributor projects: %w", err)
-	}
-
-	data, ok := resp["data"].([]interface{})
-	if !ok {
-		return "", fmt.Errorf("no contributor projects found")
-	}
-
-	for _, item := range data {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		pid, _ := m["project_id"].(string)
-		if pid == projectID {
-			csid, _ := m["contributor_state_id"].(string)
-			if csid == "" {
-				return "", fmt.Errorf("project %s has no contributor_state_id (may not be on-chain yet)", projectID)
-			}
-			return csid, nil
-		}
-	}
-	return "", fmt.Errorf("project %s not found in your contributor projects\n\nList your projects with:\n  andamio project contributor list --output json", projectID)
-}
-
 // maxEvidenceFileSize is the maximum allowed evidence file size (1 MB).
 const maxEvidenceFileSize = 1 << 20
 
@@ -394,23 +474,3 @@ func readEvidenceFlag(cmd *cobra.Command) (string, error) {
 	return evidence, nil
 }
 
-// warnSkeyMismatch loads the skey, computes its key hash, and warns if it doesn't match
-// the stored key hash from login. This catches accidental use of a mismatched signing key.
-func warnSkeyMismatch(skeyPath string, cfg *config.Config, isJSON bool) {
-	if cfg.UserKeyHash == "" {
-		return // no stored key hash to compare against
-	}
-	_, pubKey, err := cardano.LoadSigningKey(skeyPath)
-	if err != nil {
-		return // signing will fail later with a proper error
-	}
-	skeyHash := cardano.PubKeyHash(pubKey)
-	if skeyHash != cfg.UserKeyHash {
-		if !isJSON {
-			fmt.Fprintf(os.Stderr, "Warning: signing key %s does not match the authenticated user's key\n", skeyPath)
-			fmt.Fprintf(os.Stderr, "  skey key hash:  %s\n", skeyHash)
-			fmt.Fprintf(os.Stderr, "  login key hash: %s\n", cfg.UserKeyHash)
-			fmt.Fprintf(os.Stderr, "  The transaction may fail or send funds to a wrong change address.\n")
-		}
-	}
-}

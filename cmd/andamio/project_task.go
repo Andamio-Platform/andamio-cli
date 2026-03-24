@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -86,6 +87,24 @@ Requires user authentication via 'andamio user login'.`,
 	RunE: runTaskDelete,
 }
 
+var projectTaskVerifyHashCmd = &cobra.Command{
+	Use:   "verify-hash <project-id>",
+	Short: "Verify task hashes match computed hashes",
+	Long: `Compute task hashes locally and compare against API-returned hashes.
+
+Fetches all tasks for a project, computes the Blake2b-256 hash from
+the task data (content, expiration, lovelace, assets), and reports
+any mismatches. Useful for diagnosing hash issues with on-chain tasks.
+
+Requires an API key or user authentication.
+
+Examples:
+  andamio project task verify-hash <project-id>
+  andamio project task verify-hash <project-id> --output json`,
+	Args: cobra.ExactArgs(1),
+	RunE: runTaskVerifyHash,
+}
+
 func init() {
 	projectCmd.AddCommand(projectTaskCmd)
 	projectTaskCmd.AddCommand(projectTaskListCmd)
@@ -93,6 +112,7 @@ func init() {
 	projectTaskCmd.AddCommand(projectTaskGetCmd)
 	projectTaskCmd.AddCommand(projectTaskUpdateCmd)
 	projectTaskCmd.AddCommand(projectTaskDeleteCmd)
+	projectTaskCmd.AddCommand(projectTaskVerifyHashCmd)
 
 	// Create flags
 	projectTaskCreateCmd.Flags().String("title", "", "Task title (required)")
@@ -621,6 +641,167 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Task %d deleted.\n", index)
+	return nil
+}
+
+func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	c := client.New(cfg)
+
+	body := map[string]string{"project_id": projectID}
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/project/user/tasks/list", body, &resp); err != nil {
+		return fmt.Errorf("failed to list tasks: %w", err)
+	}
+
+	data, ok := resp["data"].([]interface{})
+	if !ok || len(data) == 0 {
+		if isJSON {
+			return output.PrintJSON(map[string]interface{}{"results": []interface{}{}, "mismatches": 0})
+		}
+		fmt.Fprintln(os.Stderr, "No tasks found.")
+		return nil
+	}
+
+	type verifyResult struct {
+		TaskIndex      int              `json:"task_index"`
+		Content        string           `json:"content"`
+		APIHash        string           `json:"api_hash"`
+		ComputedHash   string           `json:"computed_hash"`
+		Match          bool             `json:"match"`
+		ExpirationTime uint64           `json:"expiration_time"`
+		Lovelace       uint64           `json:"lovelace_amount"`
+		AssetCount     int              `json:"asset_count"`
+		Assets         []cardano.NativeAsset `json:"assets,omitempty"`
+		Error          string           `json:"error,omitempty"`
+	}
+
+	var results []verifyResult
+	mismatches := 0
+
+	for _, item := range data {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		idx, _ := m["task_index"].(float64)
+		apiHash, _ := m["task_hash"].(string)
+		if apiHash == "" {
+			continue // skip non-on-chain tasks
+		}
+
+		// Extract task data
+		onChainContent, _ := m["on_chain_content"].(string)
+		projectContent := ""
+		if onChainContent != "" {
+			decoded, err := hex.DecodeString(onChainContent)
+			if err == nil {
+				projectContent = string(decoded)
+			}
+		}
+		if projectContent == "" {
+			if content, ok := m["content"].(map[string]interface{}); ok {
+				projectContent, _ = content["title"].(string)
+			}
+		}
+
+		expirationPosix, _ := m["expiration_posix"].(float64)
+		lovelaceAmount, _ := m["lovelace_amount"].(float64)
+
+		var nativeAssets []cardano.NativeAsset
+		if assets, ok := m["assets"].([]interface{}); ok {
+			for _, a := range assets {
+				am, ok := a.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				policyID, _ := am["policy_id"].(string)
+				name, _ := am["name"].(string)
+				amountStr, _ := am["amount"].(string)
+				var quantity uint64
+				if amountStr != "" {
+					fmt.Sscanf(amountStr, "%d", &quantity)
+				}
+				tokenNameHex := hexEncodeAssetName(name)
+				nativeAssets = append(nativeAssets, cardano.NativeAsset{
+					PolicyID:  policyID,
+					TokenName: tokenNameHex,
+					Quantity:  quantity,
+				})
+			}
+		}
+
+		taskData := cardano.TaskData{
+			ProjectContent: projectContent,
+			ExpirationTime: uint64(expirationPosix),
+			LovelaceAmount: uint64(lovelaceAmount),
+			NativeAssets:   nativeAssets,
+		}
+
+		r := verifyResult{
+			TaskIndex:      int(idx),
+			Content:        projectContent,
+			APIHash:        apiHash,
+			ExpirationTime: uint64(expirationPosix),
+			Lovelace:       uint64(lovelaceAmount),
+			AssetCount:     len(nativeAssets),
+			Assets:         nativeAssets,
+		}
+
+		computedHash, err := cardano.ComputeTaskHash(taskData)
+		if err != nil {
+			r.Error = err.Error()
+		} else {
+			r.ComputedHash = computedHash
+			r.Match = computedHash == apiHash
+		}
+
+		if !r.Match {
+			mismatches++
+		}
+
+		results = append(results, r)
+	}
+
+	if isJSON {
+		return output.PrintJSON(map[string]interface{}{
+			"results":    results,
+			"total":      len(results),
+			"mismatches": mismatches,
+		})
+	}
+
+	// Text output
+	for _, r := range results {
+		status := "\u2713"
+		if !r.Match {
+			status = "\u2717"
+		}
+		fmt.Printf("%s Task %d: %q\n", status, r.TaskIndex, r.Content)
+		if r.Error != "" {
+			fmt.Printf("    Error: %s\n", r.Error)
+			continue
+		}
+		if !r.Match {
+			fmt.Printf("    API hash:      %s\n", r.APIHash)
+			fmt.Printf("    Computed hash:  %s\n", r.ComputedHash)
+			fmt.Printf("    Expiration: %d, Lovelace: %d, Assets: %d\n",
+				r.ExpirationTime, r.Lovelace, r.AssetCount)
+			for _, a := range r.Assets {
+				fmt.Printf("      - %s / %s / %d\n", a.PolicyID, a.TokenName, a.Quantity)
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "\n%d tasks checked, %d mismatches\n", len(results), mismatches)
 	return nil
 }
 
