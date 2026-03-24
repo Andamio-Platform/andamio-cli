@@ -210,12 +210,6 @@ func blake2b224(data []byte) []byte {
 	return h.Sum(nil)
 }
 
-// PubKeyHash computes the Blake2b-224 key hash of a public key, returned as hex.
-// This is the standard Cardano key hash used in addresses and required_signers.
-func PubKeyHash(pubKey ed25519.PublicKey) string {
-	return hex.EncodeToString(blake2b224(pubKey))
-}
-
 // MessageSignResult contains the output of CIP-8 message signing.
 type MessageSignResult struct {
 	Signature string `json:"signature"` // COSE_Sign1 hex
