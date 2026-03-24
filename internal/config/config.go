@@ -34,11 +34,6 @@ func (c *Config) HasUserAuth() bool {
 	return c.UserJWT != ""
 }
 
-// IsMainnet returns true if the base URL points to mainnet.
-func (c *Config) IsMainnet() bool {
-	return strings.Contains(c.BaseURL, "mainnet")
-}
-
 func DefaultConfig() *Config {
 	return &Config{
 		BaseURL: "https://preprod.api.andamio.io",
