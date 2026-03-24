@@ -164,6 +164,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project task delete <index> --project-id <id>` | `/v2/project/manager/task/delete` | jwt | Delete draft task. --project-id required |
 | `project task export <project-id>` | `/v2/project/manager/tasks/list` | jwt | Export tasks to tasks/<slug>/ as Markdown |
 | `project task import <project-id>` | `/v2/project/manager/task/create,update` | jwt | Import tasks from Markdown files. --dry-run supported |
+| `project task verify-hash <project-id>` | `/v2/project/user/tasks/list` | either | Verify task hashes match computed hashes (diagnostic) |
 
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |

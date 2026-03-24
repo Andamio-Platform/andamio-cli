@@ -263,6 +263,9 @@ func resolveTaskHashFromFlags(cmd *cobra.Command, c *client.Client, projectID st
 	}
 
 	if taskHash != "" {
+		if len(taskHash) != 64 || !isHex(taskHash) {
+			return "", 0, fmt.Errorf("--task-hash must be a 64-character hex string (Blake2b-256 hash)")
+		}
 		return taskHash, -1, nil
 	}
 
@@ -396,6 +399,9 @@ func resolveSltHashFromFlags(cmd *cobra.Command, c *client.Client, courseID stri
 	}
 
 	if sltHash != "" {
+		if len(sltHash) != 64 || !isHex(sltHash) {
+			return "", "", fmt.Errorf("--slt-hash must be a 64-character hex string (Blake2b-256 hash)")
+		}
 		return sltHash, "", nil
 	}
 
@@ -432,35 +438,6 @@ func resolveSltHash(c *client.Client, courseID, moduleCode string) (string, erro
 		}
 	}
 	return "", fmt.Errorf("module %s not found in course %s\n\nList modules with:\n  andamio course modules %s --output json", moduleCode, courseID, courseID)
-}
-
-// resolveContributorStateID looks up contributor_state_id from the contributor projects list.
-func resolveContributorStateID(c *client.Client, projectID string) (string, error) {
-	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/contributor/projects/list", nil, &resp); err != nil {
-		return "", fmt.Errorf("failed to list contributor projects: %w", err)
-	}
-
-	data, ok := resp["data"].([]interface{})
-	if !ok {
-		return "", fmt.Errorf("no contributor projects found")
-	}
-
-	for _, item := range data {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		pid, _ := m["project_id"].(string)
-		if pid == projectID {
-			csid, _ := m["contributor_state_id"].(string)
-			if csid == "" {
-				return "", fmt.Errorf("project %s has no contributor_state_id (may not be on-chain yet)", projectID)
-			}
-			return csid, nil
-		}
-	}
-	return "", fmt.Errorf("project %s not found in your contributor projects\n\nList your projects with:\n  andamio project contributor list --output json", projectID)
 }
 
 // maxEvidenceFileSize is the maximum allowed evidence file size (1 MB).
