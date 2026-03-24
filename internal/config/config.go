@@ -16,7 +16,6 @@ type Config struct {
 	JWTExpiresAt string `json:"jwt_expires_at,omitempty"`
 	UserAlias    string `json:"user_alias,omitempty"`
 	UserID       string `json:"user_id,omitempty"`
-	UserAddress  string `json:"user_address,omitempty"`
 	UserKeyHash  string `json:"user_key_hash,omitempty"`
 	SubmitURL    string `json:"submit_url,omitempty"`
 }
@@ -27,7 +26,6 @@ func (c *Config) ClearUserAuth() {
 	c.JWTExpiresAt = ""
 	c.UserAlias = ""
 	c.UserID = ""
-	c.UserAddress = ""
 	c.UserKeyHash = ""
 }
 
