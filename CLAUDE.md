@@ -139,7 +139,6 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course student update` | `/v2/course/student/commitment/update` | jwt | Update evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
 | `course student leave` | `/v2/course/student/commitment/leave` | jwt | Leave commitment. `--course-id`, `--module-code` |
 | `course student claim` | `/v2/course/student/commitment/claim` | jwt | Claim credential. `--course-id`, `--module-code` |
-| `course student commit-tx` | `/v2/tx/course/student/assignment/commit` | jwt+skey | On-chain commitment with evidence. `--course-id`, `--module-code`, `--skey`, `--evidence`/`--evidence-file` (optional) |
 
 ### project — Project data
 | Command | Endpoint | Auth | Description |
@@ -158,7 +157,6 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project contributor commit` | `/v2/project/contributor/commitment/create` | jwt | Commit to task. `--project-id`, `--task-index` |
 | `project contributor update` | `/v2/project/contributor/commitment/update` | jwt | Update evidence. `--project-id`, `--task-index`, `--evidence` or `--evidence-file` (Markdown) |
 | `project contributor delete` | `/v2/project/contributor/commitment/delete` | jwt | Delete commitment. `--project-id`, `--task-index` |
-| `project contributor commit-tx` | `/v2/tx/project/contributor/task/commit` | jwt+skey | On-chain commitment with evidence. `--project-id`, `--task-index`, `--skey`, `--evidence`/`--evidence-file` (optional) |
 | `project task list <project-id>` | `/v2/project/manager/tasks/list` | jwt | List tasks (manager) |
 | `project task get <index> --project-id <id>` | `/v2/project/manager/tasks/list` | jwt | Get task by index (filters from list) |
 | `project task create <project-id>` | `/v2/project/manager/task/create` | jwt | Create task. Flags: --title, --lovelace, --expiration, --github-issue |
@@ -166,6 +164,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project task delete <index> --project-id <id>` | `/v2/project/manager/task/delete` | jwt | Delete draft task. --project-id required |
 | `project task export <project-id>` | `/v2/project/manager/tasks/list` | jwt | Export tasks to tasks/<slug>/ as Markdown |
 | `project task import <project-id>` | `/v2/project/manager/task/create,update` | jwt | Import tasks from Markdown files. --dry-run supported |
+| `project task verify-hash <project-id>` | `/v2/project/user/tasks/list` | either | Verify task hashes match computed hashes (diagnostic) |
 
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |
