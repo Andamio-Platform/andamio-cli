@@ -52,7 +52,7 @@ Browser login (default):
   Opens your browser for wallet signing.
 
 Headless login (for CI/CD, scripting, agents):
-  andamio user login --skey ./payment.skey --alias myalias
+  andamio user login --skey ./payment.skey --alias myalias --address $(cat wallet.addr)
   Signs a nonce with your .skey file — no browser needed.`,
 	RunE: runUserLogin,
 }
@@ -80,6 +80,7 @@ func init() {
 	// Headless login flags
 	userLoginCmd.Flags().String("skey", "", "Path to .skey file for headless authentication (no browser)")
 	userLoginCmd.Flags().String("alias", "", "Andamio alias (required with --skey)")
+	userLoginCmd.Flags().String("address", "", "Bech32 address (required with --skey, e.g. from .addr file)")
 }
 
 // generateState creates a cryptographically secure random state parameter
@@ -113,7 +114,11 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 		if alias == "" {
 			return fmt.Errorf("--alias is required with --skey\n\nCheck aliases with: andamio user exists <alias>")
 		}
-		return runHeadlessLogin(cfg, skeyPath, alias)
+		address, _ := cmd.Flags().GetString("address")
+		if address == "" {
+			return fmt.Errorf("--address is required with --skey\n\nProvide your bech32 address (e.g. from your .addr file)")
+		}
+		return runHeadlessLogin(cfg, skeyPath, alias, address)
 	}
 
 	// Check if already authenticated (browser flow only)
@@ -254,7 +259,7 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 
 // runHeadlessLogin authenticates using a .skey file via CIP-8 message signing.
 // Flow: get nonce → sign with .skey → validate signature → store JWT.
-func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
+func runHeadlessLogin(cfg *config.Config, skeyPath, alias, address string) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Load signing key
@@ -299,7 +304,9 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias string) error {
 	}
 
 	validatePayload := map[string]interface{}{
-		"id": session.ID,
+		"id":                 session.ID,
+		"address":            address,
+		"access_token_alias": alias,
 		"signature": map[string]string{
 			"signature": signResult.Signature,
 			"key":       signResult.Key,
