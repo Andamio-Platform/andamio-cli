@@ -120,7 +120,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course assignment <id> <module>` | `/api/v2/course/user/assignment/{id}/{module}` | either | Module assignment |
 | `course intro <id> <module>` | `/api/v2/course/user/introduction/{id}/{module}` | either | Module introduction |
 | `course owner list` | `/v2/course/owner/courses/list` | jwt | List courses you own |
-| `course owner create --course-id <id>` | `/v2/course/owner/course/create` | jwt | Create course. `--title`, `--description`, `--image-url`, `--video-url`, `--category`, `--public`, `--pending-tx-hash` |
+| `course owner create --course-id <id> --pending-tx-hash <hash>` | `/v2/course/owner/course/create` | jwt | Create course. `--title`, `--description`, `--image-url`, `--video-url`, `--category`, `--public` |
 | `course owner update --course-id <id>` | `/v2/course/owner/course/update` | jwt | Update course metadata. Only changed flags sent |
 | `course owner register --course-id <id> --title <t>` | `/v2/course/owner/course/register` | jwt | Register on-chain course with off-chain metadata. `--title` required |
 | `course owner teachers --course-id <id>` | `/v2/course/owner/teachers/update` | jwt | Add/remove teachers. `--add` (repeatable), `--remove` (repeatable) |
@@ -146,7 +146,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project list` | `/api/v2/project/user/projects/list` | either | List projects |
 | `project get <id>` | `/api/v2/project/user/project/{id}` | either | Project details |
 | `project owner list` | `/v2/project/owner/projects/list` | jwt | List projects you own |
-| `project owner create --project-id <id>` | `/v2/project/owner/project/create` | jwt | Create project. `--title`, `--description`, `--image-url`, `--video-url`, `--category`, `--public`, `--pending-tx-hash` |
+| `project owner create --project-id <id> --pending-tx-hash <hash>` | `/v2/project/owner/project/create` | jwt | Create project. `--title`, `--description`, `--image-url`, `--video-url`, `--category`, `--public` |
 | `project owner update --project-id <id>` | `/v2/project/owner/project/update` | jwt | Update project metadata. Only changed flags sent |
 | `project owner register --project-id <id> --title <t>` | `/v2/project/owner/project/register` | jwt | Register on-chain project with off-chain metadata. `--title` required |
 | `project tasks <project-id>` | `/v2/project/user/tasks/list` | either | List tasks (public view) |

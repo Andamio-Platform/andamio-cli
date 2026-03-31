@@ -241,9 +241,11 @@ func runProjectOwnerRegister(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetString("tx-hash"); v != "" {
 		payload["tx_hash"] = v
 	}
-	if v, _ := cmd.Flags().GetString("title"); v != "" {
-		payload["title"] = v
+	title, _ := cmd.Flags().GetString("title")
+	if title == "" {
+		return fmt.Errorf("--title must not be empty")
 	}
+	payload["title"] = title
 	if v, _ := cmd.Flags().GetString("description"); v != "" {
 		payload["description"] = v
 	}

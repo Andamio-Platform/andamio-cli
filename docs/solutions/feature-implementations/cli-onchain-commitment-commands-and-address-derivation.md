@@ -33,6 +33,7 @@ pull_requests:
   - "#39: feat: on-chain commitment commands with evidence"
   - "#41: fix: derive wallet address from skey during headless login"
   - "#43: fix: add --slt-hash flag for chain-only modules"
+last_updated: "2026-03-31"
 releases:
   - v0.8.0
   - v0.8.1
@@ -119,13 +120,15 @@ enterprise_address = bech32_encode(hrp, header_byte || blake2b_224(pubkey))
 - Network detected from `cfg.IsMainnet()` which checks `strings.Contains(c.BaseURL, "mainnet")`
 - Called as fallback in headless login when API returns null for `cardano_bech32_addr`
 
-### 6. `--slt-hash` / `--module-code` Mutual Exclusion
+### 6. `--slt-hash` / `--module-code` Resolution
 
 **File:** `helpers.go:284-301` (`resolveSltHashFromFlags`)
 
 Chain-only modules have no `course_module_code`. The `--slt-hash` flag bypasses resolution by accepting the hash directly. Returns `(sltHash, moduleCode, error)` where `moduleCode` may be empty.
 
 Not using Cobra's `MarkFlagRequired` because it doesn't support "one of two is required". Manual validation with discovery hints in error messages.
+
+> **Update (2026-03-31):** The `course student commitment` (get) command now requires `--slt-hash` as the primary lookup key, with `--module-code` optional for DB enrichment. The `course student leave` and `claim` commands now require `--pending-tx-hash` for the on-chain transaction link. See `docs/solutions/integration-issues/cli-api-payload-mismatches.md`.
 
 ### 7. `warnSkeyMismatch` Pre-Flight Check
 

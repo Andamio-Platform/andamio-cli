@@ -11,6 +11,7 @@ symptoms:
   - Managers could not view pending task assessments via CLI
 root_cause: "Missing command implementations for all role-based POST endpoints across student, teacher, contributor, and manager roles"
 severity: high
+last_updated: "2026-03-31"
 tags:
   - api-coverage
   - role-based-commands
@@ -45,7 +46,7 @@ Added 22 commands across 5 new files in a single PR (#35), organized by role. Al
 
 Parent command `course teacher` uses `PersistentPreRunE: jwtAuthPreRunE` to enforce JWT auth for all subcommands.
 
-**Module lifecycle** (register-module, publish-module, delete-module) share a factory function:
+**Module lifecycle** (publish-module, delete-module) share a factory function:
 
 ```go
 func runCourseTeacherModuleAction(endpoint, verb string) func(cmd *cobra.Command, args []string) error {
@@ -57,17 +58,21 @@ func runCourseTeacherModuleAction(endpoint, verb string) func(cmd *cobra.Command
 }
 ```
 
-Three commands reuse this with different endpoints and verbs. Flag registration uses a loop over the three command pointers to avoid repetition.
+Two commands reuse this with different endpoints and verbs. Flag registration uses a loop over the two command pointers to avoid repetition.
+
+> **Update (2026-03-31):** `register-module` was split out of the shared factory into its own `runCourseTeacherRegisterModule` handler because the API requires an additional `slt_hash` field. See `docs/solutions/integration-issues/cli-api-payload-mismatches.md`.
 
 **update-module-status** adds a `--status` flag to the same course-id + module-code pattern.
 
 **review** validates `--decision` input before sending:
 
 ```go
-if decision != "approve" && decision != "reject" {
-    return fmt.Errorf("--decision must be 'approve' or 'reject', got %q", decision)
+if decision != "accept" && decision != "refuse" {
+    return fmt.Errorf("--decision must be 'accept' or 'refuse', got %q", decision)
 }
 ```
+
+The review command requires `--course-id`, `--module-code`, `--participant-alias`, and `--decision`.
 
 **commitments** uses the `printListPost` helper to list pending reviews.
 
@@ -97,14 +102,15 @@ Parent command `course student` uses `PersistentPreRunE: jwtAuthPreRunE`.
 
 **List commands** (courses, credentials, commitments) are inline `RunE` closures calling `printList`.
 
-**commitment** (singular) does a POST to a `/get` endpoint with course-id + module-code payload.
+**commitment** (singular) does a POST to a `/get` endpoint with `slt_hash` as the primary key and optional `course_module_code` for DB enrichment.
 
-**Lifecycle commands** use two factory functions:
+**Lifecycle commands** use factory functions:
 
-- `runCourseStudentAction(endpoint, verb)` — for create, leave, claim (course-id + module-code payload).
-- `runCourseStudentSubmitOrUpdate(endpoint, verb)` — for submit, update (adds `--evidence` to payload).
+- `runCourseStudentAction(endpoint, verb)` — for create (course-id + module-code payload).
+- `runCourseStudentTxAction(endpoint, verb)` — for leave, claim (adds `pending_tx_hash` to the course-id + module-code payload).
+- `runCourseStudentSubmit` / `runCourseStudentUpdate` — standalone functions for submit and update (add `--evidence` with Tiptap conversion and evidence hashing).
 
-Flag registration uses loops: one for the three simple lifecycle commands, one for the two evidence commands.
+> **Update (2026-03-31):** The original `runCourseStudentAction` factory was split. Leave and claim now use `runCourseStudentTxAction` which includes `pending_tx_hash`. The commitment-get command now requires `--slt-hash` instead of `--module-code`. See `docs/solutions/integration-issues/cli-api-payload-mismatches.md`.
 
 ### Phase 6 — Project Contributor (6 commands)
 
@@ -116,7 +122,7 @@ Parent command `project contributor` uses `PersistentPreRunE: jwtAuthPreRunE`.
 
 **commitment** does a POST to `/get` with project-id + task-index.
 
-**Lifecycle commands** use `runProjectContributorAction(endpoint, verb)` factory for commit and delete. **update** is a standalone function because it adds `--evidence`.
+**Lifecycle commands** use `runTaskHashAction(endpoint, verb)` factory for commit and delete. This factory resolves the task hash from `--task-index` or `--task-hash` flags. **update** is a standalone function because it adds `--evidence`.
 
 ### Phase 7 — Public Tasks (1 command)
 
@@ -148,11 +154,11 @@ This complements the existing `printList` helper (which supports both GET and PO
 
 | Command | Endpoint | Flags |
 |---------|----------|-------|
-| `register-module` | `POST /v2/course/teacher/course-module/register` | `--course-id`, `--module-code` |
+| `register-module` | `POST /v2/course/teacher/course-module/register` | `--course-id`, `--module-code`, `--slt-hash` |
 | `publish-module` | `POST /v2/course/teacher/course-module/publish` | `--course-id`, `--module-code` |
 | `delete-module` | `POST /v2/course/teacher/course-module/delete` | `--course-id`, `--module-code` |
 | `update-module-status` | `POST /v2/course/teacher/course-module/update-status` | `--course-id`, `--module-code`, `--status` |
-| `review` | `POST /v2/course/teacher/assignment-commitment/review` | `--course-id`, `--commitment-id`, `--decision`, `--feedback` |
+| `review` | `POST /v2/course/teacher/assignment-commitment/review` | `--course-id`, `--module-code`, `--participant-alias`, `--decision` |
 | `commitments` | `POST /v2/course/teacher/assignment-commitments/list` | `--course-id` |
 
 ### project manager
@@ -168,12 +174,12 @@ This complements the existing `printList` helper (which supports both GET and PO
 | `courses` | `POST /v2/course/student/courses/list` | none |
 | `credentials` | `POST /v2/course/student/credentials/list` | none |
 | `commitments` | `POST /v2/course/student/assignment-commitments/list` | none |
-| `commitment` | `POST /v2/course/student/assignment-commitment/get` | `--course-id`, `--module-code` |
+| `commitment` | `POST /v2/course/student/assignment-commitment/get` | `--course-id`, `--slt-hash`, `--module-code` (optional) |
 | `create` | `POST /v2/course/student/commitment/create` | `--course-id`, `--module-code` |
-| `submit` | `POST /v2/course/student/commitment/submit` | `--course-id`, `--module-code`, `--evidence` |
+| `submit` | `POST /v2/course/student/commitment/submit` | `--course-id`, `--module-code` or `--slt-hash`, `--evidence` |
 | `update` | `POST /v2/course/student/commitment/update` | `--course-id`, `--module-code`, `--evidence` |
-| `leave` | `POST /v2/course/student/commitment/leave` | `--course-id`, `--module-code` |
-| `claim` | `POST /v2/course/student/commitment/claim` | `--course-id`, `--module-code` |
+| `leave` | `POST /v2/course/student/commitment/leave` | `--course-id`, `--module-code`, `--pending-tx-hash` |
+| `claim` | `POST /v2/course/student/commitment/claim` | `--course-id`, `--module-code`, `--pending-tx-hash` |
 
 ### project contributor
 
@@ -181,10 +187,10 @@ This complements the existing `printList` helper (which supports both GET and PO
 |---------|----------|-------|
 | `list` | `POST /v2/project/contributor/projects/list` | none |
 | `commitments` | `POST /v2/project/contributor/commitments/list` | none |
-| `commitment` | `POST /v2/project/contributor/commitment/get` | `--project-id`, `--task-index` |
-| `commit` | `POST /v2/project/contributor/commitment/create` | `--project-id`, `--task-index` |
-| `update` | `POST /v2/project/contributor/commitment/update` | `--project-id`, `--task-index`, `--evidence` |
-| `delete` | `POST /v2/project/contributor/commitment/delete` | `--project-id`, `--task-index` |
+| `commitment` | `POST /v2/project/contributor/commitment/get` | `--project-id`, `--task-index` or `--task-hash` |
+| `commit` | `POST /v2/project/contributor/commitment/create` | `--project-id`, `--task-index` or `--task-hash` |
+| `update` | `POST /v2/project/contributor/commitment/update` | `--project-id`, `--task-index` or `--task-hash`, `--evidence` |
+| `delete` | `POST /v2/project/contributor/commitment/delete` | `--project-id`, `--task-index` or `--task-hash` |
 
 ### project (public)
 
@@ -198,10 +204,10 @@ This complements the existing `printList` helper (which supports both GET and PO
 
 Each role group has commands that differ only by endpoint URL and a verb string. Factory functions return `func(cmd, args) error` closures:
 
-- `runCourseTeacherModuleAction` — 3 callers
-- `runCourseStudentAction` — 3 callers
-- `runCourseStudentSubmitOrUpdate` — 2 callers
-- `runProjectContributorAction` — 2 callers
+- `runCourseTeacherModuleAction` — 2 callers (publish, delete; register-module has its own handler)
+- `runCourseStudentAction` — 1 caller (create; leave/claim use `runCourseStudentTxAction`)
+- `runCourseStudentTxAction` — 2 callers (leave, claim)
+- `runTaskHashAction` — 2 callers (contributor commit, delete)
 
 ### PersistentPreRunE chains auth checks
 

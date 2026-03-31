@@ -262,9 +262,11 @@ func runCourseOwnerRegister(cmd *cobra.Command, args []string) error {
 	if v, _ := cmd.Flags().GetString("tx-hash"); v != "" {
 		payload["tx_hash"] = v
 	}
-	if v, _ := cmd.Flags().GetString("title"); v != "" {
-		payload["title"] = v
+	title, _ := cmd.Flags().GetString("title")
+	if title == "" {
+		return fmt.Errorf("--title must not be empty")
 	}
+	payload["title"] = title
 	if v, _ := cmd.Flags().GetString("description"); v != "" {
 		payload["description"] = v
 	}
@@ -312,7 +314,14 @@ func runCourseOwnerTeachers(cmd *cobra.Command, args []string) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	if len(addTeachers) == 0 && len(removeTeachers) == 0 {
-		return fmt.Errorf("specify at least one of --add or --remove")
+		return fmt.Errorf("specify at least one of --add or --remove. Use 'andamio user exists <alias>' to verify aliases")
+	}
+
+	// Filter empty strings from alias arrays
+	addTeachers = filterEmpty(addTeachers)
+	removeTeachers = filterEmpty(removeTeachers)
+	if len(addTeachers) == 0 && len(removeTeachers) == 0 {
+		return fmt.Errorf("all provided aliases are empty")
 	}
 
 	payload := map[string]interface{}{
@@ -346,4 +355,14 @@ func runCourseOwnerTeachers(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Teachers updated.\n")
 	return nil
+}
+
+func filterEmpty(ss []string) []string {
+	out := ss[:0]
+	for _, s := range ss {
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

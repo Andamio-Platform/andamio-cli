@@ -179,7 +179,7 @@ func runCourseStudentCommitment(cmd *cobra.Command, args []string) error {
 	}
 
 	c := client.New(cfg)
-	payload := map[string]string{
+	payload := map[string]interface{}{
 		"course_id": courseID,
 		"slt_hash":  sltHash,
 	}
@@ -231,6 +231,8 @@ func runCourseStudentAction(endpoint, verb string) func(cmd *cobra.Command, args
 }
 
 // runCourseStudentTxAction returns a RunE for leave/claim commands that require pending_tx_hash.
+// Note: leave/claim use course_module_code (not slt_hash) per the gateway spec —
+// this differs from commitment-get which uses slt_hash as primary key.
 func runCourseStudentTxAction(endpoint, verb string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		courseID, _ := cmd.Flags().GetString("course-id")
