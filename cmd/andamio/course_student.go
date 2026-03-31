@@ -58,7 +58,8 @@ var courseStudentCommitmentCmd = &cobra.Command{
 	Long: `Get details for a specific assignment commitment.
 
 Examples:
-  andamio course student commitment --course-id <id> --module-code 101`,
+  andamio course student commitment --course-id <id> --slt-hash <hash>
+  andamio course student commitment --course-id <id> --slt-hash <hash> --module-code 101`,
 	RunE: runCourseStudentCommitment,
 }
 
@@ -98,8 +99,8 @@ var courseStudentLeaveCmd = &cobra.Command{
 	Long: `Withdraw from a course module commitment.
 
 Examples:
-  andamio course student leave --course-id <id> --module-code 101`,
-	RunE: runCourseStudentAction("/api/v2/course/student/commitment/leave", "Leaving commitment"),
+  andamio course student leave --course-id <id> --module-code 101 --pending-tx-hash <hash>`,
+	RunE: runCourseStudentTxAction("/api/v2/course/student/commitment/leave", "Leaving commitment"),
 }
 
 var courseStudentClaimCmd = &cobra.Command{
@@ -108,8 +109,8 @@ var courseStudentClaimCmd = &cobra.Command{
 	Long: `Claim the credential for a completed course module.
 
 Examples:
-  andamio course student claim --course-id <id> --module-code 101`,
-	RunE: runCourseStudentAction("/api/v2/course/student/commitment/claim", "Claiming credential"),
+  andamio course student claim --course-id <id> --module-code 101 --pending-tx-hash <hash>`,
+	RunE: runCourseStudentTxAction("/api/v2/course/student/commitment/claim", "Claiming credential"),
 }
 
 func init() {
@@ -127,12 +128,18 @@ func init() {
 	// Commitment get flags
 	courseStudentCommitmentCmd.Flags().String("course-id", "", "Course ID (required)")
 	courseStudentCommitmentCmd.MarkFlagRequired("course-id")
-	courseStudentCommitmentCmd.Flags().String("module-code", "", "Module code (required)")
-	courseStudentCommitmentCmd.MarkFlagRequired("module-code")
+	courseStudentCommitmentCmd.Flags().String("module-code", "", "Module code (optional — for DB enrichment)")
+	courseStudentCommitmentCmd.Flags().String("slt-hash", "", "SLT hash — on-chain module identifier (required)")
+	courseStudentCommitmentCmd.MarkFlagRequired("slt-hash")
 
-	// Shared flags for lifecycle commands
+	// Create flags (no pending-tx-hash needed)
+	courseStudentCreateCmd.Flags().String("course-id", "", "Course ID (required)")
+	courseStudentCreateCmd.MarkFlagRequired("course-id")
+	courseStudentCreateCmd.Flags().String("module-code", "", "Module code (required)")
+	courseStudentCreateCmd.MarkFlagRequired("module-code")
+
+	// Leave/claim flags (require pending-tx-hash for the on-chain action)
 	for _, cmd := range []*cobra.Command{
-		courseStudentCreateCmd,
 		courseStudentLeaveCmd,
 		courseStudentClaimCmd,
 	} {
@@ -140,6 +147,8 @@ func init() {
 		cmd.MarkFlagRequired("course-id")
 		cmd.Flags().String("module-code", "", "Module code (required)")
 		cmd.MarkFlagRequired("module-code")
+		cmd.Flags().String("pending-tx-hash", "", "Pending transaction hash (required)")
+		cmd.MarkFlagRequired("pending-tx-hash")
 	}
 
 	// Submit flags (--slt-hash alternative for chain-only modules)
@@ -162,6 +171,7 @@ func init() {
 func runCourseStudentCommitment(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
 	moduleCode, _ := cmd.Flags().GetString("module-code")
+	sltHash, _ := cmd.Flags().GetString("slt-hash")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -170,8 +180,11 @@ func runCourseStudentCommitment(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	payload := map[string]string{
-		"course_id":          courseID,
-		"course_module_code": moduleCode,
+		"course_id": courseID,
+		"slt_hash":  sltHash,
+	}
+	if moduleCode != "" {
+		payload["course_module_code"] = moduleCode
 	}
 	var resp map[string]interface{}
 	if err := c.Post("/api/v2/course/student/assignment-commitment/get", payload, &resp); err != nil {
@@ -191,6 +204,44 @@ func runCourseStudentAction(endpoint, verb string) func(cmd *cobra.Command, args
 		payload := map[string]interface{}{
 			"course_id":          courseID,
 			"course_module_code": moduleCode,
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "%s for module %s...\n", verb, moduleCode)
+		}
+
+		c := client.New(cfg)
+		var resp map[string]interface{}
+		if err := c.Post(endpoint, payload, &resp); err != nil {
+			return fmt.Errorf("failed: %w", err)
+		}
+
+		if isJSON {
+			return output.PrintJSON(resp)
+		}
+
+		fmt.Fprintf(os.Stderr, "Done.\n")
+		return nil
+	}
+}
+
+// runCourseStudentTxAction returns a RunE for leave/claim commands that require pending_tx_hash.
+func runCourseStudentTxAction(endpoint, verb string) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		courseID, _ := cmd.Flags().GetString("course-id")
+		moduleCode, _ := cmd.Flags().GetString("module-code")
+		pendingTxHash, _ := cmd.Flags().GetString("pending-tx-hash")
+		isJSON := output.GetFormat() == output.FormatJSON
+
+		payload := map[string]interface{}{
+			"course_id":          courseID,
+			"course_module_code": moduleCode,
+			"pending_tx_hash":    pendingTxHash,
 		}
 
 		cfg, err := config.Load()

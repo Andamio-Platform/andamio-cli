@@ -65,8 +65,15 @@ Find your course IDs with: andamio teacher courses`,
 
 var courseLessonCmd = &cobra.Command{
 	Use:   "lesson <course-id> <module-code> <slt-index>",
-	Short: "Get lesson content",
-	Args:  cobra.ExactArgs(3),
+	Short: "Get lesson content by SLT index (integer)",
+	Long: `Get lesson content for a specific SLT in a course module.
+
+The slt-index must be a positive integer (e.g., 1, 2, 3), not a code or hash.
+
+Examples:
+  andamio course lesson my-course 101 1
+  andamio course lesson my-course 101 3`,
+	Args: cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		courseID, moduleCode, sltIndex := args[0], args[1], args[2]
 		path := "/api/v2/course/user/lesson/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode) + "/" + url.PathEscape(sltIndex)

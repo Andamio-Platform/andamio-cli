@@ -21,7 +21,7 @@ var courseTeacherCmd = &cobra.Command{
 var courseTeacherRegisterModuleCmd = &cobra.Command{
 	Use:   "register-module",
 	Short: "Register a course module from on-chain data",
-	RunE:  runCourseTeacherModuleAction("/api/v2/course/teacher/course-module/register", "Registering"),
+	RunE:  runCourseTeacherRegisterModule,
 }
 
 var courseTeacherPublishModuleCmd = &cobra.Command{
@@ -76,9 +76,16 @@ func init() {
 	courseTeacherCmd.AddCommand(courseTeacherReviewCmd)
 	courseTeacherCmd.AddCommand(courseTeacherCommitmentsCmd)
 
-	// Module action flags (shared across register, publish, delete)
+	// register-module has an extra required flag (slt-hash)
+	courseTeacherRegisterModuleCmd.Flags().String("course-id", "", "Course ID (required)")
+	courseTeacherRegisterModuleCmd.MarkFlagRequired("course-id")
+	courseTeacherRegisterModuleCmd.Flags().String("module-code", "", "Module code (required)")
+	courseTeacherRegisterModuleCmd.MarkFlagRequired("module-code")
+	courseTeacherRegisterModuleCmd.Flags().String("slt-hash", "", "SLT hash — on-chain module identifier (required)")
+	courseTeacherRegisterModuleCmd.MarkFlagRequired("slt-hash")
+
+	// Module action flags (shared across publish, delete)
 	for _, cmd := range []*cobra.Command{
-		courseTeacherRegisterModuleCmd,
 		courseTeacherPublishModuleCmd,
 		courseTeacherDeleteModuleCmd,
 	} {
@@ -109,6 +116,43 @@ func init() {
 	// commitments flags
 	courseTeacherCommitmentsCmd.Flags().String("course-id", "", "Course ID (required)")
 	courseTeacherCommitmentsCmd.MarkFlagRequired("course-id")
+}
+
+// runCourseTeacherRegisterModule handles register-module which requires slt_hash in addition
+// to course-id and module-code.
+func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
+	courseID, _ := cmd.Flags().GetString("course-id")
+	moduleCode, _ := cmd.Flags().GetString("module-code")
+	sltHash, _ := cmd.Flags().GetString("slt-hash")
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	payload := map[string]interface{}{
+		"course_id":          courseID,
+		"course_module_code": moduleCode,
+		"slt_hash":           sltHash,
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Registering module %s...\n", moduleCode)
+	}
+
+	c := client.New(cfg)
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/course/teacher/course-module/register", payload, &resp); err != nil {
+		return fmt.Errorf("failed to register module: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(resp)
+	}
+
+	fmt.Fprintf(os.Stderr, "Module %s: registered.\n", moduleCode)
+	return nil
 }
 
 // runCourseTeacherModuleAction returns a RunE function for module lifecycle commands

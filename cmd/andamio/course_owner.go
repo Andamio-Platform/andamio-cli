@@ -37,8 +37,8 @@ For on-chain course creation, use: andamio tx run /v2/tx/instance/owner/course/c
 Then register the course with: andamio course owner register
 
 Examples:
-  andamio course owner create --title "Introduction to Cardano"
-  andamio course owner create --title "My Course" --description "Learn things" --public`,
+  andamio course owner create --course-id abc123 --pending-tx-hash tx123 --title "Introduction to Cardano"
+  andamio course owner create --course-id abc123 --pending-tx-hash tx123 --description "Learn things" --public`,
 	RunE: runCourseOwnerCreate,
 }
 
@@ -64,7 +64,7 @@ Typical flow:
   2. andamio course owner register --course-id <id>
 
 Examples:
-  andamio course owner register --course-id <id>
+  andamio course owner register --course-id <id> --title "My Course"
   andamio course owner register --course-id <id> --title "My Course" --public`,
 	RunE: runCourseOwnerRegister,
 }
@@ -72,12 +72,12 @@ Examples:
 var courseOwnerTeachersCmd = &cobra.Command{
 	Use:   "teachers",
 	Short: "Update the teacher list for a course",
-	Long: `Set the list of teachers for a course. Pass one or more --teacher flags with user aliases.
-
-This replaces the full teacher list — include all desired teachers.
+	Long: `Add or remove teachers from a course. Use --add and --remove flags with user aliases.
 
 Examples:
-  andamio course owner teachers --course-id <id> --teacher alice --teacher bob`,
+  andamio course owner teachers --course-id <id> --add alice --add bob
+  andamio course owner teachers --course-id <id> --remove charlie
+  andamio course owner teachers --course-id <id> --add alice --remove charlie`,
 	RunE: runCourseOwnerTeachers,
 }
 
@@ -90,13 +90,16 @@ func init() {
 	courseOwnerCmd.AddCommand(courseOwnerTeachersCmd)
 
 	// create flags
-	courseOwnerCreateCmd.Flags().String("title", "", "Course title (required)")
-	courseOwnerCreateCmd.MarkFlagRequired("title")
+	courseOwnerCreateCmd.Flags().String("course-id", "", "Course ID (required — derived from on-chain NFT policy)")
+	courseOwnerCreateCmd.MarkFlagRequired("course-id")
+	courseOwnerCreateCmd.Flags().String("title", "", "Course title")
 	courseOwnerCreateCmd.Flags().String("description", "", "Course description")
 	courseOwnerCreateCmd.Flags().String("image-url", "", "Course image URL")
 	courseOwnerCreateCmd.Flags().String("video-url", "", "Course video URL")
 	courseOwnerCreateCmd.Flags().String("category", "", "Course category")
 	courseOwnerCreateCmd.Flags().Bool("public", false, "Make course publicly visible")
+	courseOwnerCreateCmd.Flags().String("pending-tx-hash", "", "Transaction hash of the pending on-chain creation (required)")
+	courseOwnerCreateCmd.MarkFlagRequired("pending-tx-hash")
 
 	// update flags
 	courseOwnerUpdateCmd.Flags().String("course-id", "", "Course ID (required)")
@@ -112,7 +115,8 @@ func init() {
 	courseOwnerRegisterCmd.Flags().String("course-id", "", "Course ID (required)")
 	courseOwnerRegisterCmd.MarkFlagRequired("course-id")
 	courseOwnerRegisterCmd.Flags().String("tx-hash", "", "Transaction hash from on-chain creation")
-	courseOwnerRegisterCmd.Flags().String("title", "", "Course title")
+	courseOwnerRegisterCmd.Flags().String("title", "", "Course title (required)")
+	courseOwnerRegisterCmd.MarkFlagRequired("title")
 	courseOwnerRegisterCmd.Flags().String("description", "", "Course description")
 	courseOwnerRegisterCmd.Flags().String("image-url", "", "Course image URL")
 	courseOwnerRegisterCmd.Flags().String("video-url", "", "Course video URL")
@@ -122,21 +126,27 @@ func init() {
 	// teachers flags
 	courseOwnerTeachersCmd.Flags().String("course-id", "", "Course ID (required)")
 	courseOwnerTeachersCmd.MarkFlagRequired("course-id")
-	courseOwnerTeachersCmd.Flags().StringArray("teacher", nil, "Teacher alias (repeatable)")
-	courseOwnerTeachersCmd.MarkFlagRequired("teacher")
+	courseOwnerTeachersCmd.Flags().StringArray("add", nil, "Teacher alias to add (repeatable)")
+	courseOwnerTeachersCmd.Flags().StringArray("remove", nil, "Teacher alias to remove (repeatable)")
 }
 
 func runCourseOwnerCreate(cmd *cobra.Command, args []string) error {
+	courseID, _ := cmd.Flags().GetString("course-id")
 	title, _ := cmd.Flags().GetString("title")
 	description, _ := cmd.Flags().GetString("description")
 	imageURL, _ := cmd.Flags().GetString("image-url")
 	videoURL, _ := cmd.Flags().GetString("video-url")
 	category, _ := cmd.Flags().GetString("category")
 	isPublic, _ := cmd.Flags().GetBool("public")
+	pendingTxHash, _ := cmd.Flags().GetString("pending-tx-hash")
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	payload := map[string]interface{}{
-		"title": title,
+		"course_id":       courseID,
+		"pending_tx_hash": pendingTxHash,
+	}
+	if title != "" {
+		payload["title"] = title
 	}
 	if description != "" {
 		payload["description"] = description
@@ -160,7 +170,7 @@ func runCourseOwnerCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Creating course: %s\n", title)
+		fmt.Fprintf(os.Stderr, "Creating course: %s\n", courseID)
 	}
 
 	c := client.New(cfg)
@@ -297,12 +307,22 @@ func runCourseOwnerRegister(cmd *cobra.Command, args []string) error {
 
 func runCourseOwnerTeachers(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
-	teachers, _ := cmd.Flags().GetStringArray("teacher")
+	addTeachers, _ := cmd.Flags().GetStringArray("add")
+	removeTeachers, _ := cmd.Flags().GetStringArray("remove")
 	isJSON := output.GetFormat() == output.FormatJSON
+
+	if len(addTeachers) == 0 && len(removeTeachers) == 0 {
+		return fmt.Errorf("specify at least one of --add or --remove")
+	}
 
 	payload := map[string]interface{}{
 		"course_id": courseID,
-		"teachers":  teachers,
+	}
+	if len(addTeachers) > 0 {
+		payload["add"] = addTeachers
+	}
+	if len(removeTeachers) > 0 {
+		payload["remove"] = removeTeachers
 	}
 
 	cfg, err := config.Load()

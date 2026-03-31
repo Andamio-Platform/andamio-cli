@@ -116,15 +116,15 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course get <id>` | `/api/v2/course/user/course/get/{id}` | either | Course details |
 | `course modules <id>` | `/api/v2/course/user/modules/{id}` | either | List modules |
 | `course slts <id> <module>` | `/api/v2/course/user/slts/{id}/{module}` | either | List SLTs in module |
-| `course lesson <id> <module> <slt>` | `/api/v2/course/user/lesson/{id}/{module}/{slt}` | either | Lesson content |
+| `course lesson <id> <module> <slt-index>` | `/api/v2/course/user/lesson/{id}/{module}/{slt}` | either | Lesson content. slt-index must be a positive integer |
 | `course assignment <id> <module>` | `/api/v2/course/user/assignment/{id}/{module}` | either | Module assignment |
 | `course intro <id> <module>` | `/api/v2/course/user/introduction/{id}/{module}` | either | Module introduction |
 | `course owner list` | `/v2/course/owner/courses/list` | jwt | List courses you own |
-| `course owner create --title <t>` | `/v2/course/owner/course/create` | jwt | Create course. `--description`, `--image-url`, `--video-url`, `--category`, `--public` |
+| `course owner create --course-id <id>` | `/v2/course/owner/course/create` | jwt | Create course. `--title`, `--description`, `--image-url`, `--video-url`, `--category`, `--public`, `--pending-tx-hash` |
 | `course owner update --course-id <id>` | `/v2/course/owner/course/update` | jwt | Update course metadata. Only changed flags sent |
-| `course owner register --course-id <id>` | `/v2/course/owner/course/register` | jwt | Register on-chain course with off-chain metadata |
-| `course owner teachers --course-id <id>` | `/v2/course/owner/teachers/update` | jwt | Set teacher list. `--teacher` (repeatable) |
-| `course teacher register-module` | `/v2/course/teacher/course-module/register` | jwt | Register module from chain. `--course-id`, `--module-code` |
+| `course owner register --course-id <id> --title <t>` | `/v2/course/owner/course/register` | jwt | Register on-chain course with off-chain metadata. `--title` required |
+| `course owner teachers --course-id <id>` | `/v2/course/owner/teachers/update` | jwt | Add/remove teachers. `--add` (repeatable), `--remove` (repeatable) |
+| `course teacher register-module` | `/v2/course/teacher/course-module/register` | jwt | Register module from chain. `--course-id`, `--module-code`, `--slt-hash` |
 | `course teacher publish-module` | `/v2/course/teacher/course-module/publish` | jwt | Publish module. `--course-id`, `--module-code` |
 | `course teacher delete-module` | `/v2/course/teacher/course-module/delete` | jwt | Delete module. `--course-id`, `--module-code` |
 | `course teacher update-module-status` | `/v2/course/teacher/course-module/update-status` | jwt | Update module status. `--course-id`, `--module-code`, `--status` |
@@ -133,12 +133,12 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course student courses` | `/v2/course/student/courses/list` | jwt | List enrolled courses |
 | `course student credentials` | `/v2/course/student/credentials/list` | jwt | List earned credentials |
 | `course student commitments` | `/v2/course/student/assignment-commitments/list` | jwt | List assignment commitments |
-| `course student commitment` | `/v2/course/student/assignment-commitment/get` | jwt | Get commitment. `--course-id`, `--module-code` |
+| `course student commitment` | `/v2/course/student/assignment-commitment/get` | jwt | Get commitment. `--course-id`, `--slt-hash` (required), `--module-code` (optional) |
 | `course student create` | `/v2/course/student/commitment/create` | jwt | Enroll in module. `--course-id`, `--module-code` |
 | `course student submit` | `/v2/course/student/commitment/submit` | jwt | Submit evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
 | `course student update` | `/v2/course/student/commitment/update` | jwt | Update evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
-| `course student leave` | `/v2/course/student/commitment/leave` | jwt | Leave commitment. `--course-id`, `--module-code` |
-| `course student claim` | `/v2/course/student/commitment/claim` | jwt | Claim credential. `--course-id`, `--module-code` |
+| `course student leave` | `/v2/course/student/commitment/leave` | jwt | Leave commitment. `--course-id`, `--module-code`, `--pending-tx-hash` |
+| `course student claim` | `/v2/course/student/commitment/claim` | jwt | Claim credential. `--course-id`, `--module-code`, `--pending-tx-hash` |
 
 ### project — Project data
 | Command | Endpoint | Auth | Description |
@@ -146,9 +146,9 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project list` | `/api/v2/project/user/projects/list` | either | List projects |
 | `project get <id>` | `/api/v2/project/user/project/{id}` | either | Project details |
 | `project owner list` | `/v2/project/owner/projects/list` | jwt | List projects you own |
-| `project owner create --title <t>` | `/v2/project/owner/project/create` | jwt | Create project. `--description`, `--image-url`, `--video-url`, `--category`, `--public` |
+| `project owner create --project-id <id>` | `/v2/project/owner/project/create` | jwt | Create project. `--title`, `--description`, `--image-url`, `--video-url`, `--category`, `--public`, `--pending-tx-hash` |
 | `project owner update --project-id <id>` | `/v2/project/owner/project/update` | jwt | Update project metadata. Only changed flags sent |
-| `project owner register --project-id <id>` | `/v2/project/owner/project/register` | jwt | Register on-chain project with off-chain metadata |
+| `project owner register --project-id <id> --title <t>` | `/v2/project/owner/project/register` | jwt | Register on-chain project with off-chain metadata. `--title` required |
 | `project tasks <project-id>` | `/v2/project/user/tasks/list` | either | List tasks (public view) |
 | `project manager commitments --project-id <id>` | `/v2/project/manager/commitments/list` | jwt | List pending assessments |
 | `project contributor list` | `/v2/project/contributor/projects/list` | jwt | List contributor projects |

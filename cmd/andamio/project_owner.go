@@ -37,8 +37,8 @@ For on-chain project creation, use: andamio tx run /v2/tx/instance/owner/project
 Then register the project with: andamio project owner register
 
 Examples:
-  andamio project owner create --title "Community Development"
-  andamio project owner create --title "My Project" --description "Build things" --public`,
+  andamio project owner create --project-id abc123 --pending-tx-hash tx123 --title "Community Development"
+  andamio project owner create --project-id abc123 --pending-tx-hash tx123 --description "Build things" --public`,
 	RunE: runProjectOwnerCreate,
 }
 
@@ -64,7 +64,7 @@ Typical flow:
   2. andamio project owner register --project-id <id>
 
 Examples:
-  andamio project owner register --project-id <id>
+  andamio project owner register --project-id <id> --title "My Project"
   andamio project owner register --project-id <id> --title "My Project" --public`,
 	RunE: runProjectOwnerRegister,
 }
@@ -77,13 +77,16 @@ func init() {
 	projectOwnerCmd.AddCommand(projectOwnerRegisterCmd)
 
 	// create flags
-	projectOwnerCreateCmd.Flags().String("title", "", "Project title (required)")
-	projectOwnerCreateCmd.MarkFlagRequired("title")
+	projectOwnerCreateCmd.Flags().String("project-id", "", "Project ID (required — derived from on-chain NFT policy)")
+	projectOwnerCreateCmd.MarkFlagRequired("project-id")
+	projectOwnerCreateCmd.Flags().String("title", "", "Project title")
 	projectOwnerCreateCmd.Flags().String("description", "", "Project description")
 	projectOwnerCreateCmd.Flags().String("image-url", "", "Project image URL")
 	projectOwnerCreateCmd.Flags().String("video-url", "", "Project video URL")
 	projectOwnerCreateCmd.Flags().String("category", "", "Project category")
 	projectOwnerCreateCmd.Flags().Bool("public", false, "Make project publicly visible")
+	projectOwnerCreateCmd.Flags().String("pending-tx-hash", "", "Transaction hash of the pending on-chain creation (required)")
+	projectOwnerCreateCmd.MarkFlagRequired("pending-tx-hash")
 
 	// update flags
 	projectOwnerUpdateCmd.Flags().String("project-id", "", "Project ID (required)")
@@ -98,7 +101,8 @@ func init() {
 	projectOwnerRegisterCmd.Flags().String("project-id", "", "Project ID (required)")
 	projectOwnerRegisterCmd.MarkFlagRequired("project-id")
 	projectOwnerRegisterCmd.Flags().String("tx-hash", "", "Transaction hash from on-chain creation")
-	projectOwnerRegisterCmd.Flags().String("title", "", "Project title")
+	projectOwnerRegisterCmd.Flags().String("title", "", "Project title (required)")
+	projectOwnerRegisterCmd.MarkFlagRequired("title")
 	projectOwnerRegisterCmd.Flags().String("description", "", "Project description")
 	projectOwnerRegisterCmd.Flags().String("image-url", "", "Project image URL")
 	projectOwnerRegisterCmd.Flags().String("video-url", "", "Project video URL")
@@ -107,16 +111,22 @@ func init() {
 }
 
 func runProjectOwnerCreate(cmd *cobra.Command, args []string) error {
+	projectID, _ := cmd.Flags().GetString("project-id")
 	title, _ := cmd.Flags().GetString("title")
 	description, _ := cmd.Flags().GetString("description")
 	imageURL, _ := cmd.Flags().GetString("image-url")
 	videoURL, _ := cmd.Flags().GetString("video-url")
 	category, _ := cmd.Flags().GetString("category")
 	isPublic, _ := cmd.Flags().GetBool("public")
+	pendingTxHash, _ := cmd.Flags().GetString("pending-tx-hash")
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	payload := map[string]interface{}{
-		"title": title,
+		"project_id":      projectID,
+		"pending_tx_hash": pendingTxHash,
+	}
+	if title != "" {
+		payload["title"] = title
 	}
 	if description != "" {
 		payload["description"] = description
@@ -140,7 +150,7 @@ func runProjectOwnerCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Creating project: %s\n", title)
+		fmt.Fprintf(os.Stderr, "Creating project: %s\n", projectID)
 	}
 
 	c := client.New(cfg)
