@@ -48,6 +48,9 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 		return nil, err
 	}
 
+	// Merge config headers with flag headers (flag headers take precedence)
+	mergedHeaders := mergeSubmitHeaders(cfg.SubmitHeaders, params.Headers)
+
 	// Set up context with SIGINT handling
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -140,7 +143,7 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 		fmt.Fprintf(os.Stderr, "  Submitting to %s\n", submitURL)
 	}
 
-	if _, err := submit.SubmitTransaction(submitURL, signResult.SignedTx, params.Headers); err != nil {
+	if _, err := submit.SubmitTransaction(submitURL, signResult.SignedTx, mergedHeaders); err != nil {
 		if !isJSON {
 			fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
 		}

@@ -287,6 +287,86 @@ andamio course import compiled/my-course/101 --course-id <course-id>
 - **Lesson coach integration:** Import modules compiled by lesson-coach
 - **Bulk content updates:** Edit multiple lessons at once, import all changes atomically
 
+## Course Creation Workflow
+
+The full workflow for creating a course from scratch. Each step builds on the previous one.
+
+### 1. Create Course On-Chain
+
+```bash
+andamio tx run /v2/tx/instance/owner/course/create \
+  --body '{"alias":"my-alias","teachers":["my-alias"],"initiator_data":{"change_address":"addr_test1...","used_addresses":["addr_test1..."]}}' \
+  --skey ./payment.skey \
+  --tx-type course_create
+```
+
+This creates the course on-chain and **auto-registers** it in the DB. The response includes the `course_id`.
+
+### 2. Set Course Metadata
+
+```bash
+andamio course owner update --course-id <id> --title "My Course" --description "..." --public
+```
+
+Use `update`, not `create` or `register` — the course was already registered by the TX in step 1.
+
+### 3. Prepare Module Content
+
+Use [andamio-lesson-coach](https://github.com/Andamio-Platform/andamio-lesson-coach-v2) to create and compile modules, or write markdown files manually following the directory structure in [Course Import/Export](#course-importexport).
+
+### 4. Import Modules to DB
+
+```bash
+andamio course import-all ./compiled/my-course --course-id <id> --create
+```
+
+Creates DRAFT modules with content. The `--create` flag creates new modules (omit it when updating existing ones).
+
+### 5. Publish Modules On-Chain
+
+```bash
+andamio tx run /v2/tx/course/teacher/modules/manage \
+  --body-file manage-modules.json \
+  --skey ./payment.skey \
+  --tx-type modules_manage \
+  --instance-id <course-id>
+```
+
+### 6. Link On-Chain Modules to DB
+
+For each module, link the on-chain module (identified by `slt_hash`) to the DB module:
+
+```bash
+andamio course teacher register-module \
+  --course-id <id> --module-code 101 --slt-hash <hash>
+```
+
+Get slt_hashes from the TX response or by inspecting the on-chain state.
+
+### 7. Set Modules to DRAFT for Content Import
+
+`register-module` sets the module status to APPROVED, but content import requires DRAFT status:
+
+```bash
+andamio course teacher update-module-status \
+  --course-id <id> --module-code 101 --status DRAFT
+```
+
+### 8. Re-Import Content into Linked Modules
+
+```bash
+andamio course import-all ./compiled/my-course --course-id <id>
+```
+
+This time without `--create` — the modules already exist. Content (lessons, intro, assignment, SLTs) is imported into the linked modules.
+
+### Common Gotchas
+
+- **`register-module` sets APPROVED**: You must set status back to DRAFT before importing content (step 7). Import skips SLT updates for non-DRAFT modules.
+- **Module hash ordering is non-deterministic**: On-chain token names (slt_hashes) don't sort in the same order as your module codes. Check the register response to map hashes to codes.
+- **`publish-module` is for DB→chain linking, not on-chain publishing**: To publish modules on-chain, use `tx run` with `modules_manage`. The `publish-module` command links an existing on-chain module to a DB record.
+- **`course owner create` vs `update`**: After `tx run` with `course_create`, the course is auto-registered. Use `update` to set metadata. `create` is only needed when auto-registration failed.
+
 ## Project Tasks
 
 Project tasks are on-chain bounties that project managers create to reward contributors. All task commands require wallet authentication (`andamio user login`) and manager access on the project.

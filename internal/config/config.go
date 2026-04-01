@@ -16,8 +16,9 @@ type Config struct {
 	JWTExpiresAt string `json:"jwt_expires_at,omitempty"`
 	UserAlias    string `json:"user_alias,omitempty"`
 	UserID       string `json:"user_id,omitempty"`
-	UserKeyHash  string `json:"user_key_hash,omitempty"`
-	SubmitURL    string `json:"submit_url,omitempty"`
+	UserKeyHash   string            `json:"user_key_hash,omitempty"`
+	SubmitURL     string            `json:"submit_url,omitempty"`
+	SubmitHeaders map[string]string `json:"submit_headers,omitempty"`
 }
 
 // ClearUserAuth removes all user authentication fields from the config.
@@ -141,6 +142,15 @@ func Load() (*Config, error) {
 	// ANDAMIO_SUBMIT_URL env var overrides stored submit URL
 	if submitURL := os.Getenv("ANDAMIO_SUBMIT_URL"); submitURL != "" {
 		cfg.SubmitURL = submitURL
+	}
+
+	// ANDAMIO_SUBMIT_HEADERS env var overrides stored submit headers (JSON map)
+	if headersJSON := os.Getenv("ANDAMIO_SUBMIT_HEADERS"); headersJSON != "" {
+		var headers map[string]string
+		if err := json.Unmarshal([]byte(headersJSON), &headers); err != nil {
+			return nil, fmt.Errorf("invalid ANDAMIO_SUBMIT_HEADERS (expected JSON object): %w", err)
+		}
+		cfg.SubmitHeaders = headers
 	}
 
 	// Validate base URL on load to catch config file tampering

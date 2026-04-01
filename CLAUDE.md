@@ -43,7 +43,7 @@ Go CLI using Cobra for the Andamio Protocol. Dependencies: Cobra (CLI), `pkg/bro
 ### Package Layout
 
 - `cmd/andamio/` — All command definitions, one file per command group. `main.go` defines `rootCmd` with global `--output` flag and version info.
-- `internal/config/` — Config management. Single `Config` struct serialized to `~/.andamio/config.json`. Holds API key, base URL, user JWT, submit URL fields. Permissions: 0600.
+- `internal/config/` — Config management. Single `Config` struct serialized to `~/.andamio/config.json`. Holds API key, base URL, user JWT, submit URL, submit headers fields. Permissions: 0600.
 - `internal/client/` — HTTP client wrapping `net/http`. GET/POST/PUT. Automatically sets `X-API-Key` and `Authorization: Bearer` headers from config.
 - `internal/output/` — Multi-format output (text, json, csv, markdown). Global format set via `--output` flag in `PersistentPreRunE`. Supports nested key access with dot notation.
 - `internal/cardano/` — Cardano transaction signing. Loads `.skey` files via Bursa, extracts raw CBOR body bytes (preserves original encoding), signs with Blake2b-256 + ed25519, assembles VKey witnesses (merges into existing witness set).
@@ -97,6 +97,8 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `config show` | local | none | Show current config |
 | `config set-url <url>` | local | none | Switch environment |
 | `config set-submit-url <url>` | local | none | Set Cardano submit API URL |
+| `config set-submit-header <key> <value>` | local | none | Persist a submit API header (e.g., Blockfrost project_id) |
+| `config remove-submit-header <key>` | local | none | Remove a persisted submit header |
 
 ### user — Wallet auth and user info
 | Command | Endpoint | Auth | Description |
@@ -120,7 +122,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course assignment <id> <module>` | `/api/v2/course/user/assignment/{id}/{module}` | either | Module assignment |
 | `course intro <id> <module>` | `/api/v2/course/user/introduction/{id}/{module}` | either | Module introduction |
 | `course owner list` | `/v2/course/owner/courses/list` | jwt | List courses you own |
-| `course owner create --course-id <id> --pending-tx-hash <hash>` | `/v2/course/owner/course/create` | jwt | Create course. `--title`, `--description`, `--image-url`, `--video-url`, `--category`, `--public` |
+| `course owner create --course-id <id> --pending-tx-hash <hash>` | `/v2/course/owner/course/create` | jwt | Create off-chain course record (after on-chain creation). `--title`, `--description`, `--image-url`, `--video-url`, `--category`, `--public` |
 | `course owner update --course-id <id>` | `/v2/course/owner/course/update` | jwt | Update course metadata. Only changed flags sent |
 | `course owner register --course-id <id> --title <t>` | `/v2/course/owner/course/register` | jwt | Register on-chain course with off-chain metadata. `--title` required |
 | `course owner teachers --course-id <id>` | `/v2/course/owner/teachers/update` | jwt | Add/remove teachers. `--add` (repeatable), `--remove` (repeatable) |

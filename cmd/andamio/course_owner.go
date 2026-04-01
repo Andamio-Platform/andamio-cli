@@ -30,11 +30,18 @@ var courseOwnerListCmd = &cobra.Command{
 
 var courseOwnerCreateCmd = &cobra.Command{
 	Use:   "create",
-	Short: "Create a new course",
-	Long: `Create a new off-chain course record.
+	Short: "Create off-chain course record (after on-chain creation)",
+	Long: `Create the off-chain metadata record for a course that has already been created on-chain.
 
-For on-chain course creation, use: andamio tx run /v2/tx/instance/owner/course/create
-Then register the course with: andamio course owner register
+Note: In most cases, 'andamio tx run' with course_create auto-registers the course in the DB.
+Use 'andamio course owner update' to set metadata after that. This command is only needed when
+the auto-registration did not occur (e.g., the TX confirmed but DB update failed).
+
+Requires --course-id (from the on-chain NFT policy) and --pending-tx-hash.
+
+Typical workflow:
+  1. andamio tx run /v2/tx/instance/owner/course/create ...  (creates on-chain, auto-registers)
+  2. andamio course owner update --course-id <id> --title ...  (set metadata)
 
 Examples:
   andamio course owner create --course-id abc123 --pending-tx-hash tx123 --title "Introduction to Cardano"

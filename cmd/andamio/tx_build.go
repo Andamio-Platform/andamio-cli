@@ -24,9 +24,13 @@ Returns the full API response including unsigned_tx and any endpoint-specific fi
 
 List available transaction types with: andamio tx types
 
+Note: initiator_data is a WalletData object, not a plain address string:
+  {"change_address":"addr_test1...", "used_addresses":["addr_test1..."]}
+
 Examples:
-  andamio tx build /v2/tx/global/user/access-token/mint --body '{"alias":"dev1","initiator_data":"addr_test1..."}'
-  andamio tx build /v2/tx/instance/owner/course/create --body-file create-course.json --output json`,
+  andamio tx build /v2/tx/instance/owner/course/create --body-file create-course.json --output json
+  andamio tx build /v2/tx/global/user/access-token/mint \
+    --body '{"alias":"dev1","initiator_data":{"change_address":"addr_test1...","used_addresses":["addr_test1..."]}}'`,
 	Args: cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {

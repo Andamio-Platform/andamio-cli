@@ -27,7 +27,7 @@ var courseTeacherRegisterModuleCmd = &cobra.Command{
 var courseTeacherPublishModuleCmd = &cobra.Command{
 	Use:   "publish-module",
 	Short: "Publish a course module",
-	RunE:  runCourseTeacherModuleAction("/api/v2/course/teacher/course-module/publish", "Publishing"),
+	RunE:  runCourseTeacherPublishModule,
 }
 
 var courseTeacherDeleteModuleCmd = &cobra.Command{
@@ -155,8 +155,64 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runCourseTeacherPublishModule is a dedicated handler for publish-module that inspects
+// the API response for signals that the module was actually linked to an on-chain counterpart.
+// Unlike the generic handler, it warns when the publish appears to be a no-op.
+func runCourseTeacherPublishModule(cmd *cobra.Command, args []string) error {
+	courseID, _ := cmd.Flags().GetString("course-id")
+	moduleCode, _ := cmd.Flags().GetString("module-code")
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	payload := map[string]interface{}{
+		"course_id":          courseID,
+		"course_module_code": moduleCode,
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Publishing module %s...\n", moduleCode)
+	}
+
+	c := client.New(cfg)
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/course/teacher/course-module/publish", payload, &resp); err != nil {
+		return fmt.Errorf("failed to publish module: %w", err)
+	}
+
+	// Inspect response for linkage signals
+	source, hasSource := resp["source"]
+	warningMsg, hasWarning := resp["warning"]
+	linked := hasSource && source == "merged"
+
+	if hasWarning {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", warningMsg)
+	}
+
+	if !linked {
+		fmt.Fprintf(os.Stderr, "Warning: module %s may not have been linked to an on-chain module.\n"+
+			"Ensure the module exists on-chain first (use 'andamio tx run' with modules_manage).\n"+
+			"Then link with: andamio course teacher register-module --course-id %s --module-code %s --slt-hash <hash>\n",
+			moduleCode, courseID, moduleCode)
+	}
+
+	if isJSON {
+		return output.PrintJSON(resp)
+	}
+
+	if linked {
+		fmt.Fprintf(os.Stderr, "Module %s: published.\n", moduleCode)
+	} else {
+		fmt.Fprintf(os.Stderr, "Module %s: done.\n", moduleCode)
+	}
+	return nil
+}
+
 // runCourseTeacherModuleAction returns a RunE function for module lifecycle commands
-// that take course-id and module-code.
+// that take course-id and module-code. Used by delete-module.
 func runCourseTeacherModuleAction(endpoint, verb string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		courseID, _ := cmd.Flags().GetString("course-id")
