@@ -141,6 +141,8 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course student update` | `/v2/course/student/commitment/update` | jwt | Update evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
 | `course student leave` | `/v2/course/student/commitment/leave` | jwt | Leave commitment. `--course-id`, `--module-code`, `--pending-tx-hash` |
 | `course student claim` | `/v2/course/student/commitment/claim` | jwt | Claim credential. `--course-id`, `--module-code`, `--pending-tx-hash` |
+| `course credential verify-hash <course-id>` | `/api/v2/course/user/modules/{id}` | either | Verify credential hashes match computed SLT hashes |
+| `course credential compute-hash` | local | none | Compute SLT hash from `--slt` flags or `--file` (outline.md). No auth required |
 
 ### project — Project data
 | Command | Endpoint | Auth | Description |
@@ -167,6 +169,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project task export <project-id>` | `/v2/project/manager/tasks/list` | jwt | Export tasks to tasks/<slug>/ as Markdown |
 | `project task import <project-id>` | `/v2/project/manager/task/create,update` | jwt | Import tasks from Markdown files. --dry-run supported |
 | `project task verify-hash <project-id>` | `/v2/project/user/tasks/list` | either | Verify task hashes match computed hashes (diagnostic) |
+| `project task compute-hash` | local | none | Compute task hash from `--content`, `--lovelace`, `--expiration`, `--token` flags or `--file`. No auth required |
 
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |

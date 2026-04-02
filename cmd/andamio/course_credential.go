@@ -59,7 +59,7 @@ func init() {
 	courseCredentialCmd.AddCommand(courseCredentialVerifyHashCmd)
 	courseCredentialCmd.AddCommand(courseCredentialComputeHashCmd)
 
-	courseCredentialComputeHashCmd.Flags().StringSlice("slt", nil, "SLT text (repeatable)")
+	courseCredentialComputeHashCmd.Flags().StringArray("slt", nil, "SLT text (repeatable)")
 	courseCredentialComputeHashCmd.Flags().String("file", "", "Path to outline.md file containing SLTs")
 }
 
@@ -183,7 +183,7 @@ func runCredentialVerifyHash(cmd *cobra.Command, args []string) error {
 func runCredentialComputeHash(cmd *cobra.Command, args []string) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
-	sltFlags, _ := cmd.Flags().GetStringSlice("slt")
+	sltFlags, _ := cmd.Flags().GetStringArray("slt")
 	fileFlag, _ := cmd.Flags().GetString("file")
 
 	if len(sltFlags) > 0 && fileFlag != "" {
