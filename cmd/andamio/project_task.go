@@ -106,6 +106,7 @@ Examples:
   andamio project task compute-hash --content "Build API" --lovelace 5000000 --expiration 2026-12-31
   andamio project task compute-hash --content "Earn XP" --lovelace 5000000 --expiration 2026-12-31 --token "policyid...,XP,50"
   andamio project task compute-hash --file tasks/my-project/001-build-api.md --output json`,
+	Args: cobra.NoArgs,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Override parent's jwtAuthPreRunE — this command is purely local,
 		// no auth needed. Only run the root output format setup.

@@ -284,12 +284,13 @@ func TestComputeTaskHash_WithTokens(t *testing.T) {
 func TestParseExpiration_Formats(t *testing.T) {
 	tests := []struct {
 		input   string
+		wantMs  string // expected Unix milliseconds string, empty if wantErr
 		wantErr bool
 	}{
-		{"2026-12-31T00:00:00Z", false},
-		{"2026-12-31", false},
-		{"not-a-date", true},
-		{"2026/12/31", true},
+		{"2026-12-31T00:00:00Z", "1798675200000", false},
+		{"2026-12-31", "1798675200000", false}, // date-only = midnight UTC
+		{"not-a-date", "", true},
+		{"2026/12/31", "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -302,8 +303,8 @@ func TestParseExpiration_Formats(t *testing.T) {
 				if err != nil {
 					t.Errorf("unexpected error for %q: %v", tt.input, err)
 				}
-				if result == "" {
-					t.Error("expected non-empty result")
+				if result != tt.wantMs {
+					t.Errorf("parseExpiration(%q) = %q, want %q", tt.input, result, tt.wantMs)
 				}
 			}
 		})

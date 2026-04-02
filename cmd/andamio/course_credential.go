@@ -28,6 +28,7 @@ Examples:
   andamio course credential compute-hash --slt "Describe how X works" --slt "Build Y"
   andamio course credential compute-hash --file ./compiled/my-course/101/outline.md
   andamio course credential compute-hash --file outline.md --output json`,
+	Args: cobra.NoArgs,
 	RunE: runCredentialComputeHash,
 }
 
