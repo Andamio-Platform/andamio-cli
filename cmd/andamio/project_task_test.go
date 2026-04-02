@@ -1,8 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
+	"github.com/adrg/frontmatter"
 )
 
 // Valid 56-char hex policy IDs for tests
@@ -184,5 +189,123 @@ func TestHexRoundTrip(t *testing.T) {
 		if decoded != name {
 			t.Errorf("round-trip failed for %q: encoded=%q decoded=%q", name, encoded, decoded)
 		}
+	}
+}
+
+func TestComputeTaskHash_FromFlags_Deterministic(t *testing.T) {
+	task := cardano.TaskData{
+		ProjectContent: "Build API integration",
+		ExpirationTime: 1798761600000, // 2026-12-31T00:00:00Z
+		LovelaceAmount: 5000000,
+	}
+	hash1, err := cardano.ComputeTaskHash(task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	hash2, err := cardano.ComputeTaskHash(task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if hash1 != hash2 {
+		t.Errorf("hash not deterministic: %s != %s", hash1, hash2)
+	}
+	if len(hash1) != 64 {
+		t.Errorf("expected 64-char hex hash, got %d chars", len(hash1))
+	}
+}
+
+func TestComputeTaskHash_FromFrontmatter(t *testing.T) {
+	content := `---
+title: "Build API integration"
+lovelace: "5000000"
+expiration_time: "2026-12-31T00:00:00Z"
+---
+
+Task body content here.
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "task.md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify the frontmatter parses correctly
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var fm TaskFrontmatter
+	_, err = frontmatter.Parse(strings.NewReader(string(data)), &fm)
+	if err != nil {
+		t.Fatalf("frontmatter parse error: %v", err)
+	}
+
+	if fm.Title != "Build API integration" {
+		t.Errorf("title = %q, want %q", fm.Title, "Build API integration")
+	}
+	if fm.Lovelace != "5000000" {
+		t.Errorf("lovelace = %q, want %q", fm.Lovelace, "5000000")
+	}
+	if fm.ExpirationTime != "2026-12-31T00:00:00Z" {
+		t.Errorf("expiration = %q, want %q", fm.ExpirationTime, "2026-12-31T00:00:00Z")
+	}
+}
+
+func TestComputeTaskHash_WithTokens(t *testing.T) {
+	task := cardano.TaskData{
+		ProjectContent: "Earn XP",
+		ExpirationTime: 1798761600000,
+		LovelaceAmount: 5000000,
+		NativeAssets: []cardano.NativeAsset{
+			{
+				PolicyID:  testPolicyA,
+				TokenName: "5850", // "XP" hex-encoded
+				Quantity:  50,
+			},
+		},
+	}
+
+	hash, err := cardano.ComputeTaskHash(task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Same inputs without tokens should produce different hash
+	taskNoTokens := task
+	taskNoTokens.NativeAssets = nil
+	hashNoTokens, _ := cardano.ComputeTaskHash(taskNoTokens)
+
+	if hash == hashNoTokens {
+		t.Error("hash with tokens should differ from hash without tokens")
+	}
+}
+
+func TestParseExpiration_Formats(t *testing.T) {
+	tests := []struct {
+		input   string
+		wantErr bool
+	}{
+		{"2026-12-31T00:00:00Z", false},
+		{"2026-12-31", false},
+		{"not-a-date", true},
+		{"2026/12/31", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result, err := parseExpiration(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for %q, got result %q", tt.input, result)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for %q: %v", tt.input, err)
+				}
+				if result == "" {
+					t.Error("expected non-empty result")
+				}
+			}
+		})
 	}
 }
