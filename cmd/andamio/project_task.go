@@ -728,7 +728,14 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
+		// Try top-level task_index (merged tasks), then content.task_index
+		// (chain_only tasks), then fall back to 1-based position.
 		idx, _ := m["task_index"].(float64)
+		if idx == 0 {
+			if content, ok := m["content"].(map[string]interface{}); ok {
+				idx, _ = content["task_index"].(float64)
+			}
+		}
 		apiHash, _ := m["task_hash"].(string)
 		if apiHash == "" {
 			continue // skip non-on-chain tasks
