@@ -236,7 +236,7 @@ func pollTxStatus(ctx context.Context, c *client.Client, txHash string, timeout 
 			case "updated":
 				return state, nil
 			case "failed":
-				return state, fmt.Errorf("transaction confirmed but DB update failed")
+				return state, fmt.Errorf("transaction confirmed on-chain but DB update failed — see recovery steps above")
 			case "expired":
 				return state, fmt.Errorf("transaction expired without confirmation")
 			}

@@ -209,7 +209,16 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 	if err != nil {
 		if !isJSON {
 			fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
-			fmt.Fprintf(os.Stderr, "\nCheck later: andamio tx status %s\n", signResult.TxHash)
+			if finalState == "failed" {
+				fmt.Fprintf(os.Stderr, "\nTransaction confirmed on-chain but DB update failed.\n")
+				fmt.Fprintf(os.Stderr, "The on-chain state is authoritative — the gateway will retry automatically.\n")
+				fmt.Fprintf(os.Stderr, "\nDiagnostics:\n")
+				fmt.Fprintf(os.Stderr, "  andamio tx status %s\n", signResult.TxHash)
+				fmt.Fprintf(os.Stderr, "\nIf the state remains 'failed', re-register to retry:\n")
+				fmt.Fprintf(os.Stderr, "  andamio tx register --tx-hash %s --tx-type %s\n", signResult.TxHash, params.TxType)
+			} else {
+				fmt.Fprintf(os.Stderr, "\nCheck later: andamio tx status %s\n", signResult.TxHash)
+			}
 		}
 		return result, fail(finalState, "poll failed", err)
 	}

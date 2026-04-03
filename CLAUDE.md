@@ -255,10 +255,17 @@ andamio project task create "$PROJECT_ID" --title "..." --lovelace 5000000 --exp
 2. Add command using `getJSON("/api/v2/...")` pattern for simple GETs, or the full config→client→output pattern for lists or POST/PUT
 3. Register in `init()`
 
+## Workflow Guides
+
+| Guide | Location | Covers |
+|-------|----------|--------|
+| TX Lifecycle | `docs/TX-LIFECYCLE.md` | 5-step pipeline, terminal states, recovery procedures, all 17 TX types |
+| Course Lifecycle | `docs/COURSE-LIFECYCLE.md` | Course creation, module import, SLT hashes, publishing, student enrollment |
+| Project Lifecycle | `docs/PROJECT-LIFECYCLE.md` | Project creation, task management, contributor workflow, assessments |
+
 ## Planned Features
 
 - **Content Sync** (`sync pull`/`sync push`/`sync status`) — Bidirectional course content sync with conflict detection. Design in `docs/PLAN-content-sync.md`.
-- **Import/Export** — Export module content to local files, edit, reimport. Documented in andamio-docs CLI section.
 
 ## Cross-Repo Context
 

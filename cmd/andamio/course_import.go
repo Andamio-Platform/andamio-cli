@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -118,6 +119,7 @@ type ImportResult struct {
 	ModuleStatus   string                 `json:"module_status"`
 	SLTsLocked     bool                   `json:"slts_locked"`
 	SLTCount       int                    `json:"slt_count"`
+	SltHash        string                 `json:"slt_hash,omitempty"`
 	LessonCount    int                    `json:"lesson_count"`
 	HasIntro       bool                   `json:"has_introduction"`
 	HasAssignment  bool                   `json:"has_assignment"`
@@ -205,12 +207,17 @@ func importModule(p ImportParams) (*ImportResult, error) {
 				if !p.Quiet {
 					fmt.Printf("Dry-run: would create module %s (%s) with sort_order %d\n", data.Title, data.ModuleCode, p.SortOrder)
 				}
+				var earlyHash string
+				if len(data.SLTs) > 0 {
+					earlyHash = cardano.ComputeSltHash(data.SLTs)
+				}
 				return &ImportResult{
 					CourseID:   p.CourseID,
 					ModuleCode: data.ModuleCode,
 					Title:      data.Title,
 					DryRun:     true,
 					SLTCount:   len(data.SLTs),
+					SltHash:    earlyHash,
 					LessonCount: len(data.Lessons),
 					HasIntro:   data.Introduction != nil,
 					HasAssignment: data.Assignment != nil,
@@ -247,6 +254,11 @@ func importModule(p ImportParams) (*ImportResult, error) {
 		fmt.Printf("Module status is %s — SLTs are locked, updating content only\n", existing.Status)
 	}
 
+	var sltHash string
+	if len(data.SLTs) > 0 {
+		sltHash = cardano.ComputeSltHash(data.SLTs)
+	}
+
 	// Update the module via API (or dump payload in dry-run mode)
 	resp, err := updateModuleContent(p.Client, p.CourseID, data, existing, sltsLocked, p.DryRun)
 	if err != nil {
@@ -266,6 +278,7 @@ func importModule(p ImportParams) (*ImportResult, error) {
 		ModuleStatus:   existing.Status,
 		SLTsLocked:     sltsLocked,
 		SLTCount:       len(data.SLTs),
+		SltHash:        sltHash,
 		LessonCount:    len(data.Lessons),
 		HasIntro:       data.Introduction != nil,
 		HasAssignment:  data.Assignment != nil,
@@ -1206,6 +1219,17 @@ func updateModuleContent(c *client.Client, courseID string, data *ImportData, ex
 			slts[i] = slt
 		}
 		payload["slts"] = slts
+	}
+
+	// Compute and include SLT hash when SLTs exist
+	if len(data.SLTs) > 0 {
+		sltHash := cardano.ComputeSltHash(data.SLTs)
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "  Computed SLT hash: %s\n", sltHash)
+		}
+		if !sltsLocked {
+			payload["slt_hash"] = sltHash
+		}
 	}
 
 	// Build introduction — H1 title from file, preserve existing metadata
