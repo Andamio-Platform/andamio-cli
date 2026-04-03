@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
+	"github.com/adrg/frontmatter"
 	"github.com/spf13/cobra"
 )
 
@@ -87,6 +89,32 @@ Requires user authentication via 'andamio user login'.`,
 	RunE: runTaskDelete,
 }
 
+var projectTaskComputeHashCmd = &cobra.Command{
+	Use:   "compute-hash",
+	Short: "Compute task hash from task data fields",
+	Long: `Compute the Blake2b-256 hash of task data, matching the on-chain Plutus validator.
+
+This is the same hash used for task verification on-chain. Use it to
+pre-compute the task_hash before minting a task.
+
+Provide task data either as individual flags or via --file pointing to a
+task markdown file with frontmatter (same format as 'project task export').
+
+No authentication required — this is a purely local computation.
+
+Examples:
+  andamio project task compute-hash --content "Build API" --lovelace 5000000 --expiration 2026-12-31
+  andamio project task compute-hash --content "Earn XP" --lovelace 5000000 --expiration 2026-12-31 --token "policyid...,XP,50"
+  andamio project task compute-hash --file tasks/my-project/001-build-api.md --output json`,
+	Args: cobra.NoArgs,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Override parent's jwtAuthPreRunE — this command is purely local,
+		// no auth needed. Only run the root output format setup.
+		return rootCmd.PersistentPreRunE(cmd, args)
+	},
+	RunE: runTaskComputeHash,
+}
+
 var projectTaskVerifyHashCmd = &cobra.Command{
 	Use:   "verify-hash <project-id>",
 	Short: "Verify task hashes match computed hashes",
@@ -113,6 +141,14 @@ func init() {
 	projectTaskCmd.AddCommand(projectTaskUpdateCmd)
 	projectTaskCmd.AddCommand(projectTaskDeleteCmd)
 	projectTaskCmd.AddCommand(projectTaskVerifyHashCmd)
+	projectTaskCmd.AddCommand(projectTaskComputeHashCmd)
+
+	// Compute-hash flags
+	projectTaskComputeHashCmd.Flags().String("content", "", "Task content text (max 140 chars)")
+	projectTaskComputeHashCmd.Flags().String("lovelace", "", "Lovelace reward amount, e.g. 5000000")
+	projectTaskComputeHashCmd.Flags().String("expiration", "", "Expiration time in ISO 8601 format, e.g. 2026-12-31")
+	projectTaskComputeHashCmd.Flags().StringArray("token", nil, `Native asset token (repeatable, format: "policy_id,asset_name,quantity")`)
+	projectTaskComputeHashCmd.Flags().String("file", "", "Path to task markdown file with frontmatter")
 
 	// Create flags
 	projectTaskCreateCmd.Flags().String("title", "", "Task title (required)")
@@ -802,6 +838,139 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "\n%d tasks checked, %d mismatches\n", len(results), mismatches)
+	return nil
+}
+
+func runTaskComputeHash(cmd *cobra.Command, args []string) error {
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	fileFlag, _ := cmd.Flags().GetString("file")
+	contentFlag, _ := cmd.Flags().GetString("content")
+	lovelaceFlag, _ := cmd.Flags().GetString("lovelace")
+	expirationFlag, _ := cmd.Flags().GetString("expiration")
+	tokenStrs, _ := cmd.Flags().GetStringArray("token")
+
+	hasFieldFlags := contentFlag != "" || lovelaceFlag != "" || expirationFlag != "" || len(tokenStrs) > 0
+
+	if fileFlag != "" && hasFieldFlags {
+		return fmt.Errorf("cannot use --file with --content, --lovelace, --expiration, or --token; choose one input method")
+	}
+
+	var content, lovelace, expiration string
+	var nativeAssets []cardano.NativeAsset
+
+	if fileFlag != "" {
+		data, err := os.ReadFile(fileFlag)
+		if err != nil {
+			return fmt.Errorf("failed to read file: %w", err)
+		}
+
+		var fm TaskFrontmatter
+		_, err = frontmatter.Parse(bytes.NewReader(data), &fm)
+		if err != nil {
+			return fmt.Errorf("failed to parse frontmatter: %w", err)
+		}
+
+		if fm.Title == "" {
+			return fmt.Errorf("file %s is missing required 'title' in frontmatter (used as content)", fileFlag)
+		}
+		content = fm.Title
+
+		if fm.Lovelace == "" {
+			return fmt.Errorf("file %s is missing required 'lovelace' in frontmatter", fileFlag)
+		}
+		lovelace = fm.Lovelace
+
+		if fm.ExpirationTime == "" {
+			return fmt.Errorf("file %s is missing required 'expiration_time' in frontmatter", fileFlag)
+		}
+		expiration = fm.ExpirationTime
+
+		for _, t := range fm.Tokens {
+			assetNameHex := hexEncodeAssetName(t.AssetName)
+			qty, err := strconv.ParseUint(t.Quantity, 10, 64)
+			if err != nil {
+				return fmt.Errorf("invalid token quantity %q: %w", t.Quantity, err)
+			}
+			nativeAssets = append(nativeAssets, cardano.NativeAsset{
+				PolicyID:  t.PolicyID,
+				TokenName: assetNameHex,
+				Quantity:  qty,
+			})
+		}
+	} else {
+		if contentFlag == "" || lovelaceFlag == "" || expirationFlag == "" {
+			return fmt.Errorf("--content, --lovelace, and --expiration are all required (or use --file); see 'andamio project task compute-hash --help'")
+		}
+		content = contentFlag
+		lovelace = lovelaceFlag
+		expiration = expirationFlag
+
+		if len(tokenStrs) > 0 {
+			tokens, err := parseTokenFlags(tokenStrs)
+			if err != nil {
+				return err
+			}
+			for _, t := range tokens {
+				qty, err := strconv.ParseUint(t.Quantity, 10, 64)
+				if err != nil {
+					return fmt.Errorf("invalid token quantity %q: %w", t.Quantity, err)
+				}
+				nativeAssets = append(nativeAssets, cardano.NativeAsset{
+					PolicyID:  t.PolicyID,
+					TokenName: t.AssetName,
+					Quantity:  qty,
+				})
+			}
+		}
+	}
+
+	if err := validateLovelace(lovelace); err != nil {
+		return err
+	}
+
+	expirationMs, err := parseExpiration(expiration)
+	if err != nil {
+		return err
+	}
+	expMs, _ := strconv.ParseUint(expirationMs, 10, 64)
+	lovelaceVal, _ := strconv.ParseUint(lovelace, 10, 64)
+
+	taskData := cardano.TaskData{
+		ProjectContent: content,
+		ExpirationTime: expMs,
+		LovelaceAmount: lovelaceVal,
+		NativeAssets:   nativeAssets,
+	}
+
+	hash, err := cardano.ComputeTaskHash(taskData)
+	if err != nil {
+		return fmt.Errorf("hash computation failed: %w", err)
+	}
+
+	if isJSON {
+		tokensOut := make([]map[string]interface{}, 0, len(nativeAssets))
+		for _, a := range nativeAssets {
+			tokensOut = append(tokensOut, map[string]interface{}{
+				"policy_id":  a.PolicyID,
+				"token_name": a.TokenName,
+				"quantity":   a.Quantity,
+			})
+		}
+		return output.PrintJSON(map[string]interface{}{
+			"task_hash": hash,
+			"fields": map[string]interface{}{
+				"content":       content,
+				"lovelace":      lovelaceVal,
+				"expiration_ms": expMs,
+				"tokens":        tokensOut,
+			},
+		})
+	}
+
+	fmt.Printf("%s\n", hash)
+	fmt.Fprintf(os.Stderr, "Content: %s\n", content)
+	fmt.Fprintf(os.Stderr, "Lovelace: %d, Expiration: %d ms, Tokens: %d\n", lovelaceVal, expMs, len(nativeAssets))
 	return nil
 }
 

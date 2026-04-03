@@ -12,6 +12,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var courseCredentialComputeHashCmd = &cobra.Command{
+	Use:   "compute-hash",
+	Short: "Compute SLT hash from SLT texts or an outline file",
+	Long: `Compute the Blake2b-256 hash of SLT texts, matching the on-chain Plutus validator.
+
+This is the same hash used for credential verification on-chain. Use it to
+pre-compute the slt_hash before minting a module.
+
+Provide SLTs either as repeated --slt flags or via --file pointing to an outline.md.
+
+No authentication required — this is a purely local computation.
+
+Examples:
+  andamio course credential compute-hash --slt "Describe how X works" --slt "Build Y"
+  andamio course credential compute-hash --file ./compiled/my-course/101/outline.md
+  andamio course credential compute-hash --file outline.md --output json`,
+	Args: cobra.NoArgs,
+	RunE: runCredentialComputeHash,
+}
+
 var courseCredentialCmd = &cobra.Command{
 	Use:   "credential",
 	Short: "Credential verification commands",
@@ -38,6 +58,10 @@ Examples:
 func init() {
 	courseCmd.AddCommand(courseCredentialCmd)
 	courseCredentialCmd.AddCommand(courseCredentialVerifyHashCmd)
+	courseCredentialCmd.AddCommand(courseCredentialComputeHashCmd)
+
+	courseCredentialComputeHashCmd.Flags().StringArray("slt", nil, "SLT text (repeatable)")
+	courseCredentialComputeHashCmd.Flags().String("file", "", "Path to outline.md file containing SLTs")
 }
 
 func runCredentialVerifyHash(cmd *cobra.Command, args []string) error {
@@ -154,5 +178,47 @@ func runCredentialVerifyHash(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "\nAll %d credential hashes verified.\n", len(results))
 	}
 
+	return nil
+}
+
+func runCredentialComputeHash(cmd *cobra.Command, args []string) error {
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	sltFlags, _ := cmd.Flags().GetStringArray("slt")
+	fileFlag, _ := cmd.Flags().GetString("file")
+
+	if len(sltFlags) > 0 && fileFlag != "" {
+		return fmt.Errorf("cannot use both --slt and --file; choose one input method")
+	}
+
+	var slts []string
+
+	if fileFlag != "" {
+		data, err := os.ReadFile(fileFlag)
+		if err != nil {
+			return fmt.Errorf("failed to read file: %w", err)
+		}
+		slts = parseSLTsFromOutline(string(data))
+		if len(slts) == 0 {
+			return fmt.Errorf("no SLTs found in %s (expected a '## SLTs' section with numbered items)", fileFlag)
+		}
+	} else if len(sltFlags) > 0 {
+		slts = sltFlags
+	} else {
+		return fmt.Errorf("provide SLTs via --slt flags or --file; see 'andamio course credential compute-hash --help'")
+	}
+
+	hash := cardano.ComputeSltHash(slts)
+
+	if isJSON {
+		return output.PrintJSON(map[string]interface{}{
+			"slt_hash":  hash,
+			"slt_count": len(slts),
+			"slts":      slts,
+		})
+	}
+
+	fmt.Printf("%s\n", hash)
+	fmt.Fprintf(os.Stderr, "SLT count: %d\n", len(slts))
 	return nil
 }
