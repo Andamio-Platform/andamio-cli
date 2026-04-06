@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -18,6 +19,8 @@ func init() {
 	courseCreateModuleCmd.Flags().String("code", "", "Module code (reads from outline.md if path provided)")
 	courseCreateModuleCmd.Flags().String("title", "", "Module title (reads from outline.md if path provided)")
 	courseCreateModuleCmd.Flags().Int("sort-order", 0, "Sort order for the module (default: 0)")
+	courseCreateModuleCmd.Flags().StringArray("slt", nil, `SLT text (repeatable). When provided, SLTs are added to the module after creation.`)
+	courseCreateModuleCmd.Flags().Bool("approve", false, "Approve the module after adding SLTs (computes slt_hash automatically). Requires --slt.")
 }
 
 var courseCreateModuleCmd = &cobra.Command{
@@ -59,7 +62,13 @@ func runCreateModule(cmd *cobra.Command, args []string) error {
 	code, _ := cmd.Flags().GetString("code")
 	title, _ := cmd.Flags().GetString("title")
 	sortOrder, _ := cmd.Flags().GetInt("sort-order")
+	slts, _ := cmd.Flags().GetStringArray("slt")
+	approve, _ := cmd.Flags().GetBool("approve")
 	isJSON := output.GetFormat() == output.FormatJSON
+
+	if approve && len(slts) == 0 {
+		return fmt.Errorf("--approve requires --slt flags")
+	}
 
 	// If a path is provided, read outline.md for metadata (lightweight — no lesson parsing)
 	if len(args) > 0 {
@@ -105,6 +114,40 @@ func runCreateModule(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create module: %w", err)
 	}
 
+	// Step 2: Add SLTs if provided
+	if len(slts) > 0 {
+		sltInputs := make([]map[string]interface{}, len(slts))
+		for i, slt := range slts {
+			sltInputs[i] = map[string]interface{}{
+				"slt_text": slt,
+			}
+		}
+
+		updatePayload := map[string]interface{}{
+			"course_id":          courseID,
+			"course_module_code": code,
+			"slts":               sltInputs,
+		}
+
+		// Step 3: Approve if requested — compute slt_hash and set status
+		if approve {
+			sltHash := cardano.ComputeSltHash(slts)
+			updatePayload["status"] = "APPROVED"
+			updatePayload["slt_hash"] = sltHash
+
+			if !isJSON {
+				fmt.Fprintf(os.Stderr, "Adding %d SLTs and approving (hash: %s)...\n", len(slts), sltHash)
+			}
+		} else if !isJSON {
+			fmt.Fprintf(os.Stderr, "Adding %d SLTs...\n", len(slts))
+		}
+
+		var updateResp map[string]interface{}
+		if err := c.Post("/api/v2/course/teacher/course-module/update", updatePayload, &updateResp); err != nil {
+			return fmt.Errorf("failed to add SLTs to module: %w", err)
+		}
+	}
+
 	result := CreateModuleResult{
 		CourseID:   courseID,
 		ModuleCode: code,
@@ -116,6 +159,10 @@ func runCreateModule(cmd *cobra.Command, args []string) error {
 		return output.PrintJSON(result)
 	}
 
-	fmt.Fprintf(os.Stderr, "Created module: %s (%s)\n", title, code)
+	if approve {
+		fmt.Fprintf(os.Stderr, "Created and approved module: %s (%s)\n", title, code)
+	} else {
+		fmt.Fprintf(os.Stderr, "Created module: %s (%s)\n", title, code)
+	}
 	return nil
 }

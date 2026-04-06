@@ -166,8 +166,22 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 	if params.InstanceID != "" {
 		registerPayload["instance_id"] = params.InstanceID
 	}
-	if len(params.Metadata) > 0 {
-		registerPayload["metadata"] = params.Metadata
+
+	// Auto-inject task_hash into metadata for project TX types that need it.
+	// The gateway's confirm logic requires task_hash for project_join and
+	// project_credential_claim but andamioscan doesn't include it in the
+	// event response. Extract it from the build request body.
+	metadata := params.Metadata
+	if _, hasTaskHash := metadata["task_hash"]; !hasTaskHash {
+		if th := extractTaskHash(params.Body, params.TxType, c); th != "" {
+			if metadata == nil {
+				metadata = make(map[string]string)
+			}
+			metadata["task_hash"] = th
+		}
+	}
+	if len(metadata) > 0 {
+		registerPayload["metadata"] = metadata
 	}
 
 	var registerResp map[string]interface{}
@@ -234,4 +248,68 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 	}
 
 	return result, nil
+}
+
+// extractTaskHash pulls task_hash from the request body for project TX types
+// that need it in registration metadata. Returns empty string if not applicable.
+//
+// The gateway's confirm logic requires task_hash for project_join and
+// project_credential_claim. For project_join, task_hash is in the request body.
+// For project_credential_claim, it's not — we look it up from the contributor's
+// active commitment via the API.
+func extractTaskHash(body interface{}, txType string, c *client.Client) string {
+	m, ok := body.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	switch txType {
+	case "project_join", "task_submit", "task_assess":
+		// task_hash is directly in the request body
+		if th, ok := m["task_hash"].(string); ok && th != "" {
+			return th
+		}
+		return ""
+
+	case "project_credential_claim":
+		// task_hash isn't in the credential claim body, but we can look it up
+		// from the contributor's commitment for this project
+		projectID, _ := m["project_id"].(string)
+		if projectID == "" || c == nil {
+			return ""
+		}
+		return lookupContributorTaskHash(c, projectID)
+
+	default:
+		return ""
+	}
+}
+
+// lookupContributorTaskHash fetches the contributor's commitments and returns
+// the task_hash of the first ACCEPTED commitment for the given project.
+func lookupContributorTaskHash(c *client.Client, projectID string) string {
+	var resp []interface{}
+	if err := c.Post("/api/v2/project/contributor/commitments/list", nil, &resp); err != nil {
+		return ""
+	}
+	for _, item := range resp {
+		commitment, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		pid, _ := commitment["project_id"].(string)
+		if pid != projectID {
+			continue
+		}
+		content, _ := commitment["content"].(map[string]interface{})
+		if content != nil {
+			status, _ := content["commitment_status"].(string)
+			if status == "ACCEPTED" {
+				if th, ok := commitment["task_hash"].(string); ok && th != "" {
+					return th
+				}
+			}
+		}
+	}
+	return ""
 }

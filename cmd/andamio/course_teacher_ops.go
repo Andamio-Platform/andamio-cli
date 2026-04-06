@@ -102,6 +102,7 @@ func init() {
 	courseTeacherUpdateModuleStatusCmd.MarkFlagRequired("module-code")
 	courseTeacherUpdateModuleStatusCmd.Flags().String("status", "", "New status (required)")
 	courseTeacherUpdateModuleStatusCmd.MarkFlagRequired("status")
+	courseTeacherUpdateModuleStatusCmd.Flags().String("slt-hash", "", "SLT hash (required when status is APPROVED)")
 
 	// review flags
 	courseTeacherReviewCmd.Flags().String("course-id", "", "Course ID (required)")
@@ -252,12 +253,16 @@ func runCourseTeacherUpdateModuleStatus(cmd *cobra.Command, args []string) error
 	courseID, _ := cmd.Flags().GetString("course-id")
 	moduleCode, _ := cmd.Flags().GetString("module-code")
 	status, _ := cmd.Flags().GetString("status")
+	sltHash, _ := cmd.Flags().GetString("slt-hash")
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	payload := map[string]interface{}{
 		"course_id":          courseID,
 		"course_module_code": moduleCode,
 		"status":             status,
+	}
+	if sltHash != "" {
+		payload["slt_hash"] = sltHash
 	}
 
 	cfg, err := config.Load()
