@@ -787,7 +787,7 @@ If you have an on-chain (non-DRAFT) task, its file will have a non-DRAFT `status
 ```bash
 andamio project task import "$PROJECT_ID" 2>&1 | grep "SKIPPED"
 ```
-**Expect (if applicable):** `SKIPPED (task N is ACTIVE, not DRAFT)`.
+**Expect (if applicable):** `SKIPPED (task N is ON_CHAIN — task is on-chain and immutable)`.
 
 ### 10.7 Import with missing required frontmatter field
 

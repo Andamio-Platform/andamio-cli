@@ -33,17 +33,18 @@ andamio config show
 
 ## Module Status Lifecycle
 
-Modules move through three states. Understanding these states is critical for knowing which operations are allowed at each stage.
+Modules move through four states. Understanding these states is critical for knowing which operations are allowed at each stage.
 
 ```
-DRAFT --> APPROVED/ON_CHAIN
+DRAFT --> APPROVED --> PENDING_TX --> ON_CHAIN
 ```
 
 | Status | SLTs editable? | Content editable? | How it transitions |
 |--------|---------------|-------------------|-------------------|
 | **DRAFT** | Yes | Yes | Created by `course import --create`. Full import works. |
 | **APPROVED** | No (locked) | Yes | Set by `register-module` or automatic gateway sync after `modules_manage` TX. |
-| **ON_CHAIN** | No (locked) | Yes | Set by `publish-module`. Module has on-chain counterpart and merged DB record. |
+| **PENDING_TX** | No (locked) | Yes | Set by `update-module-status --status PENDING_TX` before submitting the `modules_manage` TX. **Required** — the gateway will not advance a module to ON_CHAIN unless it is in PENDING_TX when the TX confirms. |
+| **ON_CHAIN** | No (locked) | Yes | Set by gateway batch confirm when the `modules_manage` TX reaches `updated`. Module has on-chain counterpart and merged DB record. |
 
 Once SLTs are locked, `course import` skips sending SLT data to avoid `SLT_LOCKED` errors. Lessons, introduction, and assignment content remain editable at all statuses.
 
@@ -143,9 +144,16 @@ andamio course credential compute-hash --file ./compiled/my-course/101/outline.m
 andamio course modules <course-id>
 ```
 
-### Step 5: Mint modules on-chain
+### Step 5: Set module to PENDING_TX and mint on-chain
 
-Submit the on-chain transaction to register modules with the Cardano validators. The SLT texts in the body must exactly match what was imported in Step 4.
+Before submitting the on-chain transaction, advance the module to `PENDING_TX`. The gateway requires this status before it can confirm the module to `ON_CHAIN`.
+
+```bash
+andamio course teacher update-module-status \
+  --course-id <course-id> --module-code 101 --status PENDING_TX
+```
+
+Then submit the on-chain transaction. The SLT texts in the body must exactly match what was imported in Step 4.
 
 ```bash
 andamio tx run /v2/tx/course/teacher/modules/manage \
@@ -154,11 +162,18 @@ andamio tx run /v2/tx/course/teacher/modules/manage \
   --tx-type modules_manage
 ```
 
-When the transaction confirms, the gateway attempts to match the on-chain module to the existing DB record by SLT hash. If the hash matches, the module status advances automatically.
+When the transaction confirms, the gateway matches the on-chain module to the DB record by SLT hash and advances it from `PENDING_TX` to `ON_CHAIN`.
 
 **Verify**: A `state: updated` response means the gateway successfully matched and synced. Proceed to Step 7.
 
 If the response shows `state: failed`, the gateway could not match the module. Proceed to Step 6.
+
+**If the TX fails to build or submit**: Reset the module back to `APPROVED` so it is not stuck in `PENDING_TX`:
+
+```bash
+andamio course teacher update-module-status \
+  --course-id <course-id> --module-code 101 --status APPROVED
+```
 
 ### Step 6: Register module (recovery only)
 
@@ -198,6 +213,24 @@ To import all modules in a course at once:
 ```bash
 andamio course import-all ./compiled/my-course --course-id <course-id>
 ```
+
+## Assignment Commitment Lifecycle
+
+Assignment commitments track a student's progress through a module. They use different status names and transitions from project task commitments.
+
+```
+AWAITING_SUBMISSION → PENDING_TX_COMMIT → SUBMITTED
+                                              → PENDING_TX_ASSESS → ACCEPTED / REFUSED
+                                              → PENDING_TX_LEAVE  → LEFT
+ACCEPTED → PENDING_TX_CLAIM → CREDENTIAL_CLAIMED
+REFUSED  → PENDING_TX_COMMIT → SUBMITTED  (resubmit via new commit TX)
+```
+
+**Key difference from project tasks:** Assignments have **no `PENDING_TX_SUBMIT` status**. On-chain, commit and submit use the same redeemer. Evidence resubmission requires a full new commit TX through `PENDING_TX_COMMIT`, not a separate update TX.
+
+Terminal states (no further transitions):
+- **CREDENTIAL_CLAIMED** — credential NFT claimed by student
+- **LEFT** — student left the module voluntarily
 
 ## Student Enrollment and Assignments
 
@@ -290,6 +323,19 @@ This fetches each module's SLTs from the API, re-computes the hash, and reports 
 
 ## Troubleshooting
 
+### `modules_manage` TX confirmed but module stuck in APPROVED
+
+**Cause**: The module was not advanced to `PENDING_TX` before the on-chain TX was submitted. The gateway's batch confirm requires `PENDING_TX` status — it will not transition a module from `APPROVED` directly to `ON_CHAIN`.
+
+**Fix**: Set the module to `PENDING_TX`, then the gateway's retry/healer mechanism should pick it up:
+
+```bash
+andamio course teacher update-module-status \
+  --course-id <course-id> --module-code 101 --status PENDING_TX
+```
+
+If the TX has already reached terminal `failed` state, you may need to re-register manually (Step 6).
+
 ### "Module not found" after `modules_manage` TX
 
 **Cause**: The gateway could not find a DB module with a matching SLT hash when the on-chain transaction confirmed. This happens when the module was never imported (no DB record), or the SLTs in the TX body do not match the imported SLTs.
@@ -350,8 +396,9 @@ Recommended sequence for creating a course with modules:
 | 2 | `course owner register` | Course metadata stored in DB |
 | 3 | Prepare `outline.md`, `lesson-N.md` files | Local content ready |
 | 4 | `course import --create` | DRAFT module in DB with SLT hash |
-| 5 | `tx run .../modules/manage` | Modules minted on-chain, gateway syncs by hash |
-| 6 | `course teacher register-module` | (Recovery only) Manual hash link if Step 5 failed |
+| 5a | `course teacher update-module-status --status PENDING_TX` | Module ready for chain confirmation |
+| 5b | `tx run .../modules/manage` | Modules minted on-chain, gateway syncs by hash |
+| 6 | `course teacher register-module` | (Recovery only) Manual hash link if Step 5b failed |
 | 7 | `course teacher publish-module` | Module fully published, on-chain + DB merged |
 | 8 | `course import` (no `--create`) | Update content anytime (SLTs locked, content open) |
 

@@ -220,9 +220,21 @@ func importTaskFile(c *client.Client, filePath, filename, policyID string, exist
 	for _, existing := range existingTasks {
 		if v, ok := existing["task_index"].(float64); ok && int(v) == index {
 			status, _ := existing["task_status"].(string)
+			if status == "" {
+				status, _ = existing["source"].(string)
+			}
 			if status != "" && status != "DRAFT" {
 				if !isJSON {
-					fmt.Fprintf(os.Stderr,"  %s: SKIPPED (task %d is %s, not DRAFT)\n", filename, index, status)
+					reason := "only DRAFT tasks can be updated"
+					switch status {
+					case "ON_CHAIN":
+						reason = "task is on-chain and immutable"
+					case "PENDING_TX":
+						reason = "task has a pending transaction"
+					case "CANCELLED":
+						reason = "task was removed on-chain"
+					}
+					fmt.Fprintf(os.Stderr, "  %s: SKIPPED (task %d is %s — %s)\n", filename, index, status, reason)
 				}
 				return "skipped", nil
 			}

@@ -66,6 +66,25 @@ andamio project get <project-id>
 andamio project owner list
 ```
 
+## Task Status Lifecycle
+
+Tasks move through these states:
+
+```
+DRAFT --> PENDING_TX --> ON_CHAIN
+                              ↓ (if removed via tasks_manage)
+                          CANCELLED
+```
+
+| Status | Editable? | Meaning |
+|--------|-----------|---------|
+| **DRAFT** | Yes | Created off-chain. Can be updated or deleted via CLI. |
+| **PENDING_TX** | No | `tasks_manage` TX submitted, awaiting confirmation. |
+| **ON_CHAIN** | No | Minted on-chain and confirmed. Immutable. |
+| **CANCELLED** | No | Removed on-chain via `tasks_manage`. Reward returned to treasury. |
+
+Import skips non-DRAFT tasks with a status-specific message.
+
 ## Task Management
 
 Tasks are the work units within a project. They are created off-chain first, then minted on-chain when ready.
@@ -138,6 +157,28 @@ andamio project task update <task-index> --project-id <project-id> \
 # Delete a draft task
 andamio project task delete <task-index> --project-id <project-id>
 ```
+
+## Task Commitment Lifecycle
+
+Task commitments track a contributor's progress on a task. They use different status names and transitions from course assignment commitments.
+
+```
+DRAFT → PENDING_TX_COMMIT → COMMITTED
+                                 → PENDING_TX_SUBMIT → COMMITTED  (evidence update)
+                                 → PENDING_TX_ASSESS → ACCEPTED / REFUSED / DENIED
+                                 → PENDING_TX_LEAVE  → ABANDONED
+ACCEPTED → PENDING_TX_CLAIM → REWARDED
+REFUSED  → PENDING_TX_SUBMIT → COMMITTED  (resubmit)
+```
+
+**Key difference from course assignments:** Task commitments have a `PENDING_TX_SUBMIT` status for evidence updates. Course assignments do not — they reuse the commit TX for resubmission.
+
+Terminal states (no further transitions):
+- **REWARDED** — credential NFT claimed, task reward distributed from escrow
+- **ABANDONED** — contributor left voluntarily
+- **DENIED** — manager permanently expelled the contributor; treasury assets clawed back
+
+Assessment outcomes: `accept` (leads to REWARDED via claim), `refuse` (can resubmit), `deny` (permanent expulsion, terminal).
 
 ## Contributor Workflow
 
