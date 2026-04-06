@@ -287,29 +287,55 @@ func extractTaskHash(body interface{}, txType string, c *client.Client) string {
 
 // lookupContributorTaskHash fetches the contributor's commitments and returns
 // the task_hash of the first ACCEPTED commitment for the given project.
+// Falls back to the contributor's on-chain commitments if DB records don't match.
 func lookupContributorTaskHash(c *client.Client, projectID string) string {
+	// Try DB commitments first (merged records with status)
 	var resp []interface{}
-	if err := c.Post("/api/v2/project/contributor/commitments/list", nil, &resp); err != nil {
-		return ""
-	}
-	for _, item := range resp {
-		commitment, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		pid, _ := commitment["project_id"].(string)
-		if pid != projectID {
-			continue
-		}
-		content, _ := commitment["content"].(map[string]interface{})
-		if content != nil {
-			status, _ := content["commitment_status"].(string)
-			if status == "ACCEPTED" {
-				if th, ok := commitment["task_hash"].(string); ok && th != "" {
+	if err := c.Post("/api/v2/project/contributor/commitments/list", nil, &resp); err == nil {
+		for _, item := range resp {
+			commitment, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			pid, _ := commitment["project_id"].(string)
+			if pid != projectID {
+				continue
+			}
+			content, _ := commitment["content"].(map[string]interface{})
+			if content != nil {
+				status, _ := content["commitment_status"].(string)
+				if status == "ACCEPTED" {
+					if th, ok := commitment["task_hash"].(string); ok && th != "" {
+						return th
+					}
+				}
+			}
+			// Also check chain_only commitments (no content/status, just task_hash)
+			if th, ok := commitment["task_hash"].(string); ok && th != "" {
+				source, _ := commitment["source"].(string)
+				if source == "chain_only" {
 					return th
 				}
 			}
 		}
 	}
+
+	// Fallback: get task_hash from the project's task list
+	var taskResp map[string]interface{}
+	body := map[string]string{"project_id": projectID}
+	if err := c.Post("/api/v2/project/user/tasks/list", body, &taskResp); err == nil {
+		if data, ok := taskResp["data"].([]interface{}); ok {
+			for _, item := range data {
+				task, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if th, ok := task["task_hash"].(string); ok && th != "" {
+					return th
+				}
+			}
+		}
+	}
+
 	return ""
 }
