@@ -429,6 +429,216 @@ func TestTiptapToMarkdown(t *testing.T) {
 	}
 }
 
+func TestTiptapToMarkdownTable(t *testing.T) {
+	input := map[string]interface{}{
+		"type": "doc",
+		"content": []interface{}{
+			map[string]interface{}{
+				"type": "table",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type": "tableRow",
+						"content": []interface{}{
+							map[string]interface{}{
+								"type": "tableHeader",
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "Name"},
+										},
+									},
+								},
+							},
+							map[string]interface{}{
+								"type": "tableHeader",
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "Age"},
+										},
+									},
+								},
+							},
+						},
+					},
+					map[string]interface{}{
+						"type": "tableRow",
+						"content": []interface{}{
+							map[string]interface{}{
+								"type": "tableCell",
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "Alice"},
+										},
+									},
+								},
+							},
+							map[string]interface{}{
+								"type": "tableCell",
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "30"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	gotMD, gotURLs := tiptapToMarkdown(input)
+
+	// Should contain GFM table
+	if !strings.Contains(gotMD, "| Name") {
+		t.Errorf("expected table header with 'Name', got:\n%s", gotMD)
+	}
+	if !strings.Contains(gotMD, "| Alice") {
+		t.Errorf("expected table row with 'Alice', got:\n%s", gotMD)
+	}
+	if !strings.Contains(gotMD, "---") {
+		t.Errorf("expected separator row, got:\n%s", gotMD)
+	}
+	if len(gotURLs) != 0 {
+		t.Errorf("expected no image URLs, got %v", gotURLs)
+	}
+}
+
+func TestTiptapToMarkdownTableAlignment(t *testing.T) {
+	input := map[string]interface{}{
+		"type": "doc",
+		"content": []interface{}{
+			map[string]interface{}{
+				"type": "table",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type": "tableRow",
+						"content": []interface{}{
+							map[string]interface{}{
+								"type": "tableHeader",
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "Left"},
+										},
+									},
+								},
+							},
+							map[string]interface{}{
+								"type": "tableHeader",
+								"attrs": map[string]interface{}{
+									"textAlign": "center",
+								},
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "Center"},
+										},
+									},
+								},
+							},
+							map[string]interface{}{
+								"type": "tableHeader",
+								"attrs": map[string]interface{}{
+									"textAlign": "right",
+								},
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "Right"},
+										},
+									},
+								},
+							},
+						},
+					},
+					map[string]interface{}{
+						"type": "tableRow",
+						"content": []interface{}{
+							map[string]interface{}{
+								"type": "tableCell",
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "a"},
+										},
+									},
+								},
+							},
+							map[string]interface{}{
+								"type": "tableCell",
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "b"},
+										},
+									},
+								},
+							},
+							map[string]interface{}{
+								"type": "tableCell",
+								"content": []interface{}{
+									map[string]interface{}{
+										"type": "paragraph",
+										"content": []interface{}{
+											map[string]interface{}{"type": "text", "text": "c"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	gotMD, _ := tiptapToMarkdown(input)
+
+	// Find the separator line
+	lines := strings.Split(gotMD, "\n")
+	var sepLine string
+	for _, line := range lines {
+		if strings.Contains(line, "---") && strings.HasPrefix(line, "|") {
+			sepLine = line
+			break
+		}
+	}
+	if sepLine == "" {
+		t.Fatalf("no separator line found in:\n%s", gotMD)
+	}
+
+	// Center column should have :---:
+	if !strings.Contains(sepLine, ":---") || !strings.Contains(sepLine, "---:") {
+		t.Errorf("expected center alignment :---: in separator, got: %s", sepLine)
+	}
+	// Right column should end with ---:
+	parts := strings.Split(sepLine, "|")
+	// parts: ["", " left ", ":center:", " right:", ""]
+	rightPart := strings.TrimSpace(parts[len(parts)-2])
+	if !strings.HasSuffix(rightPart, ":") {
+		t.Errorf("expected right-aligned column ending with ':', got: %s", rightPart)
+	}
+	// Left/default column should NOT have colons
+	leftPart := strings.TrimSpace(parts[1])
+	if strings.Contains(leftPart, ":") {
+		t.Errorf("expected default column without colons, got: %s", leftPart)
+	}
+}
+
 func TestApplyMarks(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -558,3 +558,149 @@ func TestReadCompiledModuleWithManifest(t *testing.T) {
 		t.Errorf("expected no image warnings, got: %v", data.ImageWarnings)
 	}
 }
+
+func TestMarkdownToTiptapTable(t *testing.T) {
+	markdown := "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |"
+	got, err := markdownToTiptap(markdown, nil)
+	if err != nil {
+		t.Fatalf("markdownToTiptap() error = %v", err)
+	}
+
+	content := got["content"].([]interface{})
+	if len(content) != 1 {
+		t.Fatalf("expected 1 content node, got %d", len(content))
+	}
+
+	table := content[0].(map[string]interface{})
+	if table["type"] != "table" {
+		t.Fatalf("expected table, got %v", table["type"])
+	}
+
+	rows := table["content"].([]interface{})
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows (1 header + 2 data), got %d", len(rows))
+	}
+
+	// Check header row
+	headerRow := rows[0].(map[string]interface{})
+	if headerRow["type"] != "tableRow" {
+		t.Errorf("expected tableRow, got %v", headerRow["type"])
+	}
+	headerCells := headerRow["content"].([]interface{})
+	if len(headerCells) != 2 {
+		t.Fatalf("expected 2 header cells, got %d", len(headerCells))
+	}
+	firstHeader := headerCells[0].(map[string]interface{})
+	if firstHeader["type"] != "tableHeader" {
+		t.Errorf("expected tableHeader, got %v", firstHeader["type"])
+	}
+
+	// Check data row
+	dataRow := rows[1].(map[string]interface{})
+	dataCells := dataRow["content"].([]interface{})
+	firstCell := dataCells[0].(map[string]interface{})
+	if firstCell["type"] != "tableCell" {
+		t.Errorf("expected tableCell, got %v", firstCell["type"])
+	}
+
+	// Check cell content (should be paragraph with text)
+	cellContent := firstCell["content"].([]interface{})
+	para := cellContent[0].(map[string]interface{})
+	if para["type"] != "paragraph" {
+		t.Errorf("expected paragraph inside cell, got %v", para["type"])
+	}
+	paraContent := para["content"].([]interface{})
+	textNode := paraContent[0].(map[string]interface{})
+	if textNode["text"] != "Alice" {
+		t.Errorf("expected cell text 'Alice', got %v", textNode["text"])
+	}
+}
+
+func TestMarkdownToTiptapTableAlignment(t *testing.T) {
+	markdown := "| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |"
+	got, err := markdownToTiptap(markdown, nil)
+	if err != nil {
+		t.Fatalf("markdownToTiptap() error = %v", err)
+	}
+
+	content := got["content"].([]interface{})
+	table := content[0].(map[string]interface{})
+	rows := table["content"].([]interface{})
+	headerRow := rows[0].(map[string]interface{})
+	cells := headerRow["content"].([]interface{})
+
+	// Left-aligned cell (explicit :--- in GFM) gets "left" alignment
+	leftCell := cells[0].(map[string]interface{})
+	leftAttrs := leftCell["attrs"].(map[string]interface{})
+	if leftAttrs["textAlign"] != "left" {
+		t.Errorf("expected left alignment, got %v", leftAttrs["textAlign"])
+	}
+
+	// Center-aligned cell
+	centerCell := cells[1].(map[string]interface{})
+	centerAttrs := centerCell["attrs"].(map[string]interface{})
+	if centerAttrs["textAlign"] != "center" {
+		t.Errorf("expected center alignment, got %v", centerAttrs["textAlign"])
+	}
+
+	// Right-aligned cell
+	rightCell := cells[2].(map[string]interface{})
+	rightAttrs := rightCell["attrs"].(map[string]interface{})
+	if rightAttrs["textAlign"] != "right" {
+		t.Errorf("expected right alignment, got %v", rightAttrs["textAlign"])
+	}
+}
+
+func TestMarkdownToTiptapTableInlineMarks(t *testing.T) {
+	markdown := "| Feature | Status |\n| --- | --- |\n| **Tables** | `done` |"
+	got, err := markdownToTiptap(markdown, nil)
+	if err != nil {
+		t.Fatalf("markdownToTiptap() error = %v", err)
+	}
+
+	content := got["content"].([]interface{})
+	table := content[0].(map[string]interface{})
+	rows := table["content"].([]interface{})
+	dataRow := rows[1].(map[string]interface{})
+	dataCells := dataRow["content"].([]interface{})
+
+	// First cell should have bold text
+	firstCell := dataCells[0].(map[string]interface{})
+	para := firstCell["content"].([]interface{})[0].(map[string]interface{})
+	paraContent := para["content"].([]interface{})
+	found := false
+	for _, node := range paraContent {
+		textNode := node.(map[string]interface{})
+		if marks, ok := textNode["marks"].([]interface{}); ok {
+			for _, mark := range marks {
+				markMap := mark.(map[string]interface{})
+				if markMap["type"] == "bold" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected bold mark in table cell")
+	}
+
+	// Second cell should have code mark
+	secondCell := dataCells[1].(map[string]interface{})
+	para2 := secondCell["content"].([]interface{})[0].(map[string]interface{})
+	para2Content := para2["content"].([]interface{})
+	foundCode := false
+	for _, node := range para2Content {
+		textNode := node.(map[string]interface{})
+		if marks, ok := textNode["marks"].([]interface{}); ok {
+			for _, mark := range marks {
+				markMap := mark.(map[string]interface{})
+				if markMap["type"] == "code" {
+					foundCode = true
+				}
+			}
+		}
+	}
+	if !foundCode {
+		t.Errorf("expected code mark in table cell")
+	}
+}

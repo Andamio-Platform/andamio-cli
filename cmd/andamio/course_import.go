@@ -839,6 +839,63 @@ func convertSingleNode(n ast.Node, source []byte) map[string]interface{} {
 			"type": "horizontalRule",
 		}
 
+	case *extast.Table:
+		var rows []interface{}
+		rowIndex := 0
+		for row := node.FirstChild(); row != nil; row = row.NextSibling() {
+			if _, ok := row.(*extast.TableRow); !ok {
+				if _, ok := row.(*extast.TableHeader); !ok {
+					continue
+				}
+			}
+			var cells []interface{}
+			for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
+				tc, ok := cell.(*extast.TableCell)
+				if !ok {
+					continue
+				}
+				cellType := "tableCell"
+				if rowIndex == 0 {
+					cellType = "tableHeader"
+				}
+				content := convertInlineContent(tc, source)
+				if content == nil {
+					content = []interface{}{}
+				}
+				cellNode := map[string]interface{}{
+					"type": cellType,
+					"content": []interface{}{
+						map[string]interface{}{
+							"type":    "paragraph",
+							"content": content,
+						},
+					},
+				}
+				if tc.Alignment != extast.AlignNone {
+					align := "left"
+					switch tc.Alignment {
+					case extast.AlignCenter:
+						align = "center"
+					case extast.AlignRight:
+						align = "right"
+					}
+					cellNode["attrs"] = map[string]interface{}{
+						"textAlign": align,
+					}
+				}
+				cells = append(cells, cellNode)
+			}
+			rows = append(rows, map[string]interface{}{
+				"type":    "tableRow",
+				"content": cells,
+			})
+			rowIndex++
+		}
+		return map[string]interface{}{
+			"type":    "table",
+			"content": rows,
+		}
+
 	case *ast.Image:
 		src := string(node.Destination)
 		alt := string(node.Text(source))

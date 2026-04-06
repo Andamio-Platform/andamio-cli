@@ -665,6 +665,130 @@ func tiptapToMarkdown(node map[string]interface{}) (string, []string) {
 	case "horizontalRule":
 		buf.WriteString("---\n\n")
 
+	case "table":
+		if content, ok := node["content"].([]interface{}); ok {
+			// Collect all rows as string slices, track column widths
+			type rowData struct {
+				cells []string
+			}
+			var rows []rowData
+			var alignments []string
+			maxCols := 0
+
+			for rowIdx, row := range content {
+				rowMap, ok := row.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				rowCells, ok := rowMap["content"].([]interface{})
+				if !ok {
+					continue
+				}
+				var rd rowData
+				for _, cell := range rowCells {
+					cellMap, ok := cell.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					// Table cells contain paragraphs — unwrap to get inline content
+					cellText := ""
+					if cellContent, ok := cellMap["content"].([]interface{}); ok {
+						for _, inner := range cellContent {
+							if innerMap, ok := inner.(map[string]interface{}); ok {
+								t, urls := renderInlineContent(innerMap)
+								imageURLs = append(imageURLs, urls...)
+								cellText += t
+							}
+						}
+					}
+					cellText = strings.ReplaceAll(cellText, "\n", " ")
+					cellText = strings.ReplaceAll(strings.TrimSpace(cellText), "|", "\\|")
+					rd.cells = append(rd.cells, cellText)
+
+					// Capture alignment from header row
+					if rowIdx == 0 {
+						align := ""
+						if attrs, ok := cellMap["attrs"].(map[string]interface{}); ok {
+							if a, ok := attrs["textAlign"].(string); ok {
+								align = a
+							}
+						}
+						alignments = append(alignments, align)
+					}
+				}
+				if len(rd.cells) > maxCols {
+					maxCols = len(rd.cells)
+				}
+				rows = append(rows, rd)
+			}
+
+			if len(rows) == 0 || maxCols == 0 {
+				break
+			}
+
+			// Pad alignments to maxCols
+			for len(alignments) < maxCols {
+				alignments = append(alignments, "")
+			}
+
+			// Calculate column widths
+			colWidths := make([]int, maxCols)
+			for _, rd := range rows {
+				for i, cell := range rd.cells {
+					if len(cell) > colWidths[i] {
+						colWidths[i] = len(cell)
+					}
+				}
+			}
+			// Minimum width of 3 (for separator ---)
+			for i := range colWidths {
+				if colWidths[i] < 3 {
+					colWidths[i] = 3
+				}
+			}
+
+			// Render header row
+			if len(rows) > 0 {
+				buf.WriteString("|")
+				for i := 0; i < maxCols; i++ {
+					cell := ""
+					if i < len(rows[0].cells) {
+						cell = rows[0].cells[i]
+					}
+					buf.WriteString(fmt.Sprintf(" %-*s |", colWidths[i], cell))
+				}
+				buf.WriteString("\n")
+			}
+
+			// Render separator row with alignment
+			buf.WriteString("|")
+			for i := 0; i < maxCols; i++ {
+				switch alignments[i] {
+				case "center":
+					buf.WriteString(fmt.Sprintf(":%s:|", strings.Repeat("-", colWidths[i])))
+				case "right":
+					buf.WriteString(fmt.Sprintf(" %s:|", strings.Repeat("-", colWidths[i])))
+				default:
+					buf.WriteString(fmt.Sprintf(" %s |", strings.Repeat("-", colWidths[i])))
+				}
+			}
+			buf.WriteString("\n")
+
+			// Render data rows
+			for _, rd := range rows[1:] {
+				buf.WriteString("|")
+				for i := 0; i < maxCols; i++ {
+					cell := ""
+					if i < len(rd.cells) {
+						cell = rd.cells[i]
+					}
+					buf.WriteString(fmt.Sprintf(" %-*s |", colWidths[i], cell))
+				}
+				buf.WriteString("\n")
+			}
+			buf.WriteString("\n")
+		}
+
 	case "image", "imageBlock":
 		if attrs, ok := node["attrs"].(map[string]interface{}); ok {
 			src, _ := attrs["src"].(string)
