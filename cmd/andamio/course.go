@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -74,39 +75,21 @@ Examples:
   andamio course lesson my-course 101 1
   andamio course lesson my-course 101 3`,
 	Args: cobra.ExactArgs(3),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		courseID, moduleCode, sltIndex := args[0], args[1], args[2]
-		path := "/api/v2/course/user/lesson/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode) + "/" + url.PathEscape(sltIndex)
-		hint := fmt.Sprintf("No lesson found for SLT %s in module %s. Run 'andamio course slts %s %s' to see which SLTs have lessons.",
-			sltIndex, moduleCode, courseID, moduleCode)
-		return getJSONWithHint(path, hint)
-	},
+	RunE: runCourseLesson,
 }
 
 var courseAssignmentCmd = &cobra.Command{
 	Use:   "assignment <course-id> <module-code>",
 	Short: "Get assignment for a course module",
 	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		courseID, moduleCode := args[0], args[1]
-		path := "/api/v2/course/user/assignment/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode)
-		hint := fmt.Sprintf("No assignment found for module %s. Run 'andamio course modules %s' to see which modules have assignments.",
-			moduleCode, courseID)
-		return getJSONWithHint(path, hint)
-	},
+	RunE:  runCourseAssignment,
 }
 
 var courseIntroCmd = &cobra.Command{
 	Use:   "intro <course-id> <module-code>",
 	Short: "Get introduction for a course module",
 	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		courseID, moduleCode := args[0], args[1]
-		path := "/api/v2/course/user/introduction/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode)
-		hint := fmt.Sprintf("No introduction found for module %s. Run 'andamio course modules %s' to see available modules.",
-			moduleCode, courseID)
-		return getJSONWithHint(path, hint)
-	},
+	RunE:  runCourseIntro,
 }
 
 func init() {
@@ -350,26 +333,25 @@ func runCourseSlts(cmd *cobra.Command, args []string) error {
 	return getJSON("/api/v2/course/user/slts/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode))
 }
 
-func runCourseSltsTeacher(cfg *config.Config, courseID, moduleCode string) error {
+// fetchTeacherModuleContent fetches the content map for a specific module via the teacher endpoint.
+// Returns the raw "content" object from the matching module, or an error if not found.
+// This is used by course slts, lesson, intro, and assignment commands to access draft module data.
+func fetchTeacherModuleContent(cfg *config.Config, courseID, moduleCode string) (map[string]interface{}, error) {
 	c := client.New(cfg)
 
 	var resp map[string]interface{}
 	reqBody := map[string]string{"course_id": courseID}
 	if err := c.Post("/api/v2/course/teacher/course-modules/list", reqBody, &resp); err != nil {
-		return err
+		return nil, err
 	}
 
 	modules, ok := resp["data"].([]interface{})
 	if !ok || len(modules) == 0 {
-		if output.GetFormat() == output.FormatJSON {
-			return output.PrintJSON(map[string]interface{}{"data": []interface{}{}})
+		return nil, &apierr.NotFoundError{
+			Message: fmt.Sprintf("Module %s not found. Run 'andamio course modules %s' to see available modules.", moduleCode, courseID),
 		}
-		fmt.Fprintln(os.Stderr, "No modules found.")
-		return nil
 	}
 
-	// Find the matching module
-	var targetSlts []interface{}
 	for _, m := range modules {
 		mod, ok := m.(map[string]interface{})
 		if !ok {
@@ -381,16 +363,22 @@ func runCourseSltsTeacher(cfg *config.Config, courseID, moduleCode string) error
 		}
 		code, _ := content["course_module_code"].(string)
 		if code == moduleCode {
-			targetSlts, _ = content["slts"].([]interface{})
-			break
+			return content, nil
 		}
 	}
 
-	if targetSlts == nil {
-		return &apierr.NotFoundError{
-			Message: fmt.Sprintf("Module %s not found. Run 'andamio course modules %s' to see available modules.", moduleCode, courseID),
-		}
+	return nil, &apierr.NotFoundError{
+		Message: fmt.Sprintf("Module %s not found. Run 'andamio course modules %s' to see available modules.", moduleCode, courseID),
 	}
+}
+
+func runCourseSltsTeacher(cfg *config.Config, courseID, moduleCode string) error {
+	content, err := fetchTeacherModuleContent(cfg, courseID, moduleCode)
+	if err != nil {
+		return err
+	}
+
+	targetSlts, _ := content["slts"].([]interface{})
 
 	if len(targetSlts) == 0 {
 		if output.GetFormat() == output.FormatJSON {
@@ -435,4 +423,109 @@ func runCourseSltsTeacher(cfg *config.Config, courseID, moduleCode string) error
 	}
 
 	return nil
+}
+
+func runCourseLesson(cmd *cobra.Command, args []string) error {
+	courseID, moduleCode, sltIndex := args[0], args[1], args[2]
+
+	// Try teacher endpoint first for draft module support
+	cfg, err := config.Load()
+	if err == nil && cfg.HasUserAuth() {
+		content, terr := fetchTeacherModuleContent(cfg, courseID, moduleCode)
+		if terr == nil {
+			slts, _ := content["slts"].([]interface{})
+			for _, slt := range slts {
+				sltMap, ok := slt.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				idx := fmt.Sprintf("%v", sltMap["slt_index"])
+				if idx == sltIndex {
+					lesson, ok := sltMap["lesson"].(map[string]interface{})
+					if ok {
+						return output.PrintJSON(map[string]interface{}{"data": lesson})
+					}
+					// SLT exists but has no lesson content
+					return &apierr.NotFoundError{
+						Message: fmt.Sprintf("SLT %s exists in module %s but has no lesson content. Import lesson content with 'andamio course import'.",
+							sltIndex, moduleCode),
+					}
+				}
+			}
+		} else {
+			var notFound *apierr.NotFoundError
+			if !errors.As(terr, &notFound) {
+				// Propagate non-NotFound errors (auth, network, server errors)
+				return terr
+			}
+		}
+	}
+
+	// Fall back to user endpoint (no JWT, or module not found via teacher)
+	path := "/api/v2/course/user/lesson/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode) + "/" + url.PathEscape(sltIndex)
+	hint := fmt.Sprintf("No lesson found for SLT %s in module %s. Run 'andamio course slts %s %s' to see which SLTs have lessons.",
+		sltIndex, moduleCode, courseID, moduleCode)
+	return getJSONWithHint(path, hint)
+}
+
+func runCourseIntro(cmd *cobra.Command, args []string) error {
+	courseID, moduleCode := args[0], args[1]
+
+	// Try teacher endpoint first for draft module support
+	cfg, err := config.Load()
+	if err == nil && cfg.HasUserAuth() {
+		content, terr := fetchTeacherModuleContent(cfg, courseID, moduleCode)
+		if terr == nil {
+			if intro, ok := content["introduction"].(map[string]interface{}); ok {
+				return output.PrintJSON(map[string]interface{}{"data": intro})
+			}
+			// Module exists but has no introduction
+			return &apierr.NotFoundError{
+				Message: fmt.Sprintf("Module %s has no introduction content. Import content with 'andamio course import'.",
+					moduleCode),
+			}
+		} else {
+			var notFound *apierr.NotFoundError
+			if !errors.As(terr, &notFound) {
+				return terr
+			}
+		}
+	}
+
+	// Fall back to user endpoint (no JWT, or module not found via teacher)
+	path := "/api/v2/course/user/introduction/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode)
+	hint := fmt.Sprintf("No introduction found for module %s. Run 'andamio course modules %s' to see available modules.",
+		moduleCode, courseID)
+	return getJSONWithHint(path, hint)
+}
+
+func runCourseAssignment(cmd *cobra.Command, args []string) error {
+	courseID, moduleCode := args[0], args[1]
+
+	// Try teacher endpoint first for draft module support
+	cfg, err := config.Load()
+	if err == nil && cfg.HasUserAuth() {
+		content, terr := fetchTeacherModuleContent(cfg, courseID, moduleCode)
+		if terr == nil {
+			if assign, ok := content["assignment"].(map[string]interface{}); ok {
+				return output.PrintJSON(map[string]interface{}{"data": assign})
+			}
+			// Module exists but has no assignment
+			return &apierr.NotFoundError{
+				Message: fmt.Sprintf("Module %s has no assignment content. Import content with 'andamio course import'.",
+					moduleCode),
+			}
+		} else {
+			var notFound *apierr.NotFoundError
+			if !errors.As(terr, &notFound) {
+				return terr
+			}
+		}
+	}
+
+	// Fall back to user endpoint (no JWT, or module not found via teacher)
+	path := "/api/v2/course/user/assignment/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode)
+	hint := fmt.Sprintf("No assignment found for module %s. Run 'andamio course modules %s' to see which modules have assignments.",
+		moduleCode, courseID)
+	return getJSONWithHint(path, hint)
 }
