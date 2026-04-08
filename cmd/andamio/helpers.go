@@ -428,7 +428,13 @@ func resolveSltHash(c *client.Client, courseID, moduleCode string) (string, erro
 		if !ok {
 			continue
 		}
+		// Check top-level first, then content.course_module_code (merged responses nest it)
 		code, _ := m["course_module_code"].(string)
+		if code == "" {
+			if content, ok := m["content"].(map[string]interface{}); ok {
+				code, _ = content["course_module_code"].(string)
+			}
+		}
 		if code == moduleCode {
 			hash, _ := m["slt_hash"].(string)
 			if hash == "" {
