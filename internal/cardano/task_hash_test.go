@@ -2,6 +2,7 @@ package cardano
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -59,6 +60,68 @@ func TestDebugTaskBytes(t *testing.T) {
 	want := "d8799f424869010280ff"
 	if bytes != want {
 		t.Errorf("bytes mismatch:\n  got:  %s\n  want: %s", bytes, want)
+	}
+}
+
+// Test vector from issue #58: content is 73 bytes, exceeds 64-byte PlutusTx chunk limit.
+// CLI must use indefinite-length chunked CBOR encoding to match on-chain hash.
+func TestComputeTaskHash_ChunkedContent(t *testing.T) {
+	task := TaskData{
+		ProjectContent: "Build an integration test that validates all Andamio tx loops on preprod.",
+		ExpirationTime: 1798675200000, // 2026-12-31T00:00:00Z
+		LovelaceAmount: 5000000,
+		NativeAssets:   nil,
+	}
+	hash, err := ComputeTaskHash(task)
+	if err != nil {
+		t.Fatalf("ComputeTaskHash error: %v", err)
+	}
+	want := "395a410edd42e5cfa9c56f4304b690193caecbe81f02150075bb32b9ce327d57"
+	if hash != want {
+		t.Errorf("hash mismatch for >64-byte content:\n  got:  %s\n  want: %s", hash, want)
+	}
+}
+
+func TestDebugTaskBytes_ChunkedEncoding(t *testing.T) {
+	// Content at 65 bytes — just over the 64-byte chunk boundary
+	content65 := strings.Repeat("A", 65)
+	task := TaskData{
+		ProjectContent: content65,
+		ExpirationTime: 1,
+		LovelaceAmount: 1,
+		NativeAssets:   nil,
+	}
+	bytes, err := DebugTaskBytes(task)
+	if err != nil {
+		t.Fatalf("DebugTaskBytes error: %v", err)
+	}
+	// Must start content field with 0x5f (indefinite byte string)
+	// After d8799f (tag 121 + indef array), content should begin with "5f"
+	if len(bytes) < 10 {
+		t.Fatal("bytes too short")
+	}
+	// d8799f = 6 hex chars, then content field starts
+	contentStart := bytes[6:8]
+	if contentStart != "5f" {
+		t.Errorf("expected indefinite byte string marker '5f' for >64-byte content, got %q", contentStart)
+	}
+
+	// Content at exactly 64 bytes — should use definite-length encoding
+	content64 := strings.Repeat("B", 64)
+	task64 := TaskData{
+		ProjectContent: content64,
+		ExpirationTime: 1,
+		LovelaceAmount: 1,
+		NativeAssets:   nil,
+	}
+	bytes64, err := DebugTaskBytes(task64)
+	if err != nil {
+		t.Fatalf("DebugTaskBytes error: %v", err)
+	}
+	// 64 bytes = 0x5840 (definite length), NOT 0x5f
+	contentStart64 := bytes64[6:8]
+	if contentStart64 == "5f" {
+		t.Error("64-byte content should use definite-length encoding, not chunked")
 	}
 }
 

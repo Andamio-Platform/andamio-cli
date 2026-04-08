@@ -81,8 +81,8 @@ func encodeTaskAsPlutusData(task TaskData) []byte {
 	var buf []byte
 	// Tag 121 (Plutus Data Constructor 0) + indefinite array start
 	buf = append(buf, 0xd8, 121, 0x9f)
-	// Field 1: project_content (ByteArray)
-	buf = append(buf, encodeCBORBytes(contentBytes)...)
+	// Field 1: project_content (ByteArray) — uses Plutus chunked encoding for >64 bytes
+	buf = append(buf, encodePlutusBuiltinByteString(contentBytes)...)
 	// Field 2: expiration_time (unsigned int)
 	buf = append(buf, encodeCBORUint(task.ExpirationTime)...)
 	// Field 3: lovelace_amount (unsigned int)
