@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -119,41 +120,225 @@ func init() {
 	courseTeacherCommitmentsCmd.MarkFlagRequired("course-id")
 }
 
-// runCourseTeacherRegisterModule handles register-module which requires slt_hash in addition
-// to course-id and module-code.
+// runCourseTeacherRegisterModule handles register-module. When the gateway rejects
+// the call because the module already exists (created earlier by `course import --create`
+// or a prior partial run), this handler inspects the existing module and either:
+//   - advances DRAFT → APPROVED via update-status (matching slt_hash), or
+//   - exits 0 as a no-op when already APPROVED/PENDING_TX/ON_CHAIN with matching hash, or
+//   - returns an error wrapping the original gateway error when the supplied hash mismatches.
+//
+// The JSON envelope is stable across all branches:
+//
+//	{action, status, slt_hash, advanced_from}
+//
+// where action ∈ {"registered", "advanced", "already_registered"} and advanced_from is
+// "DRAFT" only on the advance branch (null otherwise).
 func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
 	moduleCode, _ := cmd.Flags().GetString("module-code")
 	sltHash, _ := cmd.Flags().GetString("slt-hash")
 	isJSON := output.GetFormat() == output.FormatJSON
 
-	payload := map[string]interface{}{
-		"course_id":          courseID,
-		"course_module_code": moduleCode,
-		"slt_hash":           sltHash,
+	var err error
+	sltHash, err = normalizeSltHashFlag(sltHash)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
+	c := client.New(cfg)
 
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "Registering module %s...\n", moduleCode)
 	}
 
-	c := client.New(cfg)
-	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/course-module/register", payload, &resp); err != nil {
+	resp, err := postRegisterModule(c, courseID, moduleCode, sltHash)
+	if err == nil {
+		// Happy path — gateway accepted the registration.
+		envelope := map[string]interface{}{
+			"action":        "registered",
+			"status":        "APPROVED",
+			"slt_hash":      sltHash,
+			"advanced_from": nil,
+			"response":      resp,
+		}
+		if isJSON {
+			return output.PrintJSON(envelope)
+		}
+		fmt.Fprintf(os.Stderr, "Module %s: registered.\n", moduleCode)
+		return nil
+	}
+
+	if !isModuleAlreadyExistsError(err) {
 		return fmt.Errorf("failed to register module: %w", err)
 	}
 
-	if isJSON {
-		return output.PrintJSON(resp)
+	// Conflict path: look up the existing module to decide what to do.
+	existing, lookupErr := lookupTeacherModule(c, courseID, moduleCode)
+	if lookupErr != nil {
+		return fmt.Errorf("module %s already exists, but could not locate it for recovery: %w (original error: %v)", moduleCode, lookupErr, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Module %s: registered.\n", moduleCode)
-	return nil
+	existingHash := existing.SltHash
+	existingStatus := existing.Status
+
+	if existingHash != sltHash {
+		return mismatchError(courseID, moduleCode, existingHash, sltHash, err)
+	}
+
+	// Hashes match — branch on current status.
+	switch existingStatus {
+	case "DRAFT":
+		updateResp, updateErr := postUpdateModuleStatus(c, courseID, moduleCode, "APPROVED", sltHash)
+		if updateErr != nil {
+			return fmt.Errorf("module %s exists in DRAFT with matching hash, but advancing to APPROVED failed: %w", moduleCode, updateErr)
+		}
+		envelope := map[string]interface{}{
+			"action":        "advanced",
+			"status":        "APPROVED",
+			"slt_hash":      sltHash,
+			"advanced_from": "DRAFT",
+			"response":      updateResp,
+		}
+		if isJSON {
+			return output.PrintJSON(envelope)
+		}
+		fmt.Fprintf(os.Stderr, "Module %s: advanced from DRAFT to APPROVED.\n", moduleCode)
+		return nil
+
+	case "APPROVED", "PENDING_TX", "ON_CHAIN":
+		envelope := map[string]interface{}{
+			"action":        "already_registered",
+			"status":        existingStatus,
+			"slt_hash":      sltHash,
+			"advanced_from": nil,
+			"response":      nil,
+		}
+		if isJSON {
+			return output.PrintJSON(envelope)
+		}
+		fmt.Fprintf(os.Stderr, "Module %s: already registered (status: %s).\n", moduleCode, existingStatus)
+		return nil
+
+	default:
+		return fmt.Errorf("module %s exists in unexpected status %q with matching hash; not advancing automatically", moduleCode, existingStatus)
+	}
+}
+
+// postRegisterModule performs the bare gateway POST for course-module/register.
+// Returns the raw response on success or the wrapped error on failure.
+func postRegisterModule(c *client.Client, courseID, moduleCode, sltHash string) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"course_id":          courseID,
+		"course_module_code": moduleCode,
+		"slt_hash":           sltHash,
+	}
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/course/teacher/course-module/register", payload, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// isModuleAlreadyExistsError reports whether err looks like a duplicate course-module
+// conflict from the gateway. Requires both an "already exists" stem AND the specific
+// "course_module_code" token, so unrelated conflicts (duplicate teacher, duplicate
+// credential, "asset module already exists", "module github.com/...: already exists"
+// in proxied 5xx bodies) do not route into the module-lookup recovery branch.
+//
+// TODO: Replace with a typed ConflictError in internal/client once that refactor lands.
+func isModuleAlreadyExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already exists") && strings.Contains(msg, "course_module_code")
+}
+
+// existingModule is the minimal projection of a teacher-list module record used by
+// the conflict recovery path. Code is omitted because the caller already has it.
+type existingModule struct {
+	SltHash string
+	Status  string
+}
+
+// normalizeSltHashFlag trims surrounding whitespace from a user-supplied --slt-hash
+// value and rejects empty input. cobra.MarkFlagRequired only enforces that the flag
+// was set, not that its value is non-empty; an empty (or whitespace-only) hash could
+// silently match an on-chain module whose slt_hash field is null/empty, and a padded
+// hash would defeat the byte-exact mismatch comparison.
+func normalizeSltHashFlag(sltHash string) (string, error) {
+	trimmed := strings.TrimSpace(sltHash)
+	if trimmed == "" {
+		return "", fmt.Errorf("--slt-hash must be non-empty")
+	}
+	return trimmed, nil
+}
+
+// mismatchError formats the user-facing error returned when register-module hits a
+// conflict and the existing module's slt_hash does not match what the caller supplied.
+// The original gateway error is wrapped via %w so consumers can use errors.Unwrap.
+// The remediation command is on its own line so a copy-to-end-of-line selection does
+// not pick up the wrapped error text.
+func mismatchError(courseID, moduleCode, existingHash, suppliedHash string, gatewayErr error) error {
+	return fmt.Errorf(
+		"module %s already exists with slt_hash %s (you supplied %s) [original gateway error: %w]. To replace, run:\n  andamio course teacher delete-module --course-id %s --module-code %s",
+		moduleCode, existingHash, suppliedHash, gatewayErr, courseID, moduleCode,
+	)
+}
+
+// lookupTeacherModule fetches the teacher modules list and returns the entry matching
+// moduleCode. The teacher list endpoint returns both draft and on-chain modules with
+// their content nested under a "content" object (mirrors course_export.go usage).
+//
+// Field lookups are defensive: slt_hash and status may appear at the top level, under
+// "content", or under either of two field-name conventions across environments.
+func lookupTeacherModule(c *client.Client, courseID, moduleCode string) (*existingModule, error) {
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/course/teacher/course-modules/list", map[string]string{"course_id": courseID}, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list modules for course %s: %w", courseID, err)
+	}
+	data, ok := resp["data"].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unexpected response format from teacher modules list: missing data array")
+	}
+	for _, item := range data {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		code := lookupStringField(m, "course_module_code")
+		if code != moduleCode {
+			continue
+		}
+		return &existingModule{
+			SltHash: lookupStringField(m, "slt_hash", "course_module_slt_hash"),
+			Status:  lookupStringField(m, "course_module_status", "module_status", "status"),
+		}, nil
+	}
+	return nil, fmt.Errorf("module %s not found in teacher list for course %s", moduleCode, courseID)
+}
+
+// lookupStringField returns the first non-empty string match for any of the given
+// field names, checking the top level of m first and then m["content"]. Used for
+// defensive lookup when API field names vary across environments or response shapes.
+func lookupStringField(m map[string]interface{}, names ...string) string {
+	for _, name := range names {
+		if v, ok := m[name].(string); ok && v != "" {
+			return v
+		}
+	}
+	if content, ok := m["content"].(map[string]interface{}); ok {
+		for _, name := range names {
+			if v, ok := content[name].(string); ok && v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 // runCourseTeacherPublishModule is a dedicated handler for publish-module that inspects
@@ -256,15 +441,6 @@ func runCourseTeacherUpdateModuleStatus(cmd *cobra.Command, args []string) error
 	sltHash, _ := cmd.Flags().GetString("slt-hash")
 	isJSON := output.GetFormat() == output.FormatJSON
 
-	payload := map[string]interface{}{
-		"course_id":          courseID,
-		"course_module_code": moduleCode,
-		"status":             status,
-	}
-	if sltHash != "" {
-		payload["slt_hash"] = sltHash
-	}
-
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -275,8 +451,8 @@ func runCourseTeacherUpdateModuleStatus(cmd *cobra.Command, args []string) error
 	}
 
 	c := client.New(cfg)
-	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/course-module/update-status", payload, &resp); err != nil {
+	resp, err := postUpdateModuleStatus(c, courseID, moduleCode, status, sltHash)
+	if err != nil {
 		return fmt.Errorf("failed to update module status: %w", err)
 	}
 
@@ -286,6 +462,26 @@ func runCourseTeacherUpdateModuleStatus(cmd *cobra.Command, args []string) error
 
 	fmt.Fprintf(os.Stderr, "Module %s status updated to %s.\n", moduleCode, status)
 	return nil
+}
+
+// postUpdateModuleStatus performs the bare gateway POST for course-module/update-status
+// and returns the raw response. Callers are responsible for all stdout/stderr output;
+// the helper does no printing so it can be composed by both update-module-status and
+// register-module's recovery branch.
+func postUpdateModuleStatus(c *client.Client, courseID, moduleCode, status, sltHash string) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"course_id":          courseID,
+		"course_module_code": moduleCode,
+		"status":             status,
+	}
+	if sltHash != "" {
+		payload["slt_hash"] = sltHash
+	}
+	var resp map[string]interface{}
+	if err := c.Post("/api/v2/course/teacher/course-module/update-status", payload, &resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func runCourseTeacherReview(cmd *cobra.Command, args []string) error {

@@ -361,14 +361,32 @@ andamio course import ./compiled/my-course/101 --course-id <course-id>
 
 ### "course_module_code already exists" on register-module
 
-**Cause**: A module with that code already exists in the database, created by a prior `course import --create`.
+**Cause**: A module with that code already exists in the database, created by a prior `course import --create` or a partial earlier run.
 
-**Fix**: If the existing module's SLT hash matches the on-chain module, skip `register-module` -- the gateway should have synced automatically. If it does not match, delete the module and re-import with correct SLTs:
+**Fix**: `register-module` is now idempotent on hash match. Re-running it is safe:
+
+- If the existing module is in **DRAFT** with a matching `slt_hash`, `register-module` advances it to APPROVED and exits 0.
+- If the existing module is already **APPROVED / PENDING_TX / ON_CHAIN** with a matching `slt_hash`, `register-module` exits 0 as a no-op.
+- If the existing module's `slt_hash` does **not** match what you supplied, `register-module` exits non-zero and names both hashes. The escape hatch is destructive — delete and re-import with correct SLTs:
 
 ```bash
 andamio course teacher delete-module --course-id <course-id> --module-code 101
 andamio course import ./compiled/my-course/101 --course-id <course-id> --create
 ```
+
+### Module on-chain (source: merged) but stuck at DRAFT
+
+**Cause**: The `modules_manage` TX confirmed and the gateway merged the on-chain record, but the DB module was never advanced past DRAFT — typically because the `update-module-status --status PENDING_TX` step (Step 5) was skipped, or because modules were re-minted after a delete cycle without rerunning the lifecycle.
+
+**Fix**: Run `register-module` with the on-chain `slt_hash`. With a matching hash on a DRAFT module, it advances to APPROVED. Then publish:
+
+```bash
+andamio course teacher register-module \
+  --course-id <course-id> --module-code 101 --slt-hash <hash>
+andamio course teacher publish-module --course-id <course-id> --module-code 101
+```
+
+Find the on-chain `slt_hash` via `andamio course modules <course-id> --output json` or compute it from the outline: `andamio course credential compute-hash --file ./compiled/my-course/101/outline.md`.
 
 ### TX confirmed but DB update failed
 
