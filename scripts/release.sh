@@ -65,6 +65,27 @@ if git tag | grep -q "^${TAG}$"; then
 fi
 echo "  ✓ Tag $TAG is available"
 
+# CHANGELOG.md entry check — heading-match (not Unreleased-body inspection) per plan decision.
+if [[ ! -f CHANGELOG.md ]]; then
+  echo "  ✗ CHANGELOG.md missing at repo root"
+  echo "    Create one before releasing (see https://keepachangelog.com/)."
+  exit 1
+fi
+if grep -qF "## [${VERSION}]" CHANGELOG.md; then
+  echo "  ✓ CHANGELOG entry found for $VERSION"
+else
+  echo "  ! No CHANGELOG entry matching '## [$VERSION]' found"
+  echo "    Expected heading format: ## [$VERSION] - YYYY-MM-DD"
+  echo "    Move content from '## [Unreleased]' into a new versioned heading,"
+  echo "    or proceed if this release genuinely has no user-facing change."
+  read -p "    Continue without a CHANGELOG entry for $VERSION? [y/N] " -n 1 -r
+  echo ""
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "    Cancelled."
+    exit 1
+  fi
+fi
+
 # Build test
 echo "  → Testing build..."
 go build -ldflags "-X main.version=$VERSION" -o /dev/null ./cmd/andamio
