@@ -65,6 +65,8 @@ func (c *Client) Get(path string, result interface{}) error {
 			return &apierr.AuthError{Message: msg}
 		case http.StatusNotFound:
 			return &apierr.NotFoundError{Message: msg}
+		case http.StatusConflict:
+			return &apierr.ConflictError{Message: msg}
 		}
 		return errors.New(msg)
 	}
@@ -120,6 +122,8 @@ func (c *Client) Post(path string, body interface{}, result interface{}) error {
 			return &apierr.AuthError{Message: msg}
 		case http.StatusNotFound:
 			return &apierr.NotFoundError{Message: msg}
+		case http.StatusConflict:
+			return &apierr.ConflictError{Message: msg}
 		}
 		return errors.New(msg)
 	}
@@ -167,6 +171,8 @@ func (c *Client) Put(path string, body interface{}, result interface{}) error {
 			return &apierr.AuthError{Message: msg}
 		case http.StatusNotFound:
 			return &apierr.NotFoundError{Message: msg}
+		case http.StatusConflict:
+			return &apierr.ConflictError{Message: msg}
 		}
 		return errors.New(msg)
 	}
