@@ -32,7 +32,9 @@ No linter configuration. Tests exist for export/import conversion functions.
 ./scripts/release.sh 0.2.0
 ```
 
-The script runs preflight checks (clean tree, on main, synced with origin, build passes), then tags and pushes. GitHub Actions runs GoReleaser to cross-compile and publish binaries to GitHub Releases.
+The script runs preflight checks (clean tree, on main, synced with origin, CHANGELOG entry for the target version, build passes), then tags and pushes. GitHub Actions runs GoReleaser to cross-compile and publish binaries to GitHub Releases.
+
+`CHANGELOG.md` at the repo root is the source of truth for user-facing release notes. The `release.sh` preflight warns if no `## [$VERSION]` heading is found — maintainers should move content from `## [Unreleased]` into a new versioned heading before tagging.
 
 Version is injected via ldflags: `-X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}`
 
@@ -83,7 +85,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 ### Global Flags
 - `-o, --output` — Output format: text (default), json, csv, markdown
 - `-h, --help` — Help for any command
-- `--version` — Print version with commit hash and build date
+- `--version` — Print version with commit hash and build date. With `--output json` emits `{version, commit, built}` as structured JSON; plain-text format is preserved when `--output` is absent or `text`.
 
 ### auth — API key management
 | Command | Endpoint | Auth | Description |
