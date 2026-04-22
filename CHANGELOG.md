@@ -8,7 +8,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ### Added
 - `CHANGELOG.md` at the repo root as the source of truth for user-facing release notes (#67).
-- `andamio --version --output json` emits `{version, commit, built}` as structured JSON. Plain-text `--version` output is unchanged (#67).
+- `andamio --version --output json` emits `{version, commit, built}` as structured JSON. `commit` is the 7-character short form matching the plain-text `--version` output; `built` is the verbatim ldflag-injected timestamp (RFC3339 UTC for goreleaser builds; `"unknown"` for dev builds without ldflags). Plain-text `--version` output now uses the same 7-character short commit for both release and dev builds (#67).
 - `scripts/release.sh` preflight check that warns when the target version has no heading in `CHANGELOG.md` before tagging (#67).
 - `apierr.ConflictError` typed error for HTTP 409 responses. Surfaced by `internal/client.Get`/`Post`/`Put` so callers can use `errors.As(err, &conflict)` instead of string-matching gateway error bodies (#64, #68).
 
@@ -31,8 +31,6 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 ## [0.11.0] - 2026-04-06
 
 ### Added
-- `project task compute-hash` and `course credential compute-hash` commands for computing task/SLT hashes locally without requiring authentication.
-- `compute-hash` is also now accessible as a verification step in the `verify-hash` flows.
 - Tables are now supported when importing lesson/assignment Markdown into Tiptap — multi-column content renders correctly in the app after import.
 
 ### Fixed
@@ -41,11 +39,17 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 ### Changed
 - `draft-before-mint` workflow: `course import --create` explicitly marks new modules as `DRAFT` until the on-chain mint is confirmed, replacing the previous implicit flow. `task_hash` metadata is now attached automatically during draft creation.
 
+## [0.10.2] - 2026-04-03
+
+### Added
+- `project task compute-hash` and `course credential compute-hash` commands for computing task/SLT hashes locally without requiring authentication.
+- `compute-hash` is also accessible as a verification step in the `verify-hash` flows.
+
 ## Earlier releases
 
-Release notes for `v0.11.0` and earlier are available on GitHub Releases: <https://github.com/Andamio-Platform/andamio-cli/releases>. Tags go back to `v0.5.0` (2026-03-20). Noteworthy themes across the early releases:
+Release notes for `v0.10.1` and earlier are available on GitHub Releases: <https://github.com/Andamio-Platform/andamio-cli/releases>. Tags go back to `v0.5.0` (2026-03-20). Noteworthy themes across the early releases:
 
-- **v0.10.x** (2026-03-31 → 2026-04-03) — `compute-hash` groundwork, project task lifecycle improvements.
+- **v0.10.0 → v0.10.1** (2026-03-31 → 2026-04-01) — project task lifecycle improvements, hash-related fixes.
 - **v0.9.x** (2026-03-24 → 2026-03-27) — project task management commands, commitment flows.
 - **v0.8.x** (2026-03-23) — `andamio course export`/`import` improvements, `course create` scaffolding.
 - **v0.6.0 → v0.7.0** (2026-03-21 → 2026-03-23) — early content-import work, goldmark/Tiptap converter.

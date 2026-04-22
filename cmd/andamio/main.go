@@ -63,7 +63,13 @@ var rootCmd = &cobra.Command{
 	Version: versionString(),
 	Long: `Andamio CLI provides commands for interacting with the Andamio Protocol.
 
-Query courses, credentials, and more from the command line.`,
+Query courses, credentials, and more from the command line.
+
+Machine-readable output: pass --output json to any list/get/action command for
+structured JSON. "andamio --version --output json" emits
+{"version":"<x>","commit":"<sha7>","built":"<timestamp>"} so scripts and agents
+can identify the CLI version before invoking commands. See CHANGELOG.md for the
+envelope contract and breaking-change history.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		return output.SetFormat(outputFormat)
 	},

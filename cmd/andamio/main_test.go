@@ -124,41 +124,58 @@ func TestVersionFlag_TextMode_Integration(t *testing.T) {
 	}
 }
 
+// assertVersionJSONEnvelope parses stdout and asserts the envelope matches the
+// ldflag-injected values from buildTestBinary. Used by all integration subtests so
+// the ldflag→JSON pipeline is actually verified, not just "some JSON came out."
+func assertVersionJSONEnvelope(t *testing.T, out []byte) {
+	t.Helper()
+	var parsed map[string]string
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("emitted invalid JSON: %v; raw = %q", err, string(out))
+	}
+	want := map[string]string{
+		"version": "test",
+		"commit":  "1234567",
+		"built":   "test-date",
+	}
+	if len(parsed) != len(want) {
+		t.Errorf("envelope has %d keys, want exactly %d: %v", len(parsed), len(want), parsed)
+	}
+	for k, v := range want {
+		got, ok := parsed[k]
+		if !ok {
+			t.Errorf("missing key %q: %v", k, parsed)
+			continue
+		}
+		if got != v {
+			t.Errorf("envelope[%q] = %q, want %q (ldflag-injected value was dropped or rewritten)", k, got, v)
+		}
+	}
+}
+
 // TestVersionFlag_JSONMode_Integration runs the built binary with --output json and
-// asserts the JSON envelope is well-formed. This is the Cobra-wiring guarantee —
-// flag parsing populates outputFormat before the version template renders.
+// asserts the JSON envelope is well-formed AND carries the exact ldflag-injected
+// values. The exact-value check closes the false-confidence gap where "any JSON"
+// passes but ldflag wiring breaks silently.
 func TestVersionFlag_JSONMode_Integration(t *testing.T) {
 	bin := buildTestBinary(t)
 	out, err := exec.Command(bin, "--version", "--output", "json").Output()
 	if err != nil {
 		t.Fatalf("binary failed: %v", err)
 	}
-	var parsed map[string]string
-	if err := json.Unmarshal(out, &parsed); err != nil {
-		t.Fatalf("--version --output json emitted invalid JSON: %v; raw = %q", err, string(out))
-	}
-	for _, k := range []string{"version", "commit", "built"} {
-		if _, ok := parsed[k]; !ok {
-			t.Errorf("missing key %q: %v", k, parsed)
-		}
-	}
-	if len(parsed) != 3 {
-		t.Errorf("envelope has %d keys, want exactly 3: %v", len(parsed), parsed)
-	}
+	assertVersionJSONEnvelope(t, out)
 }
 
 // TestVersionFlag_JSONMode_ShortFlagOrder exercises the -o form and the flag-before-version
-// ordering. Both should work since pflag is order-independent for flags.
+// ordering. Both should work since pflag is order-independent for flags. Same exact-value
+// assertions as the long-flag case — ordering should not change the envelope content.
 func TestVersionFlag_JSONMode_ShortFlagOrder(t *testing.T) {
 	bin := buildTestBinary(t)
 	out, err := exec.Command(bin, "-o", "json", "--version").Output()
 	if err != nil {
 		t.Fatalf("binary failed: %v", err)
 	}
-	var parsed map[string]string
-	if err := json.Unmarshal(out, &parsed); err != nil {
-		t.Fatalf("-o json --version emitted invalid JSON: %v; raw = %q", err, string(out))
-	}
+	assertVersionJSONEnvelope(t, out)
 }
 
 // setVersionVars sets the package-level version vars + outputFormat for a test and

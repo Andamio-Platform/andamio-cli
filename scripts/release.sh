@@ -71,7 +71,7 @@ if [[ ! -f CHANGELOG.md ]]; then
   echo "    Create one before releasing (see https://keepachangelog.com/)."
   exit 1
 fi
-if grep -q "^## \[${VERSION}\]" CHANGELOG.md; then
+if grep -qF "## [${VERSION}]" CHANGELOG.md; then
   echo "  ✓ CHANGELOG entry found for $VERSION"
 else
   echo "  ! No CHANGELOG entry matching '## [$VERSION]' found"
