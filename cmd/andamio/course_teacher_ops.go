@@ -127,20 +127,21 @@ func init() {
 //   - exits 0 as a no-op when already APPROVED/PENDING_TX/ON_CHAIN with matching hash, or
 //   - returns an error wrapping the original gateway error when the supplied hash mismatches.
 //
-// The JSON envelope is stable across all branches:
+// The JSON envelope is stable across all success branches:
 //
-//	{action, status, slt_hash, advanced_from}
+//	{action, status, slt_hash, advanced_from, response}
 //
 // where action ∈ {"registered", "advanced", "already_registered"} and advanced_from is
-// "DRAFT" only on the advance branch (null otherwise).
+// "DRAFT" only on the advance branch (null otherwise). Error branches (mismatch, lookup
+// failure, unexpected status) return a Go error; --output json consumers see the global
+// {"error": "..."} shape on those paths, not the envelope.
 func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
 	moduleCode, _ := cmd.Flags().GetString("module-code")
 	sltHash, _ := cmd.Flags().GetString("slt-hash")
 	isJSON := output.GetFormat() == output.FormatJSON
 
-	var err error
-	sltHash, err = normalizeSltHashFlag(sltHash)
+	sltHash, err := normalizeSltHashFlag(sltHash)
 	if err != nil {
 		return err
 	}
@@ -155,9 +156,25 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Registering module %s...\n", moduleCode)
 	}
 
+	envelope, successMsg, err := registerOrRecoverModule(c, courseID, moduleCode, sltHash)
+	if err != nil {
+		return err
+	}
+
+	if isJSON {
+		return output.PrintJSON(envelope)
+	}
+	fmt.Fprintln(os.Stderr, successMsg)
+	return nil
+}
+
+// registerOrRecoverModule drives the register-module POST and, on an "already exists"
+// conflict, performs the hash-compare / status-branch recovery. Returns the JSON envelope
+// and a human-readable success message; does no printing itself so it can be driven from
+// tests without tripping over config.Load / global flag state.
+func registerOrRecoverModule(c *client.Client, courseID, moduleCode, sltHash string) (map[string]interface{}, string, error) {
 	resp, err := postRegisterModule(c, courseID, moduleCode, sltHash)
 	if err == nil {
-		// Happy path — gateway accepted the registration.
 		envelope := map[string]interface{}{
 			"action":        "registered",
 			"status":        "APPROVED",
@@ -165,36 +182,30 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 			"advanced_from": nil,
 			"response":      resp,
 		}
-		if isJSON {
-			return output.PrintJSON(envelope)
-		}
-		fmt.Fprintf(os.Stderr, "Module %s: registered.\n", moduleCode)
-		return nil
+		return envelope, fmt.Sprintf("Module %s: registered.", moduleCode), nil
 	}
 
 	if !isModuleAlreadyExistsError(err) {
-		return fmt.Errorf("failed to register module: %w", err)
+		return nil, "", fmt.Errorf("failed to register module: %w", err)
 	}
 
-	// Conflict path: look up the existing module to decide what to do.
 	existing, lookupErr := lookupTeacherModule(c, courseID, moduleCode)
 	if lookupErr != nil {
-		return fmt.Errorf("module %s already exists, but could not locate it for recovery: %w (original error: %v)", moduleCode, lookupErr, err)
+		return nil, "", fmt.Errorf("module %s already exists, but could not locate it for recovery: %w (original error: %v)", moduleCode, lookupErr, err)
 	}
 
-	existingHash := existing.SltHash
-	existingStatus := existing.Status
-
-	if existingHash != sltHash {
-		return mismatchError(courseID, moduleCode, existingHash, sltHash, err)
+	// Case-insensitive compare: blake2b hex hashes are case-insensitive by convention and
+	// users commonly paste them from explorers that may use either case. A case-only
+	// difference would otherwise route to the destructive delete-module remediation.
+	if !strings.EqualFold(existing.SltHash, sltHash) {
+		return nil, "", mismatchError(courseID, moduleCode, existing.SltHash, sltHash, err)
 	}
 
-	// Hashes match — branch on current status.
-	switch existingStatus {
+	switch existing.Status {
 	case "DRAFT":
 		updateResp, updateErr := postUpdateModuleStatus(c, courseID, moduleCode, "APPROVED", sltHash)
 		if updateErr != nil {
-			return fmt.Errorf("module %s exists in DRAFT with matching hash, but advancing to APPROVED failed: %w", moduleCode, updateErr)
+			return nil, "", fmt.Errorf("module %s exists in DRAFT with matching hash, but advancing to APPROVED failed: %w", moduleCode, updateErr)
 		}
 		envelope := map[string]interface{}{
 			"action":        "advanced",
@@ -203,28 +214,20 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 			"advanced_from": "DRAFT",
 			"response":      updateResp,
 		}
-		if isJSON {
-			return output.PrintJSON(envelope)
-		}
-		fmt.Fprintf(os.Stderr, "Module %s: advanced from DRAFT to APPROVED.\n", moduleCode)
-		return nil
+		return envelope, fmt.Sprintf("Module %s: advanced from DRAFT to APPROVED.", moduleCode), nil
 
 	case "APPROVED", "PENDING_TX", "ON_CHAIN":
 		envelope := map[string]interface{}{
 			"action":        "already_registered",
-			"status":        existingStatus,
+			"status":        existing.Status,
 			"slt_hash":      sltHash,
 			"advanced_from": nil,
 			"response":      nil,
 		}
-		if isJSON {
-			return output.PrintJSON(envelope)
-		}
-		fmt.Fprintf(os.Stderr, "Module %s: already registered (status: %s).\n", moduleCode, existingStatus)
-		return nil
+		return envelope, fmt.Sprintf("Module %s: already registered (status: %s).", moduleCode, existing.Status), nil
 
 	default:
-		return fmt.Errorf("module %s exists in unexpected status %q with matching hash; not advancing automatically", moduleCode, existingStatus)
+		return nil, "", fmt.Errorf("module %s exists in unexpected status %q with matching hash; not advancing automatically", moduleCode, existing.Status)
 	}
 }
 
@@ -314,9 +317,19 @@ func lookupTeacherModule(c *client.Client, courseID, moduleCode string) (*existi
 		if code != moduleCode {
 			continue
 		}
+		sltHash := lookupStringField(m, "slt_hash", "course_module_slt_hash")
+		if sltHash == "" {
+			// Surface response-shape drift explicitly rather than letting an empty hash
+			// cascade into a mismatch error that points the user at destructive delete-module.
+			return nil, fmt.Errorf("module %s found in teacher list but slt_hash field is missing or empty (response shape may have changed)", moduleCode)
+		}
+		status := lookupStringField(m, "course_module_status", "module_status", "status")
+		if status == "" {
+			return nil, fmt.Errorf("module %s found in teacher list but status field is missing or empty (response shape may have changed)", moduleCode)
+		}
 		return &existingModule{
-			SltHash: lookupStringField(m, "slt_hash", "course_module_slt_hash"),
-			Status:  lookupStringField(m, "course_module_status", "module_status", "status"),
+			SltHash: sltHash,
+			Status:  status,
 		}, nil
 	}
 	return nil, fmt.Errorf("module %s not found in teacher list for course %s", moduleCode, courseID)

@@ -210,6 +210,36 @@ func TestLookupTeacherModule(t *testing.T) {
 			moduleCode: "101",
 			wantErr:    "missing data array",
 		},
+		{
+			name: "matched module missing slt_hash surfaces response-shape error",
+			response: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{
+						"content": map[string]interface{}{
+							"course_module_code": "101",
+							"module_status":      "DRAFT",
+						},
+					},
+				},
+			},
+			moduleCode: "101",
+			wantErr:    "slt_hash field is missing",
+		},
+		{
+			name: "matched module missing status surfaces response-shape error",
+			response: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{
+						"content": map[string]interface{}{
+							"course_module_code": "101",
+							"slt_hash":           "abc",
+						},
+					},
+				},
+			},
+			moduleCode: "101",
+			wantErr:    "status field is missing",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -366,6 +396,215 @@ func TestRegisterModuleConflictBranches(t *testing.T) {
 				if existing.Status != tt.wantStatus {
 					t.Errorf("status = %q, want %q", existing.Status, tt.wantStatus)
 				}
+			}
+		})
+	}
+}
+
+// TestRegisterOrRecoverModule drives the envelope-producing inner function end-to-end
+// against an httptest gateway and asserts the exact envelope shape for every success
+// branch. The cobra handler is not exercised (config.Load requires filesystem state),
+// but every observable contract of the envelope — key presence, action/status values,
+// advanced_from nullability, response nesting — is locked in here.
+func TestRegisterOrRecoverModule(t *testing.T) {
+	tests := []struct {
+		name             string
+		suppliedHash     string
+		registerStatus   int  // HTTP status for the register POST
+		registerResp     map[string]interface{}
+		listResponse     map[string]interface{}
+		wantAction       string
+		wantStatus       string
+		wantSltHash      string
+		wantAdvancedFrom interface{}
+		wantResponseNil  bool
+		wantSuccessMsg   string
+		wantErrSubstr    string
+	}{
+		{
+			name:             "happy path — gateway accepts, action=registered",
+			suppliedHash:     "abc123",
+			registerStatus:   http.StatusOK,
+			registerResp:     map[string]interface{}{"module_id": "m-101"},
+			wantAction:       "registered",
+			wantStatus:       "APPROVED",
+			wantSltHash:      "abc123",
+			wantAdvancedFrom: nil,
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: registered.",
+		},
+		{
+			name:           "conflict + DRAFT + matching hash, action=advanced",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc123",
+						"module_status":      "DRAFT",
+					}},
+				},
+			},
+			wantAction:       "advanced",
+			wantStatus:       "APPROVED",
+			wantSltHash:      "abc123",
+			wantAdvancedFrom: "DRAFT",
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: advanced from DRAFT to APPROVED.",
+		},
+		{
+			name:           "conflict + APPROVED + matching hash, action=already_registered",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc123",
+						"module_status":      "APPROVED",
+					}},
+				},
+			},
+			wantAction:       "already_registered",
+			wantStatus:       "APPROVED",
+			wantSltHash:      "abc123",
+			wantAdvancedFrom: nil,
+			wantResponseNil:  true,
+			wantSuccessMsg:   "Module 101: already registered (status: APPROVED).",
+		},
+		{
+			name:           "conflict + ON_CHAIN + matching hash, action=already_registered",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc123",
+						"module_status":      "ON_CHAIN",
+					}},
+				},
+			},
+			wantAction:       "already_registered",
+			wantStatus:       "ON_CHAIN",
+			wantSltHash:      "abc123",
+			wantAdvancedFrom: nil,
+			wantResponseNil:  true,
+			wantSuccessMsg:   "Module 101: already registered (status: ON_CHAIN).",
+		},
+		{
+			name:           "case-insensitive hash match (supplied upper, existing lower) advances cleanly",
+			suppliedHash:   "ABC123",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc123",
+						"module_status":      "DRAFT",
+					}},
+				},
+			},
+			wantAction:       "advanced",
+			wantStatus:       "APPROVED",
+			wantSltHash:      "ABC123", // supplied value is preserved in envelope
+			wantAdvancedFrom: "DRAFT",
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: advanced from DRAFT to APPROVED.",
+		},
+		{
+			name:           "hash mismatch routes to mismatchError, no envelope",
+			suppliedHash:   "supplied",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "stored",
+						"module_status":      "DRAFT",
+					}},
+				},
+			},
+			wantErrSubstr: "stored",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v2/course/teacher/course-module/register":
+					if tt.registerStatus == http.StatusOK {
+						_ = json.NewEncoder(w).Encode(tt.registerResp)
+					} else {
+						http.Error(w, "course_module_code already exists in this course", tt.registerStatus)
+					}
+				case "/api/v2/course/teacher/course-modules/list":
+					_ = json.NewEncoder(w).Encode(tt.listResponse)
+				case "/api/v2/course/teacher/course-module/update-status":
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			c := client.New(&config.Config{BaseURL: srv.URL})
+			envelope, successMsg, err := registerOrRecoverModule(c, "course-x", "101", tt.suppliedHash)
+
+			if tt.wantErrSubstr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErrSubstr) {
+					t.Fatalf("err = %v, want substring %q", err, tt.wantErrSubstr)
+				}
+				if envelope != nil {
+					t.Errorf("envelope should be nil on error, got %v", envelope)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if envelope["action"] != tt.wantAction {
+				t.Errorf("action = %v, want %v", envelope["action"], tt.wantAction)
+			}
+			if envelope["status"] != tt.wantStatus {
+				t.Errorf("status = %v, want %v", envelope["status"], tt.wantStatus)
+			}
+			if envelope["slt_hash"] != tt.wantSltHash {
+				t.Errorf("slt_hash = %v, want %v", envelope["slt_hash"], tt.wantSltHash)
+			}
+			if envelope["advanced_from"] != tt.wantAdvancedFrom {
+				t.Errorf("advanced_from = %v, want %v", envelope["advanced_from"], tt.wantAdvancedFrom)
+			}
+			if tt.wantResponseNil && envelope["response"] != nil {
+				t.Errorf("response = %v, want nil", envelope["response"])
+			}
+			if !tt.wantResponseNil && envelope["response"] == nil {
+				t.Errorf("response is nil, want non-nil gateway response")
+			}
+			if successMsg != tt.wantSuccessMsg {
+				t.Errorf("successMsg = %q, want %q", successMsg, tt.wantSuccessMsg)
+			}
+
+			// Round-trip through JSON to verify advanced_from serializes as JSON null
+			// (not the string "null", not absent) and that all five keys survive.
+			jsonBytes, err := json.Marshal(envelope)
+			if err != nil {
+				t.Fatalf("marshal failed: %v", err)
+			}
+			var parsed map[string]interface{}
+			if err := json.Unmarshal(jsonBytes, &parsed); err != nil {
+				t.Fatalf("unmarshal failed: %v", err)
+			}
+			for _, key := range []string{"action", "status", "slt_hash", "advanced_from", "response"} {
+				if _, ok := parsed[key]; !ok {
+					t.Errorf("envelope missing key %q after JSON round-trip: %s", key, string(jsonBytes))
+				}
+			}
+			if tt.wantAdvancedFrom == nil && parsed["advanced_from"] != nil {
+				t.Errorf("advanced_from serialized as %v, want JSON null", parsed["advanced_from"])
 			}
 		})
 	}
