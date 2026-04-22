@@ -12,6 +12,11 @@ type AuthError struct{ Message string }
 
 func (e *AuthError) Error() string { return e.Message }
 
+// ConflictError is returned when a request conflicts with existing state (HTTP 409).
+type ConflictError struct{ Message string }
+
+func (e *ConflictError) Error() string { return e.Message }
+
 // ReportedError wraps an error whose output has already been printed to stdout
 // (e.g., a structured JSON result). main.go should set the exit code from the
 // wrapped error but skip printing a second error message.
