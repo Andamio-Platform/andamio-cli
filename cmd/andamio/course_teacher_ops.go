@@ -295,9 +295,6 @@ func postRegisterModule(c *client.Client, courseID, moduleCode, sltHash string) 
 //   - "already exists" body substring gates on conflict semantics (vs e.g. 409 validation)
 //   - "course_module_code" body substring gates on the specific field (vs other 409s like
 //     duplicate teacher, duplicate credential, etc.)
-//
-// The type gate replaces what the body match was silently doing as a status-code proxy.
-// The body checks narrow WHICH 409 this is, which the type gate alone can't do.
 func isModuleAlreadyExistsError(err error) bool {
 	if err == nil {
 		return false

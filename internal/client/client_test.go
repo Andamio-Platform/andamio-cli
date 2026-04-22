@@ -49,6 +49,9 @@ func TestClient_StatusCodeToTypedError(t *testing.T) {
 				if !errors.As(err, &authErr) {
 					t.Fatalf("want *apierr.AuthError, got %T: %v", err, err)
 				}
+				if !strings.Contains(authErr.Message, "403") {
+					t.Errorf("AuthError.Message should contain status 403, got %q", authErr.Message)
+				}
 			},
 		},
 		{
@@ -59,6 +62,9 @@ func TestClient_StatusCodeToTypedError(t *testing.T) {
 				var notFound *apierr.NotFoundError
 				if !errors.As(err, &notFound) {
 					t.Fatalf("want *apierr.NotFoundError, got %T: %v", err, err)
+				}
+				if !strings.Contains(notFound.Message, "404") {
+					t.Errorf("NotFoundError.Message should contain status 404, got %q", notFound.Message)
 				}
 			},
 		},
