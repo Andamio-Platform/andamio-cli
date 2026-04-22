@@ -44,10 +44,12 @@ With --output json, success branches emit a stable envelope:
     "response":      <gateway-response> | null
   }
 
-Scripts should branch on 'action'. Gateway fields that were previously
-returned at the top level are now nested under 'response'. Error
-branches (mismatch, lookup failure, unexpected status) return the
-global {"error": "..."} shape, not the envelope.
+Scripts should branch on 'action' (not on stderr text — text mode is
+for humans, --output json is the stable surface for automation).
+Gateway fields that were previously returned at the top level are now
+nested under 'response'. Error branches (mismatch, lookup failure,
+unexpected status) return the global {"error": "..."} shape, not the
+envelope.
 
 Examples:
   andamio course teacher register-module --course-id <id> --module-code 101 --slt-hash <hash>
@@ -186,7 +188,7 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Registering module %s...\n", moduleCode)
 	}
 
-	envelope, successMsg, err := registerOrRecoverModule(c, courseID, moduleCode, sltHash)
+	envelope, successMsg, err := registerOrRecoverModule(c, courseID, moduleCode, sltHash, isJSON)
 	if err != nil {
 		return err
 	}
@@ -200,9 +202,12 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 
 // registerOrRecoverModule drives the register-module POST and, on an "already exists"
 // conflict, performs the hash-compare / status-branch recovery. Returns the JSON envelope
-// and a human-readable success message; does no printing itself so it can be driven from
-// tests without tripping over config.Load / global flag state.
-func registerOrRecoverModule(c *client.Client, courseID, moduleCode, sltHash string) (map[string]interface{}, string, error) {
+// and a human-readable success message.
+//
+// isJSON controls only the single intermediate progress line printed to stderr when a
+// conflict is detected (so humans see the recovery is in flight rather than staring at
+// a silent terminal for up to two 30 s POSTs). Tests pass true to keep stderr quiet.
+func registerOrRecoverModule(c *client.Client, courseID, moduleCode, sltHash string, isJSON bool) (map[string]interface{}, string, error) {
 	resp, err := postRegisterModule(c, courseID, moduleCode, sltHash)
 	if err == nil {
 		envelope := map[string]interface{}{
@@ -217,6 +222,12 @@ func registerOrRecoverModule(c *client.Client, courseID, moduleCode, sltHash str
 
 	if !isModuleAlreadyExistsError(err) {
 		return nil, "", fmt.Errorf("failed to register module: %w", err)
+	}
+
+	// Recovery is about to do another gateway round-trip. Tell the user so a slow
+	// list call doesn't look like a hang and prompt an ill-timed ctrl-C.
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Module %s: already exists in DB, checking status...\n", moduleCode)
 	}
 
 	existing, lookupErr := lookupTeacherModule(c, courseID, moduleCode)
@@ -282,7 +293,11 @@ func postRegisterModule(c *client.Client, courseID, moduleCode, sltHash string) 
 // credential, "asset module already exists", "module github.com/...: already exists"
 // in proxied 5xx bodies) do not route into the module-lookup recovery branch.
 //
-// TODO: Replace with a typed ConflictError in internal/client once that refactor lands.
+// This is intentionally string-matching. The longer-term fix is a typed ConflictError
+// in internal/client (which would expose the HTTP 409 status distinct from the body).
+// Until then: the double-token predicate narrows the match enough that gateway wording
+// drift is the failure mode, not cross-command false positives. If the gateway ever
+// reworks its 409 body, update this predicate and the test cases in TestIsModuleAlreadyExistsError.
 func isModuleAlreadyExistsError(err error) bool {
 	if err == nil {
 		return false
@@ -314,11 +329,11 @@ func normalizeSltHashFlag(sltHash string) (string, error) {
 // mismatchError formats the user-facing error returned when register-module hits a
 // conflict and the existing module's slt_hash does not match what the caller supplied.
 // The original gateway error is wrapped via %w so consumers can use errors.Unwrap.
-// The remediation command is on its own line so a copy-to-end-of-line selection does
-// not pick up the wrapped error text.
+// Multi-line layout so the two hashes and the remediation don't get lost in a ~200-char
+// single-line blob at stderr width.
 func mismatchError(courseID, moduleCode, existingHash, suppliedHash string, gatewayErr error) error {
 	return fmt.Errorf(
-		"module %s already exists with slt_hash %s (you supplied %s) [original gateway error: %w]. To replace, run:\n  andamio course teacher delete-module --course-id %s --module-code %s",
+		"module %s already exists with slt_hash mismatch:\n  stored:   %s\n  supplied: %s\n  gateway:  %w\nTo replace, run:\n  andamio course teacher delete-module --course-id %s --module-code %s",
 		moduleCode, existingHash, suppliedHash, gatewayErr, courseID, moduleCode,
 	)
 }

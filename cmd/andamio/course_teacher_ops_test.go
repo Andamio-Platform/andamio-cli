@@ -273,131 +273,60 @@ func TestLookupTeacherModule(t *testing.T) {
 	}
 }
 
-// TestRegisterModuleConflictBranches exercises the conflict-recovery branching of
-// runCourseTeacherRegisterModule end-to-end against an httptest gateway. It does not
-// invoke the cobra handler directly (which would require config.Load and global
-// flag state); instead it composes the same building blocks the handler uses.
-func TestRegisterModuleConflictBranches(t *testing.T) {
+// TestRegisterOrRecoverModule_UpdateStatusPayload asserts the update-status call
+// on the DRAFT-advance branch carries the correct payload. TestRegisterOrRecoverModule
+// below covers envelope shape; this test covers the wire contract of the second POST.
+func TestRegisterOrRecoverModule_UpdateStatusPayload(t *testing.T) {
 	type call struct {
 		path string
 		body map[string]interface{}
 	}
+	var calls []call
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		calls = append(calls, call{path: r.URL.Path, body: body})
+		switch r.URL.Path {
+		case "/api/v2/course/teacher/course-module/register":
+			http.Error(w, "course_module_code already exists in this course", http.StatusConflict)
+		case "/api/v2/course/teacher/course-modules/list":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "h",
+						"module_status":      "DRAFT",
+					}},
+				},
+			})
+		case "/api/v2/course/teacher/course-module/update-status":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+		}
+	}))
+	defer srv.Close()
 
-	tests := []struct {
-		name           string
-		suppliedHash   string
-		existingHash   string
-		existingStatus string
-		wantAction     string // empty if expected to error
-		wantStatus     string
-		wantErr        string // substring
-	}{
-		{"DRAFT match advances to APPROVED", "h", "h", "DRAFT", "advanced", "APPROVED", ""},
-		{"APPROVED match is no-op", "h", "h", "APPROVED", "already_registered", "APPROVED", ""},
-		{"PENDING_TX match is no-op", "h", "h", "PENDING_TX", "already_registered", "PENDING_TX", ""},
-		{"ON_CHAIN match is no-op", "h", "h", "ON_CHAIN", "already_registered", "ON_CHAIN", ""},
-		{"hash mismatch errors with both hashes", "supplied", "stored", "DRAFT", "", "", "supplied"},
+	c := client.New(&config.Config{BaseURL: srv.URL})
+	if _, _, err := registerOrRecoverModule(c, "course-x", "101", "h", true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var calls []call
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var body map[string]interface{}
-				_ = json.NewDecoder(r.Body).Decode(&body)
-				calls = append(calls, call{path: r.URL.Path, body: body})
-
-				switch r.URL.Path {
-				case "/api/v2/course/teacher/course-module/register":
-					http.Error(w, "course_module_code already exists in this course", http.StatusConflict)
-				case "/api/v2/course/teacher/course-modules/list":
-					_ = json.NewEncoder(w).Encode(map[string]interface{}{
-						"data": []interface{}{
-							map[string]interface{}{
-								"content": map[string]interface{}{
-									"course_module_code": "101",
-									"slt_hash":           tt.existingHash,
-									"module_status":      tt.existingStatus,
-								},
-							},
-						},
-					})
-				case "/api/v2/course/teacher/course-module/update-status":
-					_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
-				default:
-					t.Errorf("unexpected path: %s", r.URL.Path)
-				}
-			}))
-			defer srv.Close()
-
-			c := client.New(&config.Config{BaseURL: srv.URL})
-
-			// Mirror handler logic: register, detect conflict, lookup, branch.
-			_, regErr := postRegisterModule(c, "course-x", "101", tt.suppliedHash)
-			if regErr == nil {
-				t.Fatal("expected register to fail")
-			}
-			if !isModuleAlreadyExistsError(regErr) {
-				t.Fatalf("expected conflict, got: %v", regErr)
-			}
-
-			existing, lookupErr := lookupTeacherModule(c, "course-x", "101")
-			if lookupErr != nil {
-				t.Fatalf("lookup failed: %v", lookupErr)
-			}
-
-			if existing.SltHash != tt.suppliedHash {
-				// Mismatch branch — reproduce the handler's exact error formatting and assert
-				// it names both hashes, includes the delete-module hint, and unwraps to the
-				// original gateway 409 error so consumers can use errors.Unwrap.
-				if tt.wantErr == "" {
-					t.Fatalf("expected match, but got mismatch: %s vs %s", existing.SltHash, tt.suppliedHash)
-				}
-				mismatchErr := mismatchError("course-x", "101", existing.SltHash, tt.suppliedHash, regErr)
-				msg := mismatchErr.Error()
-				if !strings.Contains(msg, existing.SltHash) {
-					t.Errorf("mismatch error missing existing hash %q: %s", existing.SltHash, msg)
-				}
-				if !strings.Contains(msg, tt.suppliedHash) {
-					t.Errorf("mismatch error missing supplied hash %q: %s", tt.suppliedHash, msg)
-				}
-				if !strings.Contains(msg, "delete-module --course-id course-x --module-code 101") {
-					t.Errorf("mismatch error missing delete-module remediation: %s", msg)
-				}
-				if unwrapped := errors.Unwrap(mismatchErr); unwrapped == nil {
-					t.Errorf("mismatch error did not wrap the original gateway error")
-				} else if !strings.Contains(unwrapped.Error(), "course_module_code") {
-					t.Errorf("unwrapped error did not preserve gateway message: %v", unwrapped)
-				}
-				return
-			}
-
-			// Match branches
-			switch existing.Status {
-			case "DRAFT":
-				if tt.wantAction != "advanced" {
-					t.Fatalf("DRAFT branch hit but wantAction=%q", tt.wantAction)
-				}
-				if _, err := postUpdateModuleStatus(c, "course-x", "101", "APPROVED", tt.suppliedHash); err != nil {
-					t.Fatalf("update-status failed: %v", err)
-				}
-				// Verify update-status was called with slt_hash
-				lastCall := calls[len(calls)-1]
-				if lastCall.path != "/api/v2/course/teacher/course-module/update-status" {
-					t.Errorf("expected update-status call, got %s", lastCall.path)
-				}
-				if lastCall.body["status"] != "APPROVED" || lastCall.body["slt_hash"] != tt.suppliedHash {
-					t.Errorf("update-status payload mismatch: %v", lastCall.body)
-				}
-			case "APPROVED", "PENDING_TX", "ON_CHAIN":
-				if tt.wantAction != "already_registered" {
-					t.Fatalf("%s branch hit but wantAction=%q", existing.Status, tt.wantAction)
-				}
-				if existing.Status != tt.wantStatus {
-					t.Errorf("status = %q, want %q", existing.Status, tt.wantStatus)
-				}
-			}
-		})
+	var updateCall *call
+	for i := range calls {
+		if calls[i].path == "/api/v2/course/teacher/course-module/update-status" {
+			updateCall = &calls[i]
+		}
+	}
+	if updateCall == nil {
+		t.Fatal("expected update-status call; got none")
+	}
+	if updateCall.body["status"] != "APPROVED" {
+		t.Errorf("update-status status = %v, want APPROVED", updateCall.body["status"])
+	}
+	if updateCall.body["slt_hash"] != "h" {
+		t.Errorf("update-status slt_hash = %v, want %q", updateCall.body["slt_hash"], "h")
+	}
+	if updateCall.body["course_module_code"] != "101" {
+		t.Errorf("update-status course_module_code = %v, want %q", updateCall.body["course_module_code"], "101")
 	}
 }
 
@@ -408,18 +337,21 @@ func TestRegisterModuleConflictBranches(t *testing.T) {
 // advanced_from nullability, response nesting — is locked in here.
 func TestRegisterOrRecoverModule(t *testing.T) {
 	tests := []struct {
-		name             string
-		suppliedHash     string
-		registerStatus   int  // HTTP status for the register POST
-		registerResp     map[string]interface{}
-		listResponse     map[string]interface{}
-		wantAction       string
-		wantStatus       string
-		wantSltHash      string
-		wantAdvancedFrom interface{}
-		wantResponseNil  bool
-		wantSuccessMsg   string
-		wantErrSubstr    string
+		name               string
+		suppliedHash       string
+		registerStatus     int // HTTP status for the register POST; 0 defaults to OK
+		registerBody       string
+		registerResp       map[string]interface{}
+		listStatus         int // HTTP status for the list POST; 0 defaults to OK
+		listResponse       map[string]interface{}
+		updateStatusStatus int // HTTP status for the update-status POST; 0 defaults to OK
+		wantAction         string
+		wantStatus         string
+		wantSltHash        string
+		wantAdvancedFrom   interface{}
+		wantResponseNil    bool
+		wantSuccessMsg     string
+		wantErrSubstr      string
 	}{
 		{
 			name:             "happy path — gateway accepts, action=registered",
@@ -528,6 +460,63 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 			},
 			wantErrSubstr: "stored",
 		},
+		{
+			// Covers the non-conflict error path in registerOrRecoverModule. Guards the
+			// "failed to register module:" wrapping so a future refactor that drops the
+			// wrap or misroutes non-conflict errors into the recovery branch fails here.
+			name:           "non-conflict register error surfaces wrapped",
+			suppliedHash:   "abc",
+			registerStatus: http.StatusInternalServerError,
+			registerBody:   "backend is down",
+			wantErrSubstr:  "failed to register module",
+		},
+		{
+			// Covers the update-status failure path inside the DRAFT advance branch.
+			// Guards the "advancing to APPROVED failed:" wrapping — a regression that
+			// returns the underlying error bare, or silently swallows it, fails here.
+			name:           "conflict + DRAFT + matching hash + update-status fails",
+			suppliedHash:   "abc",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc",
+						"module_status":      "DRAFT",
+					}},
+				},
+			},
+			updateStatusStatus: http.StatusInternalServerError,
+			wantErrSubstr:      "advancing to APPROVED failed",
+		},
+		{
+			// Covers the default branch when existing.Status is a value the recovery
+			// path doesn't explicitly handle (e.g., a future state like "WITHDRAWN").
+			// Guards against someone collapsing the switch and dropping the default.
+			name:           "conflict + unexpected status + matching hash errors out",
+			suppliedHash:   "abc",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc",
+						"module_status":      "WITHDRAWN",
+					}},
+				},
+			},
+			wantErrSubstr: "unexpected status",
+		},
+		{
+			// Covers the lookup-failure path after a 409. The compound error wraps the
+			// lookup failure AND echoes the original gateway 409 via %v. Guards the
+			// user-facing message so a future refactor can't drop either half silently.
+			name:           "conflict + list lookup fails surfaces compound error",
+			suppliedHash:   "abc",
+			registerStatus: http.StatusConflict,
+			listStatus:     http.StatusInternalServerError,
+			wantErrSubstr:  "could not locate it for recovery",
+		},
 	}
 
 	for _, tt := range tests {
@@ -535,14 +524,29 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v2/course/teacher/course-module/register":
-					if tt.registerStatus == http.StatusOK {
+					switch {
+					case tt.registerStatus == 0 || tt.registerStatus == http.StatusOK:
 						_ = json.NewEncoder(w).Encode(tt.registerResp)
-					} else {
+					case tt.registerStatus == http.StatusConflict:
 						http.Error(w, "course_module_code already exists in this course", tt.registerStatus)
+					default:
+						body := tt.registerBody
+						if body == "" {
+							body = "error"
+						}
+						http.Error(w, body, tt.registerStatus)
 					}
 				case "/api/v2/course/teacher/course-modules/list":
+					if tt.listStatus != 0 && tt.listStatus != http.StatusOK {
+						http.Error(w, "list failed", tt.listStatus)
+						return
+					}
 					_ = json.NewEncoder(w).Encode(tt.listResponse)
 				case "/api/v2/course/teacher/course-module/update-status":
+					if tt.updateStatusStatus != 0 && tt.updateStatusStatus != http.StatusOK {
+						http.Error(w, "update-status failed", tt.updateStatusStatus)
+						return
+					}
 					_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 				default:
 					t.Errorf("unexpected path: %s", r.URL.Path)
@@ -551,7 +555,7 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 			defer srv.Close()
 
 			c := client.New(&config.Config{BaseURL: srv.URL})
-			envelope, successMsg, err := registerOrRecoverModule(c, "course-x", "101", tt.suppliedHash)
+			envelope, successMsg, err := registerOrRecoverModule(c, "course-x", "101", tt.suppliedHash, true)
 
 			if tt.wantErrSubstr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErrSubstr) {
