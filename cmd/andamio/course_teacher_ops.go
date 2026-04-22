@@ -22,7 +22,37 @@ var courseTeacherCmd = &cobra.Command{
 var courseTeacherRegisterModuleCmd = &cobra.Command{
 	Use:   "register-module",
 	Short: "Register a course module from on-chain data",
-	RunE:  runCourseTeacherRegisterModule,
+	Long: `Register a course module from on-chain data.
+
+Idempotent on slt_hash match. When the module already exists in the DB
+(typically because 'course import --create' created it, or a prior run
+partially completed), behavior depends on its current status:
+
+  DRAFT          + matching hash -> advances to APPROVED
+  APPROVED       + matching hash -> no-op (exit 0)
+  PENDING_TX     + matching hash -> no-op (exit 0)
+  ON_CHAIN       + matching hash -> no-op (exit 0)
+  hash mismatch  (any status)    -> error; suggests delete-module
+
+With --output json, success branches emit a stable envelope:
+
+  {
+    "action":        "registered" | "advanced" | "already_registered",
+    "status":        "<current-status>",
+    "slt_hash":      "<supplied>",
+    "advanced_from": "DRAFT" | null,
+    "response":      <gateway-response> | null
+  }
+
+Scripts should branch on 'action'. Gateway fields that were previously
+returned at the top level are now nested under 'response'. Error
+branches (mismatch, lookup failure, unexpected status) return the
+global {"error": "..."} shape, not the envelope.
+
+Examples:
+  andamio course teacher register-module --course-id <id> --module-code 101 --slt-hash <hash>
+  andamio course teacher register-module --course-id <id> --module-code 101 --slt-hash <hash> --output json`,
+	RunE: runCourseTeacherRegisterModule,
 }
 
 var courseTeacherPublishModuleCmd = &cobra.Command{
