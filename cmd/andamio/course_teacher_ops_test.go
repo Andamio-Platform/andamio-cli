@@ -3,30 +3,50 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 )
 
 func TestIsModuleAlreadyExistsError(t *testing.T) {
+	// Three gates: errors.As(*apierr.ConflictError) + "already exists" + "course_module_code".
+	// The type gate blocks non-409 errors; body checks narrow WHICH 409.
+	conflict := func(body string) error { return &apierr.ConflictError{Message: body} }
+
 	tests := []struct {
 		name string
 		err  error
 		want bool
 	}{
+		// Happy paths — type + stem + field all satisfied.
+		{"ConflictError with 'already exists' and course_module_code", conflict("API error 409: course_module_code already exists in this course"), true},
+		{"ConflictError case-insensitive (mixed case body)", conflict("Course_Module_Code Already Exists"), true},
+
+		// Stem gate negatives — type passes, field passes, but no "already exists".
+		{"ConflictError mentioning course_module_code but no 'already exists' stem (validation 409)", conflict("course_module_code is invalid"), false},
+		{"ConflictError 'course_module_code must be numeric' (different stem)", conflict("course_module_code must be numeric"), false},
+
+		// Field gate negatives — type passes, stem passes, but no course_module_code.
+		{"ConflictError 'module already exists' without course_module_code token", conflict("API error 409: module already exists"), false},
+		{"ConflictError 'asset module already exists' adjacent wording", conflict("API error 409: asset module already exists"), false},
+		{"ConflictError 'teacher already exists' (different resource)", conflict("API error 409: teacher already exists"), false},
+
+		// Type gate negatives — not a ConflictError, regardless of body.
 		{"nil", nil, false},
-		{"unrelated error", errors.New("boom"), false},
-		{"already exists with course_module_code", errors.New("API error 409: course_module_code already exists in this course"), true},
-		{"case insensitive", errors.New("Course_Module_Code Already Exists"), true},
-		{"already exists with bare 'module' token (no course_module_code) is NOT a course-module conflict", errors.New("API error 409: module already exists"), false},
-		{"already exists in proxied 5xx body mentioning 'module' is NOT a course-module conflict", errors.New("API error 500: internal error in module github.com/foo: record already exists"), false},
-		{"already exists with adjacent 'asset module' wording", errors.New("API error 409: asset module already exists"), false},
-		{"already exists without module context (e.g. duplicate teacher)", errors.New("API error 409: teacher already exists"), false},
-		{"different stem (not a duplicate)", errors.New("course_module_code is invalid"), false},
+		{"plain errors.New unrelated", errors.New("boom"), false},
+		{"plain errors.New whose body contains both tokens (non-typed)", errors.New("course_module_code already exists"), false},
+		{"proxied 5xx body mentioning tokens (not a ConflictError)", errors.New("API error 500: internal error: course_module_code already exists somewhere"), false},
+		{"NotFoundError (wrong type, 404)", &apierr.NotFoundError{Message: "course_module_code already exists"}, false},
+		{"AuthError (wrong type, 401/403)", &apierr.AuthError{Message: "course_module_code already exists"}, false},
+
+		// Wrap-chain — errors.As walks through fmt.Errorf(%w).
+		{"wrapped ConflictError (via fmt.Errorf %w)", fmt.Errorf("register failed: %w", conflict("API error 409: course_module_code already exists")), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

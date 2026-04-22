@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -288,21 +290,23 @@ func postRegisterModule(c *client.Client, courseID, moduleCode, sltHash string) 
 }
 
 // isModuleAlreadyExistsError reports whether err looks like a duplicate course-module
-// conflict from the gateway. Requires both an "already exists" stem AND the specific
-// "course_module_code" token, so unrelated conflicts (duplicate teacher, duplicate
-// credential, "asset module already exists", "module github.com/...: already exists"
-// in proxied 5xx bodies) do not route into the module-lookup recovery branch.
+// conflict from the gateway. Three gates, ANDed together:
+//   - errors.As against *apierr.ConflictError gates on HTTP 409 (surfaced by internal/client)
+//   - "already exists" body substring gates on conflict semantics (vs e.g. 409 validation)
+//   - "course_module_code" body substring gates on the specific field (vs other 409s like
+//     duplicate teacher, duplicate credential, etc.)
 //
-// This is intentionally string-matching. The longer-term fix is a typed ConflictError
-// in internal/client (which would expose the HTTP 409 status distinct from the body).
-// Until then: the double-token predicate narrows the match enough that gateway wording
-// drift is the failure mode, not cross-command false positives. If the gateway ever
-// reworks its 409 body, update this predicate and the test cases in TestIsModuleAlreadyExistsError.
+// The type gate replaces what the body match was silently doing as a status-code proxy.
+// The body checks narrow WHICH 409 this is, which the type gate alone can't do.
 func isModuleAlreadyExistsError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := strings.ToLower(err.Error())
+	var conflict *apierr.ConflictError
+	if !errors.As(err, &conflict) {
+		return false
+	}
+	msg := strings.ToLower(conflict.Message)
 	return strings.Contains(msg, "already exists") && strings.Contains(msg, "course_module_code")
 }
 
