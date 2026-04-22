@@ -2,11 +2,12 @@
 status: pending
 priority: p2
 issue_id: "021"
-tags: [code-review, reliability, client, conflict-detection, pr-68]
+tags: [code-review, reliability, client, conflict-detection, pr-68, blocks-pr-66]
 dependencies: []
+blocks: [docs/plans/2026-04-22-003-refactor-typed-register-module-envelope-plan.md]
 ---
 
-# Verify Gateway Returns HTTP 409 for Duplicate course_module_code
+# Capture real preprod gateway responses for register-module + update-module-status (409 + 200)
 
 ## Problem Statement
 
