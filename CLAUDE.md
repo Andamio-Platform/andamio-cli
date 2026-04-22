@@ -126,7 +126,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course owner update --course-id <id>` | `/v2/course/owner/course/update` | jwt | Update course metadata. Only changed flags sent |
 | `course owner register --course-id <id> --title <t>` | `/v2/course/owner/course/register` | jwt | Register on-chain course with off-chain metadata. `--title` required |
 | `course owner teachers --course-id <id>` | `/v2/course/owner/teachers/update` | jwt | Add/remove teachers. `--add` (repeatable), `--remove` (repeatable) |
-| `course teacher register-module` | `/v2/course/teacher/course-module/register` | jwt | Register module from chain. `--course-id`, `--module-code`, `--slt-hash` |
+| `course teacher register-module` | `/v2/course/teacher/course-module/register` | jwt | Register module from chain. Idempotent on hash match: DRAFT advances to APPROVED; APPROVED/PENDING_TX/ON_CHAIN are no-ops. `--course-id`, `--module-code`, `--slt-hash`. `--output json` returns an envelope — see `register-module --help` for the shape. |
 | `course teacher publish-module` | `/v2/course/teacher/course-module/publish` | jwt | Publish module. `--course-id`, `--module-code` |
 | `course teacher delete-module` | `/v2/course/teacher/course-module/delete` | jwt | Delete module. `--course-id`, `--module-code` |
 | `course teacher update-module-status` | `/v2/course/teacher/course-module/update-status` | jwt | Update module status. `--course-id`, `--module-code`, `--status` |
