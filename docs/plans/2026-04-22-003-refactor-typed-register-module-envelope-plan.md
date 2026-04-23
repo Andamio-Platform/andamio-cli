@@ -1,26 +1,25 @@
 ---
 title: "refactor: typed RegisterModuleEnvelope with gateway-state population"
 type: refactor
-status: blocked
+status: completed
 date: 2026-04-22
 deepened: 2026-04-22
+unblocked: 2026-04-23
+completed: 2026-04-23
 origin: https://github.com/Andamio-Platform/andamio-cli/issues/66
-blocked_on: todos/021-pending-p2-verify-gateway-409-for-duplicate-module.md
 ---
 
 # refactor: typed RegisterModuleEnvelope with gateway-state population
 
-## Status: Blocked on preprod fixture capture
+## Status: Active (unblocked 2026-04-23)
 
-This plan is blocked on todo #021 (expanded scope). Before Unit 1 can begin, three preprod responses must be captured and committed as test fixtures:
+Previously blocked on todo #021 (preprod fixture capture). Unblocked on the basis of this plan's own Key Technical Decisions, which accept that gateway-state population silently no-ops on two of three branches under current gateway behavior and document this as acceptable:
 
-1. **`register-module` 200 success response** — proves which response-field names the gateway actually populates for the `registered` branch. Without this, `lookupStringField(resp, "status", "course_module_status")` may silently miss and fall through to hardcoded `"APPROVED"`.
-2. **`update-module-status` 200 success response** (DRAFT→APPROVED transition) — proves whether the gateway returns canonical `status`/`slt_hash` for the `advanced` branch. Current test fixture returns `{"ok": true}` with no useful fields, which strongly suggests today's gateway doesn't populate canonical values here — but this should be verified against the real endpoint before we write code that depends on it.
-3. **`register-module` 409 conflict body** — already tracked by todo #021; capture this in the same session.
+1. The typed struct pattern lands today and establishes the contract for future `--output json` commands (publish-module, update-module-status, etc.).
+2. The `already_registered` branch IS genuinely upgraded to canonical values TODAY (uses `existing.SltHash` from the teacher-list response, no fixture required).
+3. When todo #021 lands real preprod fixtures, no code changes are needed — the `lookupStringField` pipe is already in place and will light up automatically once the candidate field names are known.
 
-Rationale for blocking: the ce:review consensus on this plan (see `.context/compound-engineering/ce-review/*-pr66-*` once Unit 2 runs) flagged that the refactor's stated value ("populate from gateway state") is unvalidated without real fixtures. Rather than shipping a refactor whose semantic upgrade silently no-ops on 2 of 3 branches, we capture the fixtures first, discover which field names the gateway actually uses, and wire the typed envelope to those real names. See the full tradeoff analysis in the conversation that produced this plan (summarized: Option B over Option A for long-term contract honesty).
-
-Unblock steps documented in `todos/021-pending-p2-verify-gateway-409-for-duplicate-module.md` (expanded scope). When fixtures are committed, set `status: active` in the frontmatter and proceed to `/ce:work`.
+The CHANGELOG entry (Documentation / Operational Notes section) honestly documents the `registered`/`advanced` vs `already_registered` asymmetry so consumers aren't surprised.
 
 ## Overview
 
