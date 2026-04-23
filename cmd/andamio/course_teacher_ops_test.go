@@ -617,6 +617,72 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 			wantSuccessMsg:   "Module 101: registered.",
 		},
 		{
+			// Whitespace-only fields are also treated as "not present" by the
+			// trimmed lookupStringField guard. A buggy or misconfigured gateway
+			// returning "status": " " must not leak a single-space value into
+			// downstream equality checks against canonical status strings.
+			name:           "registered with whitespace-only gateway fields falls through to defaults",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusOK,
+			registerResp: map[string]interface{}{
+				"module_id": "m-101",
+				"status":    "   ",
+				"slt_hash":  "\t\n",
+			},
+			wantAction:       "registered",
+			wantStatus:       "APPROVED",
+			wantSltHash:      "abc123",
+			wantAdvancedFrom: nil,
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: registered.",
+		},
+		{
+			// Surrounding whitespace on an otherwise-valid value is trimmed to
+			// match the canonical form. Prevents " APPROVED " from silently
+			// differing from "APPROVED" in downstream comparisons.
+			name:           "registered with surrounding-whitespace status gets trimmed",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusOK,
+			registerResp: map[string]interface{}{
+				"module_id": "m-101",
+				"status":    "  PENDING_VERIFY  ",
+			},
+			wantAction:       "registered",
+			wantStatus:       "PENDING_VERIFY",
+			wantSltHash:      "abc123", // no gateway slt_hash, falls back
+			wantAdvancedFrom: nil,
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: registered.",
+		},
+		{
+			// Symmetric coverage for the advanced branch: update-status endpoint
+			// returns explicit empty-string fields. Mirrors the registered case
+			// above. Confirms both branches handle the empty-string edge case
+			// identically via the same lookupStringField guard.
+			name:           "advanced with empty-string update-status fields falls through to defaults",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc123",
+						"module_status":      "DRAFT",
+					}},
+				},
+			},
+			updateStatusResp: map[string]interface{}{
+				"status":   "",
+				"slt_hash": "",
+			},
+			wantAction:       "advanced",
+			wantStatus:       "APPROVED", // fallback
+			wantSltHash:      "abc123",   // fallback — supplied
+			wantAdvancedFrom: strPtr("DRAFT"),
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: advanced from DRAFT to APPROVED.",
+		},
+		{
 			// R4 lockdown (already_registered branch): this is the ONLY branch that
 			// guarantees canonical SltHash today. User supplies ABC123 uppercase; DB
 			// stores abc123 lowercase; case-insensitive compare matches; envelope

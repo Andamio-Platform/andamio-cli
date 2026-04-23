@@ -32,28 +32,21 @@ import (
 //                            is nil (no gateway round-trip happened after the 409).
 //                            AdvancedFrom is nil.
 //
-// Status and SltHash are populated from the gateway response when it carries those
-// fields (via lookupStringField's defensive key search), falling back to hardcoded
-// values when the gateway response is minimal.
+// Status and SltHash are populated from the gateway response via
+// lookupStringField's defensive key search, with hardcoded fallbacks when the
+// response is minimal. SltHash canonicalization is asymmetric by branch
+// (todo #021 unblocks full symmetry):
+//   - "already_registered": always canonical (existing.SltHash from the teacher
+//     modules list). Supplied "ABC123" against stored "abc123" returns "abc123".
+//   - "registered" / "advanced": gateway field if present, else the supplied
+//     hash (post-trim). Today's gateway typically doesn't populate it on these
+//     branches, so consumers see supplied casing until real preprod fixtures land.
 //
-// SltHash source differs by branch (intentional asymmetry — see todo #021):
-//   - "already_registered": always canonical (from existing.SltHash, sourced from
-//     the teacher modules list). Survives supplied-uppercase / stored-lowercase
-//     case mismatches — a caller passing "ABC123" against a stored "abc123" gets
-//     back "abc123" in the envelope.
-//   - "registered" / "advanced": gateway-response field if present, else the
-//     supplied hash (post-trim). Today's preprod gateway typically doesn't
-//     populate these fields on those branches, so consumers see the supplied
-//     casing. The lookup pipe is in place for when fixtures land.
-//
-// Scripts that need guaranteed canonical values should treat `course teacher
-// register-module`'s envelope as transactional and consult `course modules
-// --output json` as the authoritative hash source. Within this envelope:
-// blake2b hex is case-insensitive by convention; compare via strings.EqualFold
-// or lowercase-normalize both sides.
-//
-// Scripts should branch on Action. `--output json` is the stable surface for
-// automation; stderr text is for humans.
+// Scripts that need guaranteed canonical values should treat this envelope as
+// transactional and consult `course modules --output json` for authoritative
+// hashes. Within the envelope: blake2b hex is case-insensitive by convention;
+// use strings.EqualFold or lowercase-normalize both sides when comparing.
+// Branch on Action; `--output json` is the stable automation surface.
 type RegisterModuleEnvelope struct {
 	Action       string         `json:"action"`
 	Status       string         `json:"status"`
@@ -454,18 +447,27 @@ func lookupTeacherModule(ctx context.Context, c *client.Client, courseID, module
 }
 
 // lookupStringField returns the first non-empty string match for any of the given
-// field names, checking the top level of m first and then m["content"]. Used for
-// defensive lookup when API field names vary across environments or response shapes.
+// field names, checking the top level of m first and then m["content"]. Values
+// are whitespace-trimmed before the non-empty check and before returning — a
+// gateway response with "status": " " or "status": "\t\n" is treated as
+// "not present" so the caller's fallback kicks in, and a surrounding-whitespace
+// value like " APPROVED " returns as "APPROVED" rather than leaking padding
+// into downstream equality checks against canonical status strings.
+// Used for defensive lookup when API field names vary across environments or response shapes.
 func lookupStringField(m map[string]interface{}, names ...string) string {
 	for _, name := range names {
-		if v, ok := m[name].(string); ok && v != "" {
-			return v
+		if v, ok := m[name].(string); ok {
+			if trimmed := strings.TrimSpace(v); trimmed != "" {
+				return trimmed
+			}
 		}
 	}
 	if content, ok := m["content"].(map[string]interface{}); ok {
 		for _, name := range names {
-			if v, ok := content[name].(string); ok && v != "" {
-				return v
+			if v, ok := content[name].(string); ok {
+				if trimmed := strings.TrimSpace(v); trimmed != "" {
+					return trimmed
+				}
 			}
 		}
 	}
