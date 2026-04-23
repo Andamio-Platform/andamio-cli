@@ -177,11 +177,14 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 			return
 		}
 
-		// Extract JWT and user info
-		result.JWT = r.URL.Query().Get("jwt")
-		result.ExpiresAt = r.URL.Query().Get("expires_at")
-		result.Alias = r.URL.Query().Get("alias")
-		result.UserID = r.URL.Query().Get("user_id")
+		// Extract JWT and user info. sanitizeCallbackValue drops JavaScript-
+		// style "undefined"/"null" literals the browser may serialize when
+		// the field is absent upstream, so they don't land in config as
+		// real strings and surface as `User ID: undefined` on `user status`.
+		result.JWT = sanitizeCallbackValue(r.URL.Query().Get("jwt"))
+		result.ExpiresAt = sanitizeCallbackValue(r.URL.Query().Get("expires_at"))
+		result.Alias = sanitizeCallbackValue(r.URL.Query().Get("alias"))
+		result.UserID = sanitizeCallbackValue(r.URL.Query().Get("user_id"))
 
 		if result.JWT == "" {
 			result.Error = "no JWT received"
@@ -406,7 +409,9 @@ func runUserStatus(cmd *cobra.Command, args []string) error {
 		}
 		if cfg.HasUserAuth() {
 			result.UserAlias = cfg.UserAlias
-			result.UserID = cfg.UserID
+			// Drop "undefined"/"null" from historic configs so the JSON
+			// envelope doesn't carry the same bad value text mode hides.
+			result.UserID = sanitizeCallbackValue(cfg.UserID)
 			if cfg.JWTExpiresAt != "" {
 				result.SessionExpiresAt = cfg.JWTExpiresAt
 				if expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt); err == nil {
@@ -438,7 +443,13 @@ func runUserStatus(cmd *cobra.Command, args []string) error {
 	// User JWT status
 	if cfg.HasUserAuth() {
 		fmt.Printf("User: %s\n", cfg.UserAlias)
-		fmt.Printf("User ID: %s\n", cfg.UserID)
+		// Only show User ID when there's a real value. A historic config
+		// written before sanitizeCallbackValue landed may still contain
+		// the literal strings "undefined" or "null" from the browser
+		// callback flow; treat those as absent.
+		if id := cfg.UserID; id != "" && id != "undefined" && id != "null" {
+			fmt.Printf("User ID: %s\n", id)
+		}
 
 		if cfg.JWTExpiresAt != "" {
 			expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt)
@@ -620,6 +631,18 @@ func buildAuthURL(baseURL, redirectURI, state string) string {
 	params.Set("state", state)
 
 	return fmt.Sprintf("%s/auth/cli?%s", appURL, params.Encode())
+}
+
+// sanitizeCallbackValue drops JavaScript-style "undefined" / "null" literals
+// and pure whitespace. The browser wallet-auth callback serializes missing
+// fields this way; without this cleanup, they land in ~/.andamio/config.json
+// as real strings and later surface as `User ID: undefined` on user status.
+func sanitizeCallbackValue(v string) string {
+	s := strings.TrimSpace(v)
+	if s == "undefined" || s == "null" {
+		return ""
+	}
+	return s
 }
 
 // formatDuration formats a duration in a human-readable way
