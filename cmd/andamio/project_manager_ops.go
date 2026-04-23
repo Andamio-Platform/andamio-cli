@@ -33,6 +33,7 @@ func init() {
 func runProjectManagerCommitments(cmd *cobra.Command, args []string) error {
 	projectID, _ := cmd.Flags().GetString("project-id")
 	return printListPost(
+		cmd.Context(),
 		"/api/v2/project/manager/commitments/list",
 		map[string]string{"project_id": projectID},
 		"No pending assessments found.",

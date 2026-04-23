@@ -43,7 +43,7 @@ func runTokenList(cmd *cobra.Command, args []string) error {
 
 	// API may return {data: [...]} envelope or a raw array
 	var raw json.RawMessage
-	if err := c.Get("/api/v2/token/user/tokens/list", &raw); err != nil {
+	if err := c.Get(cmd.Context(), "/api/v2/token/user/tokens/list", &raw); err != nil {
 		return fmt.Errorf("failed to list tokens: %w", err)
 	}
 

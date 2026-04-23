@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -23,7 +24,7 @@ var courseListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available courses",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return printList("/api/v2/course/user/courses/list", "No courses found.", "content.title", "course_id", false)
+		return printList(cmd.Context(), "/api/v2/course/user/courses/list", "No courses found.", "content.title", "course_id", false)
 	},
 }
 
@@ -32,7 +33,7 @@ var courseGetCmd = &cobra.Command{
 	Short: "Get course details",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/course/user/course/get/" + url.PathEscape(args[0]))
+		return getJSON(cmd.Context(), "/api/v2/course/user/course/get/"+url.PathEscape(args[0]))
 	},
 }
 
@@ -114,9 +115,9 @@ type teacherCourse struct {
 }
 
 // fetchTeacherCourses calls POST /v2/course/teacher/courses/list and returns parsed courses
-func fetchTeacherCourses(c *client.Client) ([]teacherCourse, error) {
+func fetchTeacherCourses(ctx context.Context, c *client.Client) ([]teacherCourse, error) {
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/courses/list", nil, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/courses/list", nil, &resp); err != nil {
 		return nil, fmt.Errorf("failed to list teacher courses: %w", err)
 	}
 
@@ -146,7 +147,7 @@ func fetchTeacherCourses(c *client.Client) ([]teacherCourse, error) {
 // resolveCourseID resolves a course ID from a positional arg or --course flag.
 // If courseIDArg is non-empty, it is used directly. Otherwise, --course is
 // used for substring matching against the teacher courses list.
-func resolveCourseID(c *client.Client, courseIDArg string, cmd *cobra.Command) (string, error) {
+func resolveCourseID(ctx context.Context, c *client.Client, courseIDArg string, cmd *cobra.Command) (string, error) {
 	// If positional arg is available, use it directly
 	if courseIDArg != "" {
 		return courseIDArg, nil
@@ -161,7 +162,7 @@ func resolveCourseID(c *client.Client, courseIDArg string, cmd *cobra.Command) (
 	}
 
 	// Fetch teacher courses and match by title substring
-	courses, err := fetchTeacherCourses(c)
+	courses, err := fetchTeacherCourses(ctx, c)
 	if err != nil {
 		return "", err
 	}
@@ -196,7 +197,7 @@ func resolveCourseID(c *client.Client, courseIDArg string, cmd *cobra.Command) (
 
 // resolveCourseIDFromFlags resolves a course ID from --course-id or --course flag.
 // Used by import commands where both flags are available.
-func resolveCourseIDFromFlags(cmd *cobra.Command) (string, error) {
+func resolveCourseIDFromFlags(ctx context.Context, cmd *cobra.Command) (string, error) {
 	courseID, _ := cmd.Flags().GetString("course-id")
 	if courseID != "" {
 		return courseID, nil
@@ -206,10 +207,11 @@ func resolveCourseIDFromFlags(cmd *cobra.Command) (string, error) {
 		return "", err
 	}
 	c := client.New(cfg)
-	return resolveCourseID(c, "", cmd)
+	return resolveCourseID(ctx, c, "", cmd)
 }
 
 func runCourseModules(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -220,26 +222,26 @@ func runCourseModules(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		courseIDArg = args[0]
 	}
-	courseID, err := resolveCourseID(c, courseIDArg, cmd)
+	courseID, err := resolveCourseID(ctx, c, courseIDArg, cmd)
 	if err != nil {
 		return err
 	}
 
 	// Use teacher endpoint for richer data when teacher auth is available
 	if cfg.HasUserAuth() {
-		return runCourseModulesTeacher(cfg, courseID)
+		return runCourseModulesTeacher(ctx, cfg, courseID)
 	}
 
 	// Fall back to user endpoint
-	return getJSON("/api/v2/course/user/modules/" + url.PathEscape(courseID))
+	return getJSON(ctx, "/api/v2/course/user/modules/"+url.PathEscape(courseID))
 }
 
-func runCourseModulesTeacher(cfg *config.Config, courseID string) error {
+func runCourseModulesTeacher(ctx context.Context, cfg *config.Config, courseID string) error {
 	c := client.New(cfg)
 
 	var resp map[string]interface{}
 	reqBody := map[string]string{"course_id": courseID}
-	if err := c.Post("/api/v2/course/teacher/course-modules/list", reqBody, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/course-modules/list", reqBody, &resp); err != nil {
 		return err
 	}
 
@@ -304,6 +306,7 @@ func runCourseModulesTeacher(cfg *config.Config, courseID string) error {
 }
 
 func runCourseSlts(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -318,7 +321,7 @@ func runCourseSlts(cmd *cobra.Command, args []string) error {
 	} else {
 		// slts <module-code> --course "Name"
 		moduleCode = args[0]
-		courseID, err = resolveCourseID(c, "", cmd)
+		courseID, err = resolveCourseID(ctx, c, "", cmd)
 		if err != nil {
 			return err
 		}
@@ -326,22 +329,22 @@ func runCourseSlts(cmd *cobra.Command, args []string) error {
 
 	// Use teacher endpoint for lesson presence data when JWT is available
 	if cfg.HasUserAuth() {
-		return runCourseSltsTeacher(cfg, courseID, moduleCode)
+		return runCourseSltsTeacher(ctx, cfg, courseID, moduleCode)
 	}
 
 	// Fall back to user endpoint (raw JSON, no lesson presence info)
-	return getJSON("/api/v2/course/user/slts/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode))
+	return getJSON(ctx, "/api/v2/course/user/slts/"+url.PathEscape(courseID)+"/"+url.PathEscape(moduleCode))
 }
 
 // fetchTeacherModuleContent fetches the content map for a specific module via the teacher endpoint.
 // Returns the raw "content" object from the matching module, or an error if not found.
 // This is used by course slts, lesson, intro, and assignment commands to access draft module data.
-func fetchTeacherModuleContent(cfg *config.Config, courseID, moduleCode string) (map[string]interface{}, error) {
+func fetchTeacherModuleContent(ctx context.Context, cfg *config.Config, courseID, moduleCode string) (map[string]interface{}, error) {
 	c := client.New(cfg)
 
 	var resp map[string]interface{}
 	reqBody := map[string]string{"course_id": courseID}
-	if err := c.Post("/api/v2/course/teacher/course-modules/list", reqBody, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/course-modules/list", reqBody, &resp); err != nil {
 		return nil, err
 	}
 
@@ -372,8 +375,8 @@ func fetchTeacherModuleContent(cfg *config.Config, courseID, moduleCode string) 
 	}
 }
 
-func runCourseSltsTeacher(cfg *config.Config, courseID, moduleCode string) error {
-	content, err := fetchTeacherModuleContent(cfg, courseID, moduleCode)
+func runCourseSltsTeacher(ctx context.Context, cfg *config.Config, courseID, moduleCode string) error {
+	content, err := fetchTeacherModuleContent(ctx, cfg, courseID, moduleCode)
 	if err != nil {
 		return err
 	}
@@ -426,12 +429,13 @@ func runCourseSltsTeacher(cfg *config.Config, courseID, moduleCode string) error
 }
 
 func runCourseLesson(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	courseID, moduleCode, sltIndex := args[0], args[1], args[2]
 
 	// Try teacher endpoint first for draft module support
 	cfg, err := config.Load()
 	if err == nil && cfg.HasUserAuth() {
-		content, terr := fetchTeacherModuleContent(cfg, courseID, moduleCode)
+		content, terr := fetchTeacherModuleContent(ctx, cfg, courseID, moduleCode)
 		if terr == nil {
 			slts, _ := content["slts"].([]interface{})
 			for _, slt := range slts {
@@ -465,16 +469,17 @@ func runCourseLesson(cmd *cobra.Command, args []string) error {
 	path := "/api/v2/course/user/lesson/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode) + "/" + url.PathEscape(sltIndex)
 	hint := fmt.Sprintf("No lesson found for SLT %s in module %s. Run 'andamio course slts %s %s' to see which SLTs have lessons.",
 		sltIndex, moduleCode, courseID, moduleCode)
-	return getJSONWithHint(path, hint)
+	return getJSONWithHint(ctx, path, hint)
 }
 
 func runCourseIntro(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	courseID, moduleCode := args[0], args[1]
 
 	// Try teacher endpoint first for draft module support
 	cfg, err := config.Load()
 	if err == nil && cfg.HasUserAuth() {
-		content, terr := fetchTeacherModuleContent(cfg, courseID, moduleCode)
+		content, terr := fetchTeacherModuleContent(ctx, cfg, courseID, moduleCode)
 		if terr == nil {
 			if intro, ok := content["introduction"].(map[string]interface{}); ok {
 				return output.PrintJSON(map[string]interface{}{"data": intro})
@@ -496,16 +501,17 @@ func runCourseIntro(cmd *cobra.Command, args []string) error {
 	path := "/api/v2/course/user/introduction/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode)
 	hint := fmt.Sprintf("No introduction found for module %s. Run 'andamio course modules %s' to see available modules.",
 		moduleCode, courseID)
-	return getJSONWithHint(path, hint)
+	return getJSONWithHint(ctx, path, hint)
 }
 
 func runCourseAssignment(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	courseID, moduleCode := args[0], args[1]
 
 	// Try teacher endpoint first for draft module support
 	cfg, err := config.Load()
 	if err == nil && cfg.HasUserAuth() {
-		content, terr := fetchTeacherModuleContent(cfg, courseID, moduleCode)
+		content, terr := fetchTeacherModuleContent(ctx, cfg, courseID, moduleCode)
 		if terr == nil {
 			if assign, ok := content["assignment"].(map[string]interface{}); ok {
 				return output.PrintJSON(map[string]interface{}{"data": assign})
@@ -527,5 +533,5 @@ func runCourseAssignment(cmd *cobra.Command, args []string) error {
 	path := "/api/v2/course/user/assignment/" + url.PathEscape(courseID) + "/" + url.PathEscape(moduleCode)
 	hint := fmt.Sprintf("No assignment found for module %s. Run 'andamio course modules %s' to see which modules have assignments.",
 		moduleCode, courseID)
-	return getJSONWithHint(path, hint)
+	return getJSONWithHint(ctx, path, hint)
 }

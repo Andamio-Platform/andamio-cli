@@ -74,7 +74,7 @@ func runTxRegister(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/tx/register", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/tx/register", payload, &resp); err != nil {
 		return fmt.Errorf("failed to register transaction: %w", err)
 	}
 

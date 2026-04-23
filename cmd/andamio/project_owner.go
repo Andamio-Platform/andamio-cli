@@ -21,6 +21,7 @@ var projectOwnerListCmd = &cobra.Command{
 	Short: "List projects you own",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return printList(
+			cmd.Context(),
 			"/api/v2/project/owner/projects/list",
 			"No owned projects found.",
 			"content.title", "project_id", true,
@@ -155,7 +156,7 @@ func runProjectOwnerCreate(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/owner/project/create", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/project/owner/project/create", payload, &resp); err != nil {
 		return fmt.Errorf("failed to create project: %w", err)
 	}
 
@@ -216,7 +217,7 @@ func runProjectOwnerUpdate(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/owner/project/update", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/project/owner/project/update", payload, &resp); err != nil {
 		return fmt.Errorf("failed to update project: %w", err)
 	}
 
@@ -274,7 +275,7 @@ func runProjectOwnerRegister(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/owner/project/register", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/project/owner/project/register", payload, &resp); err != nil {
 		return fmt.Errorf("failed to register project: %w", err)
 	}
 

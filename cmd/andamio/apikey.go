@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -17,7 +19,7 @@ var apikeyUsageCmd = &cobra.Command{
 	Use:   "usage",
 	Short: "Get API key usage stats",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getAPIKeyJSON("/api/v2/apikey/developer/usage/get")
+		return getAPIKeyJSON(cmd.Context(), "/api/v2/apikey/developer/usage/get")
 	},
 }
 
@@ -25,7 +27,7 @@ var apikeyProfileCmd = &cobra.Command{
 	Use:   "profile",
 	Short: "Get API key profile",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getAPIKeyJSON("/api/v2/apikey/developer/profile/get")
+		return getAPIKeyJSON(cmd.Context(), "/api/v2/apikey/developer/profile/get")
 	},
 }
 
@@ -38,7 +40,7 @@ func init() {
 // getAPIKeyJSON sends a GET request using only API key auth (no wallet JWT).
 // The /v2/apikey/developer/* endpoints reject wallet JWTs, so we must not
 // send the Authorization header even when a wallet session exists.
-func getAPIKeyJSON(path string) error {
+func getAPIKeyJSON(ctx context.Context, path string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -53,7 +55,7 @@ func getAPIKeyJSON(path string) error {
 	apiKeyCfg.UserJWT = ""
 	c := client.New(&apiKeyCfg)
 	var result map[string]interface{}
-	if err := c.Get(path, &result); err != nil {
+	if err := c.Get(ctx, path, &result); err != nil {
 		return err
 	}
 	return output.PrintJSON(result)

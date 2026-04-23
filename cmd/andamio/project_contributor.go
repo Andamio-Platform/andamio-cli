@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -21,6 +22,7 @@ var projectContributorListCmd = &cobra.Command{
 	Short: "List projects you contribute to",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return printList(
+			cmd.Context(),
 			"/api/v2/project/contributor/projects/list",
 			"No contributor projects found.",
 			"content.title", "project_id", true,
@@ -33,6 +35,7 @@ var projectContributorCommitmentsCmd = &cobra.Command{
 	Short: "List your task commitments",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return printList(
+			cmd.Context(),
 			"/api/v2/project/contributor/commitments/list",
 			"No commitments found.",
 			"content.title", "commitment_id", true,
@@ -112,7 +115,7 @@ func init() {
 
 // loadClientAndResolveTask loads config, creates a client, and resolves task_hash
 // from --task-index or --task-hash flags.
-func loadClientAndResolveTask(cmd *cobra.Command) (*client.Client, string, int, error) {
+func loadClientAndResolveTask(ctx context.Context, cmd *cobra.Command) (*client.Client, string, int, error) {
 	projectID, _ := cmd.Flags().GetString("project-id")
 
 	cfg, err := config.Load()
@@ -121,7 +124,7 @@ func loadClientAndResolveTask(cmd *cobra.Command) (*client.Client, string, int, 
 	}
 
 	c := client.New(cfg)
-	taskHash, taskIndex, err := resolveTaskHashFromFlags(cmd, c, projectID)
+	taskHash, taskIndex, err := resolveTaskHashFromFlags(ctx, cmd, c, projectID)
 	if err != nil {
 		return nil, "", 0, err
 	}
@@ -129,9 +132,10 @@ func loadClientAndResolveTask(cmd *cobra.Command) (*client.Client, string, int, 
 }
 
 func runProjectContributorCommitment(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	projectID, _ := cmd.Flags().GetString("project-id")
 
-	c, taskHash, _, err := loadClientAndResolveTask(cmd)
+	c, taskHash, _, err := loadClientAndResolveTask(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -141,7 +145,7 @@ func runProjectContributorCommitment(cmd *cobra.Command, args []string) error {
 		"task_hash":  taskHash,
 	}
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/contributor/commitment/get", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/contributor/commitment/get", payload, &resp); err != nil {
 		return fmt.Errorf("failed to get commitment: %w", err)
 	}
 
@@ -151,9 +155,10 @@ func runProjectContributorCommitment(cmd *cobra.Command, args []string) error {
 // runTaskHashAction returns a RunE for commands that resolve task_hash and POST with it.
 func runTaskHashAction(endpoint, verb string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
 		isJSON := output.GetFormat() == output.FormatJSON
 
-		c, taskHash, taskIndex, err := loadClientAndResolveTask(cmd)
+		c, taskHash, taskIndex, err := loadClientAndResolveTask(ctx, cmd)
 		if err != nil {
 			return err
 		}
@@ -171,7 +176,7 @@ func runTaskHashAction(endpoint, verb string) func(cmd *cobra.Command, args []st
 		}
 
 		var resp map[string]interface{}
-		if err := c.Post(endpoint, payload, &resp); err != nil {
+		if err := c.Post(ctx, endpoint, payload, &resp); err != nil {
 			return fmt.Errorf("failed: %w", err)
 		}
 
@@ -186,6 +191,7 @@ func runTaskHashAction(endpoint, verb string) func(cmd *cobra.Command, args []st
 
 // runProjectContributorUpdate sends evidence as Tiptap JSON with a Blake2b-256 content hash.
 func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	evidence, err := readEvidenceFlag(cmd)
@@ -198,7 +204,7 @@ func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to format evidence: %w", err)
 	}
 
-	c, taskHash, taskIndex, err := loadClientAndResolveTask(cmd)
+	c, taskHash, taskIndex, err := loadClientAndResolveTask(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -218,7 +224,7 @@ func runProjectContributorUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/contributor/commitment/update", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/contributor/commitment/update", payload, &resp); err != nil {
 		return fmt.Errorf("failed to update commitment: %w", err)
 	}
 

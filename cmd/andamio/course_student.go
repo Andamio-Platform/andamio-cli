@@ -21,6 +21,7 @@ var courseStudentCoursesCmd = &cobra.Command{
 	Short: "List courses you're enrolled in",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return printList(
+			cmd.Context(),
 			"/api/v2/course/student/courses/list",
 			"No enrolled courses found.",
 			"content.title", "course_id", true,
@@ -33,6 +34,7 @@ var courseStudentCredentialsCmd = &cobra.Command{
 	Short: "List your earned credentials",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return printList(
+			cmd.Context(),
 			"/api/v2/course/student/credentials/list",
 			"No credentials found.",
 			"content.title", "credential_id", true,
@@ -45,6 +47,7 @@ var courseStudentCommitmentsCmd = &cobra.Command{
 	Short: "List your assignment commitments",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return printList(
+			cmd.Context(),
 			"/api/v2/course/student/assignment-commitments/list",
 			"No commitments found.",
 			"content.title", "commitment_id", true,
@@ -187,7 +190,7 @@ func runCourseStudentCommitment(cmd *cobra.Command, args []string) error {
 		payload["course_module_code"] = moduleCode
 	}
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/student/assignment-commitment/get", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/student/assignment-commitment/get", payload, &resp); err != nil {
 		return fmt.Errorf("failed to get commitment: %w", err)
 	}
 
@@ -217,7 +220,7 @@ func runCourseStudentAction(endpoint, verb string) func(cmd *cobra.Command, args
 
 		c := client.New(cfg)
 		var resp map[string]interface{}
-		if err := c.Post(endpoint, payload, &resp); err != nil {
+		if err := c.Post(cmd.Context(), endpoint, payload, &resp); err != nil {
 			return fmt.Errorf("failed: %w", err)
 		}
 
@@ -257,7 +260,7 @@ func runCourseStudentTxAction(endpoint, verb string) func(cmd *cobra.Command, ar
 
 		c := client.New(cfg)
 		var resp map[string]interface{}
-		if err := c.Post(endpoint, payload, &resp); err != nil {
+		if err := c.Post(cmd.Context(), endpoint, payload, &resp); err != nil {
 			return fmt.Errorf("failed: %w", err)
 		}
 
@@ -294,7 +297,7 @@ func runCourseStudentSubmit(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	// Submit endpoint requires slt_hash (on-chain module identifier)
-	sltHash, moduleCode, err := resolveSltHashFromFlags(cmd, c, courseID)
+	sltHash, moduleCode, err := resolveSltHashFromFlags(cmd.Context(), cmd, c, courseID)
 	if err != nil {
 		return err
 	}
@@ -315,7 +318,7 @@ func runCourseStudentSubmit(cmd *cobra.Command, args []string) error {
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/student/commitment/submit", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/student/commitment/submit", payload, &resp); err != nil {
 		return fmt.Errorf("failed: %w", err)
 	}
 
@@ -362,7 +365,7 @@ func runCourseStudentUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/student/commitment/update", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/student/commitment/update", payload, &resp); err != nil {
 		return fmt.Errorf("failed: %w", err)
 	}
 

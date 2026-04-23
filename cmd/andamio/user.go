@@ -38,7 +38,7 @@ var userExistsCmd = &cobra.Command{
 	Short: "Check if user exists by alias",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/user/exists/" + url.PathEscape(args[0]))
+		return getJSON(cmd.Context(), "/api/v2/user/exists/"+url.PathEscape(args[0]))
 	},
 }
 
@@ -118,7 +118,7 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 		if address == "" {
 			return fmt.Errorf("--address is required with --skey\n\nProvide your bech32 address (e.g. from your .addr file)")
 		}
-		return runHeadlessLogin(cfg, skeyPath, alias, address)
+		return runHeadlessLogin(cmd.Context(), cfg, skeyPath, alias, address)
 	}
 
 	// Check if already authenticated (browser flow only)
@@ -259,7 +259,7 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 
 // runHeadlessLogin authenticates using a .skey file via CIP-8 message signing.
 // Flow: get nonce → sign with .skey → validate signature → store JWT.
-func runHeadlessLogin(cfg *config.Config, skeyPath, alias, address string) error {
+func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, address string) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Load signing key
@@ -280,7 +280,7 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias, address string) error
 		Nonce     string `json:"nonce"`
 		ExpiresAt string `json:"expires_at"`
 	}
-	if err := c.Post("/api/v2/auth/login/session", nil, &session); err != nil {
+	if err := c.Post(ctx, "/api/v2/auth/login/session", nil, &session); err != nil {
 		return fmt.Errorf("failed to get login session: %w", err)
 	}
 
@@ -320,7 +320,7 @@ func runHeadlessLogin(cfg *config.Config, skeyPath, alias, address string) error
 			AccessTokenAlias *string `json:"access_token_alias"`
 		} `json:"user"`
 	}
-	if err := c.Post("/api/v2/auth/login/validate", validatePayload, &tokenResp); err != nil {
+	if err := c.Post(ctx, "/api/v2/auth/login/validate", validatePayload, &tokenResp); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
@@ -475,7 +475,7 @@ func runUserMe(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var result map[string]interface{}
-	if err := c.Post("/api/v2/user/dashboard", nil, &result); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/user/dashboard", nil, &result); err != nil {
 		return err
 	}
 

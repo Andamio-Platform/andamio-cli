@@ -94,7 +94,7 @@ func runTxBuild(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api"+endpoint, bodyData, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api"+endpoint, bodyData, &resp); err != nil {
 		return fmt.Errorf("failed to build transaction: %w", err)
 	}
 

@@ -33,7 +33,7 @@ type TxLifecycleParams struct {
 // executeTxLifecycle runs the full Cardano transaction lifecycle:
 // build -> sign -> submit -> register -> poll.
 // It returns the RunResult with partial progress on any failure.
-func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycleParams) (*RunResult, error) {
+func executeTxLifecycle(ctx context.Context, c *client.Client, cfg *config.Config, params TxLifecycleParams) (*RunResult, error) {
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Resolve submit URL: params > config > error
@@ -51,8 +51,10 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 	// Merge config headers with flag headers (flag headers take precedence)
 	mergedHeaders := mergeSubmitHeaders(cfg.SubmitHeaders, params.Headers)
 
-	// Set up context with SIGINT handling
-	ctx, cancel := context.WithCancel(context.Background())
+	// Set up a derived context for this lifecycle, rooted in the caller's ctx.
+	// Cancelling the parent (root SIGINT) or the tx-specific signal handler
+	// below both propagate to the HTTP calls.
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	var mu sync.Mutex
@@ -96,7 +98,7 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 	}
 
 	var buildResp map[string]interface{}
-	if err := c.Post("/api"+params.Endpoint, params.Body, &buildResp); err != nil {
+	if err := c.Post(ctx, "/api"+params.Endpoint, params.Body, &buildResp); err != nil {
 		return result, fail("build_failed", "build failed", err)
 	}
 
@@ -173,7 +175,7 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 	// event response. Extract it from the build request body.
 	metadata := params.Metadata
 	if _, hasTaskHash := metadata["task_hash"]; !hasTaskHash {
-		if th := extractTaskHash(params.Body, params.TxType, c); th != "" {
+		if th := extractTaskHash(ctx, params.Body, params.TxType, c); th != "" {
 			if metadata == nil {
 				metadata = make(map[string]string)
 			}
@@ -185,7 +187,7 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 	}
 
 	var registerResp map[string]interface{}
-	if err := c.Post("/api/v2/tx/register", registerPayload, &registerResp); err != nil {
+	if err := c.Post(ctx, "/api/v2/tx/register", registerPayload, &registerResp); err != nil {
 		if !isJSON {
 			fmt.Fprintf(os.Stderr, "  Warning: registration failed but TX is on-chain.\n")
 			fmt.Fprintf(os.Stderr, "  TX hash: %s\n", signResult.TxHash)
@@ -257,7 +259,7 @@ func executeTxLifecycle(c *client.Client, cfg *config.Config, params TxLifecycle
 // project_credential_claim. For project_join, task_hash is in the request body.
 // For project_credential_claim, it's not — we look it up from the contributor's
 // active commitment via the API.
-func extractTaskHash(body interface{}, txType string, c *client.Client) string {
+func extractTaskHash(ctx context.Context, body interface{}, txType string, c *client.Client) string {
 	m, ok := body.(map[string]interface{})
 	if !ok {
 		return ""
@@ -278,7 +280,7 @@ func extractTaskHash(body interface{}, txType string, c *client.Client) string {
 		if projectID == "" || c == nil {
 			return ""
 		}
-		return lookupContributorTaskHash(c, projectID)
+		return lookupContributorTaskHash(ctx, c, projectID)
 
 	default:
 		return ""
@@ -288,10 +290,10 @@ func extractTaskHash(body interface{}, txType string, c *client.Client) string {
 // lookupContributorTaskHash fetches the contributor's commitments and returns
 // the task_hash of the first ACCEPTED commitment for the given project.
 // Falls back to the contributor's on-chain commitments if DB records don't match.
-func lookupContributorTaskHash(c *client.Client, projectID string) string {
+func lookupContributorTaskHash(ctx context.Context, c *client.Client, projectID string) string {
 	// Try DB commitments first (merged records with status)
 	var resp []interface{}
-	if err := c.Post("/api/v2/project/contributor/commitments/list", nil, &resp); err == nil {
+	if err := c.Post(ctx, "/api/v2/project/contributor/commitments/list", nil, &resp); err == nil {
 		for _, item := range resp {
 			commitment, ok := item.(map[string]interface{})
 			if !ok {
@@ -323,7 +325,7 @@ func lookupContributorTaskHash(c *client.Client, projectID string) string {
 	// Fallback: get task_hash from the project's task list
 	var taskResp map[string]interface{}
 	body := map[string]string{"project_id": projectID}
-	if err := c.Post("/api/v2/project/user/tasks/list", body, &taskResp); err == nil {
+	if err := c.Post(ctx, "/api/v2/project/user/tasks/list", body, &taskResp); err == nil {
 		if data, ok := taskResp["data"].([]interface{}); ok {
 			for _, item := range data {
 				task, ok := item.(map[string]interface{})

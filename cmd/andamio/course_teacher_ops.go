@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
@@ -170,6 +172,7 @@ func init() {
 // failure, unexpected status) return a Go error; --output json consumers see the global
 // {"error": "..."} shape on those paths, not the envelope.
 func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	courseID, _ := cmd.Flags().GetString("course-id")
 	moduleCode, _ := cmd.Flags().GetString("module-code")
 	sltHash, _ := cmd.Flags().GetString("slt-hash")
@@ -186,11 +189,21 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
+	// Wire a retry log to stderr for the recovery list call. Suppressed in
+	// JSON mode to keep the scripting surface clean. lookupTeacherModule is
+	// the only PostWithRetry caller today; when more land, factor this into
+	// a shared helper.
+	if !isJSON {
+		c.SetOnRetry(func(attempt int, wait time.Duration, err error) {
+			fmt.Fprintf(os.Stderr, "  retrying in %s (attempt %d): %v\n", wait.Round(time.Millisecond), attempt, err)
+		})
+	}
+
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "Registering module %s...\n", moduleCode)
 	}
 
-	envelope, successMsg, err := registerOrRecoverModule(c, courseID, moduleCode, sltHash, isJSON)
+	envelope, successMsg, err := registerOrRecoverModule(ctx, c, courseID, moduleCode, sltHash, isJSON)
 	if err != nil {
 		return err
 	}
@@ -209,8 +222,8 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 // isJSON controls only the single intermediate progress line printed to stderr when a
 // conflict is detected (so humans see the recovery is in flight rather than staring at
 // a silent terminal for up to two 30 s POSTs). Tests pass true to keep stderr quiet.
-func registerOrRecoverModule(c *client.Client, courseID, moduleCode, sltHash string, isJSON bool) (map[string]interface{}, string, error) {
-	resp, err := postRegisterModule(c, courseID, moduleCode, sltHash)
+func registerOrRecoverModule(ctx context.Context, c *client.Client, courseID, moduleCode, sltHash string, isJSON bool) (map[string]interface{}, string, error) {
+	resp, err := postRegisterModule(ctx, c, courseID, moduleCode, sltHash)
 	if err == nil {
 		envelope := map[string]interface{}{
 			"action":        "registered",
@@ -232,7 +245,7 @@ func registerOrRecoverModule(c *client.Client, courseID, moduleCode, sltHash str
 		fmt.Fprintf(os.Stderr, "Module %s: already exists in DB, checking status...\n", moduleCode)
 	}
 
-	existing, lookupErr := lookupTeacherModule(c, courseID, moduleCode)
+	existing, lookupErr := lookupTeacherModule(ctx, c, courseID, moduleCode)
 	if lookupErr != nil {
 		return nil, "", fmt.Errorf("module %s already exists, but could not locate it for recovery: %w (original error: %v)", moduleCode, lookupErr, err)
 	}
@@ -246,7 +259,7 @@ func registerOrRecoverModule(c *client.Client, courseID, moduleCode, sltHash str
 
 	switch existing.Status {
 	case "DRAFT":
-		updateResp, updateErr := postUpdateModuleStatus(c, courseID, moduleCode, "APPROVED", sltHash)
+		updateResp, updateErr := postUpdateModuleStatus(ctx, c, courseID, moduleCode, "APPROVED", sltHash)
 		if updateErr != nil {
 			return nil, "", fmt.Errorf("module %s exists in DRAFT with matching hash, but advancing to APPROVED failed: %w", moduleCode, updateErr)
 		}
@@ -275,15 +288,17 @@ func registerOrRecoverModule(c *client.Client, courseID, moduleCode, sltHash str
 }
 
 // postRegisterModule performs the bare gateway POST for course-module/register.
-// Returns the raw response on success or the wrapped error on failure.
-func postRegisterModule(c *client.Client, courseID, moduleCode, sltHash string) (map[string]interface{}, error) {
+// Returns the raw response on success or the wrapped error on failure. Plain
+// (non-retrying) POST: this is a mutating call and the caller's recovery logic
+// depends on observing a 409 conflict on the first attempt.
+func postRegisterModule(ctx context.Context, c *client.Client, courseID, moduleCode, sltHash string) (map[string]interface{}, error) {
 	payload := map[string]interface{}{
 		"course_id":          courseID,
 		"course_module_code": moduleCode,
 		"slt_hash":           sltHash,
 	}
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/course-module/register", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/course-module/register", payload, &resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -345,9 +360,13 @@ func mismatchError(courseID, moduleCode, existingHash, suppliedHash string, gate
 //
 // Field lookups are defensive: slt_hash and status may appear at the top level, under
 // "content", or under either of two field-name conventions across environments.
-func lookupTeacherModule(c *client.Client, courseID, moduleCode string) (*existingModule, error) {
+func lookupTeacherModule(ctx context.Context, c *client.Client, courseID, moduleCode string) (*existingModule, error) {
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/course-modules/list", map[string]string{"course_id": courseID}, &resp); err != nil {
+	// List POST is read-only (no side effects) despite the verb, so retry
+	// transient 5xx/network blips. The caller (registerOrRecoverModule) has
+	// already observed a 409 conflict and cannot make progress without this
+	// lookup, so a single transient error should not be fatal.
+	if err := c.PostWithRetry(ctx, "/api/v2/course/teacher/course-modules/list", map[string]string{"course_id": courseID}, &resp); err != nil {
 		return nil, fmt.Errorf("failed to list modules for course %s: %w", courseID, err)
 	}
 	data, ok := resp["data"].([]interface{})
@@ -424,7 +443,7 @@ func runCourseTeacherPublishModule(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/course-module/publish", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/teacher/course-module/publish", payload, &resp); err != nil {
 		return fmt.Errorf("failed to publish module: %w", err)
 	}
 
@@ -480,7 +499,7 @@ func runCourseTeacherModuleAction(endpoint, verb string) func(cmd *cobra.Command
 
 		c := client.New(cfg)
 		var resp map[string]interface{}
-		if err := c.Post(endpoint, payload, &resp); err != nil {
+		if err := c.Post(cmd.Context(), endpoint, payload, &resp); err != nil {
 			return fmt.Errorf("failed to %s module: %w", verb, err)
 		}
 
@@ -510,7 +529,7 @@ func runCourseTeacherUpdateModuleStatus(cmd *cobra.Command, args []string) error
 	}
 
 	c := client.New(cfg)
-	resp, err := postUpdateModuleStatus(c, courseID, moduleCode, status, sltHash)
+	resp, err := postUpdateModuleStatus(cmd.Context(), c, courseID, moduleCode, status, sltHash)
 	if err != nil {
 		return fmt.Errorf("failed to update module status: %w", err)
 	}
@@ -527,7 +546,7 @@ func runCourseTeacherUpdateModuleStatus(cmd *cobra.Command, args []string) error
 // and returns the raw response. Callers are responsible for all stdout/stderr output;
 // the helper does no printing so it can be composed by both update-module-status and
 // register-module's recovery branch.
-func postUpdateModuleStatus(c *client.Client, courseID, moduleCode, status, sltHash string) (map[string]interface{}, error) {
+func postUpdateModuleStatus(ctx context.Context, c *client.Client, courseID, moduleCode, status, sltHash string) (map[string]interface{}, error) {
 	payload := map[string]interface{}{
 		"course_id":          courseID,
 		"course_module_code": moduleCode,
@@ -537,7 +556,7 @@ func postUpdateModuleStatus(c *client.Client, courseID, moduleCode, status, sltH
 		payload["slt_hash"] = sltHash
 	}
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/course-module/update-status", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/course-module/update-status", payload, &resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -572,7 +591,7 @@ func runCourseTeacherReview(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/assignment-commitment/review", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/teacher/assignment-commitment/review", payload, &resp); err != nil {
 		return fmt.Errorf("failed to review commitment: %w", err)
 	}
 
@@ -587,6 +606,7 @@ func runCourseTeacherReview(cmd *cobra.Command, args []string) error {
 func runCourseTeacherCommitments(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
 	return printListPost(
+		cmd.Context(),
 		"/api/v2/course/teacher/assignment-commitments/list",
 		map[string]string{"course_id": courseID},
 		"No pending reviews found.",

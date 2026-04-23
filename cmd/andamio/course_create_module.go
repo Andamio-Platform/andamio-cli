@@ -58,6 +58,7 @@ type CreateModuleResult struct {
 }
 
 func runCreateModule(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	courseID, _ := cmd.Flags().GetString("course-id")
 	code, _ := cmd.Flags().GetString("code")
 	title, _ := cmd.Flags().GetString("title")
@@ -110,7 +111,7 @@ func runCreateModule(cmd *cobra.Command, args []string) error {
 	}
 
 	var createResp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/course-module/create", createPayload, &createResp); err != nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/course-module/create", createPayload, &createResp); err != nil {
 		return fmt.Errorf("failed to create module: %w", err)
 	}
 
@@ -143,7 +144,7 @@ func runCreateModule(cmd *cobra.Command, args []string) error {
 		}
 
 		var updateResp map[string]interface{}
-		if err := c.Post("/api/v2/course/teacher/course-module/update", updatePayload, &updateResp); err != nil {
+		if err := c.Post(ctx, "/api/v2/course/teacher/course-module/update", updatePayload, &updateResp); err != nil {
 			return fmt.Errorf("failed to add SLTs to module: %w", err)
 		}
 	}

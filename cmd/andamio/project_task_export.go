@@ -54,13 +54,14 @@ func formatExpirationISO(posix float64) string {
 func runTaskExport(cmd *cobra.Command, args []string) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
+	ctx := cmd.Context()
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 	c := client.New(cfg)
 
-	proj, _, err := resolveProject(c, args)
+	proj, _, err := resolveProject(ctx, c, args)
 	if err != nil {
 		return err
 	}
@@ -71,7 +72,7 @@ func runTaskExport(cmd *cobra.Command, args []string) error {
 	}
 	policyID := proj.ContributorStateID
 
-	resp, err := fetchTasks(c, proj.ProjectID)
+	resp, err := fetchTasks(ctx, c, proj.ProjectID)
 	if err != nil {
 		return err
 	}

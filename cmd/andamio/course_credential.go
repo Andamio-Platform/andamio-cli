@@ -77,7 +77,7 @@ func runCredentialVerifyHash(cmd *cobra.Command, args []string) error {
 
 	path := "/api/v2/course/user/modules/" + url.PathEscape(courseID)
 	var resp map[string]interface{}
-	if err := c.Get(path, &resp); err != nil {
+	if err := c.Get(cmd.Context(), path, &resp); err != nil {
 		return fmt.Errorf("failed to list modules: %w", err)
 	}
 

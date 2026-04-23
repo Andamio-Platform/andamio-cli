@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -76,6 +77,7 @@ type ExportResult struct {
 }
 
 func runCourseExport(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	cfg, err := config.Load()
@@ -92,7 +94,7 @@ func runCourseExport(cmd *cobra.Command, args []string) error {
 	} else {
 		// export <module-code> --course "Name"
 		moduleCode = args[0]
-		courseID, err = resolveCourseID(c, "", cmd)
+		courseID, err = resolveCourseID(ctx, c, "", cmd)
 		if err != nil {
 			return err
 		}
@@ -102,7 +104,7 @@ func runCourseExport(cmd *cobra.Command, args []string) error {
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "Fetching module %s from course %s...\n", moduleCode, courseID)
 	}
-	moduleData, err := fetchModuleData(c, courseID, moduleCode)
+	moduleData, err := fetchModuleData(ctx, c, courseID, moduleCode)
 	if err != nil {
 		return err
 	}
@@ -202,7 +204,7 @@ func slugify(s string) string {
 	return s
 }
 
-func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData, error) {
+func fetchModuleData(ctx context.Context, c *client.Client, courseID, moduleCode string) (*ModuleData, error) {
 	data := &ModuleData{
 		CourseID:   courseID,
 		ModuleCode: moduleCode,
@@ -210,7 +212,7 @@ func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData
 
 	// Fetch course slug from teacher courses list
 	var coursesResp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/courses/list", nil, &coursesResp); err == nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/courses/list", nil, &coursesResp); err == nil {
 		if courses, ok := coursesResp["data"].([]interface{}); ok {
 			for _, course := range courses {
 				courseMap, ok := course.(map[string]interface{})
@@ -235,7 +237,7 @@ func fetchModuleData(c *client.Client, courseID, moduleCode string) (*ModuleData
 	// Fetch all modules with full content (draft + on-chain) in one call
 	var modulesResp map[string]interface{}
 	reqBody := map[string]string{"course_id": courseID}
-	if err := c.Post("/api/v2/course/teacher/course-modules/list", reqBody, &modulesResp); err != nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/course-modules/list", reqBody, &modulesResp); err != nil {
 		return nil, fmt.Errorf("failed to fetch modules: %w", err)
 	}
 
