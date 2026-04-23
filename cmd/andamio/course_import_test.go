@@ -704,3 +704,99 @@ func TestMarkdownToTiptapTableInlineMarks(t *testing.T) {
 		t.Errorf("expected code mark in table cell")
 	}
 }
+
+// TestCheckSilentSLTFailure pins the guard's decision matrix for issue #62.
+// The guard fires only when all of:
+//   - not a dry-run
+//   - SLTs are not locked (module is DRAFT)
+//   - caller is sending SLTs (newSLTCount > 0)
+//   - module previously had 0 SLTs (existingSLTCount == 0)
+//   - gateway reports 0 creates AND 0 updates
+//
+// The existingSLTCount == 0 gate is the one that prevents false-positives
+// on idempotent re-imports of unchanged SLTs — caught during ce:review
+// of PR #73.
+func TestCheckSilentSLTFailure(t *testing.T) {
+	cases := []struct {
+		name             string
+		dryRun           bool
+		sltsLocked       bool
+		existingSLTCount int
+		newSLTCount      int
+		changes          map[string]interface{}
+		wantErr          bool
+	}{
+		{
+			name:             "fresh shell + gateway silent rejection: guard fires (#62 repro)",
+			existingSLTCount: 0,
+			newSLTCount:      3,
+			changes:          map[string]interface{}{"slts_created": float64(0), "slts_updated": float64(0)},
+			wantErr:          true,
+		},
+		{
+			name:             "fresh shell + missing changes keys: guard fires (assertion defaults to 0)",
+			existingSLTCount: 0,
+			newSLTCount:      3,
+			changes:          map[string]interface{}{},
+			wantErr:          true,
+		},
+		{
+			name:             "idempotent re-import of unchanged SLTs: guard must NOT fire",
+			existingSLTCount: 3, // module already had 3 SLTs
+			newSLTCount:      3,
+			changes:          map[string]interface{}{"slts_created": float64(0), "slts_updated": float64(0)},
+			wantErr:          false, // legitimate no-op; pre-fix this was a false positive
+		},
+		{
+			name:             "partial update: at least one SLT touched, guard must NOT fire",
+			existingSLTCount: 0,
+			newSLTCount:      3,
+			changes:          map[string]interface{}{"slts_created": float64(3), "slts_updated": float64(0)},
+			wantErr:          false,
+		},
+		{
+			name:             "updates only (no creates): guard must NOT fire",
+			existingSLTCount: 3,
+			newSLTCount:      3,
+			changes:          map[string]interface{}{"slts_created": float64(0), "slts_updated": float64(2)},
+			wantErr:          false,
+		},
+		{
+			name:             "dry-run: skip the guard (synthetic changes)",
+			dryRun:           true,
+			existingSLTCount: 0,
+			newSLTCount:      3,
+			changes:          map[string]interface{}{},
+			wantErr:          false,
+		},
+		{
+			name:             "SLTs locked (non-DRAFT module): skip the guard",
+			sltsLocked:       true,
+			existingSLTCount: 0,
+			newSLTCount:      3,
+			changes:          map[string]interface{}{},
+			wantErr:          false,
+		},
+		{
+			name:             "no SLTs sent: skip the guard",
+			existingSLTCount: 0,
+			newSLTCount:      0,
+			changes:          map[string]interface{}{},
+			wantErr:          false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSilentSLTFailure(tc.dryRun, tc.sltsLocked, tc.existingSLTCount, tc.newSLTCount, tc.changes)
+			if tc.wantErr && err == nil {
+				t.Errorf("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("expected nil, got: %v", err)
+			}
+			if tc.wantErr && err != nil && !strings.Contains(err.Error(), "freshly-shelled") {
+				t.Errorf("error should mention 'freshly-shelled' to clarify why the guard fired, got: %v", err)
+			}
+		})
+	}
+}

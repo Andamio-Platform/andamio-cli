@@ -275,25 +275,9 @@ func importModule(p ImportParams) (*ImportResult, error) {
 		changes = map[string]interface{}{}
 	}
 
-	// Safety net: loudly surface the silent-SLT-failure mode from issue #62.
-	// If the caller sent SLTs and the module was unlocked (so we expected the
-	// gateway to apply them), but the response shows neither creates nor
-	// updates, something upstream swallowed them. Without this guard, the
-	// lesson attachments that follow also silently fail (no SLT slots to
-	// attach to), and the user sees a "successful" import with no content.
-	// Skip on dry-run (the `changes` map is synthetic there).
-	if !p.DryRun && !sltsLocked && len(data.SLTs) > 0 {
-		created, _ := changes["slts_created"].(float64)
-		updated, _ := changes["slts_updated"].(float64)
-		if created == 0 && updated == 0 {
-			return nil, fmt.Errorf(
-				"import reported 0 SLTs created and 0 updated, but the module had %d SLT(s) to apply. "+
-					"This usually means the module existed with 0 SLTs and the gateway rejected the payload silently. "+
-					"Re-run with --output json and inspect .changes to see the full response; "+
-					"if the module is truly fresh, verify it was created via 'andamio course create-module' (which seeds SLTs correctly) "+
-					"rather than a raw curl to /course-module/create",
-				len(data.SLTs))
-		}
+	// Safety net for issue #62 silent-SLT-failure mode.
+	if err := checkSilentSLTFailure(p.DryRun, sltsLocked, existing.SLTCount, len(data.SLTs), changes); err != nil {
+		return nil, err
 	}
 
 	return &ImportResult{
@@ -313,6 +297,41 @@ func importModule(p ImportParams) (*ImportResult, error) {
 		DryRun:         p.DryRun,
 		Changes:        changes,
 	}, nil
+}
+
+// checkSilentSLTFailure returns an error describing issue #62's silent-SLT-
+// failure mode when the preconditions match. Returns nil otherwise.
+//
+// The scoped condition (existingSLTCount == 0) is deliberate:
+//   - Fresh shell (SLTCount == 0) + 0 creates/updates = gateway rejected
+//     the payload silently. This is exactly the bug #62 describes.
+//   - Module had SLTs and user re-imports identical ones = gateway
+//     returns 0 creates + 0 updates because nothing changed. Legitimate
+//     idempotent success. Guard MUST NOT fire here.
+//
+// Without the SLTCount check the guard false-positives on every
+// unchanged re-import (reported during ce:review of PR #73).
+//
+// Type assertions use the blank identifier deliberately: missing keys
+// default to 0, which is the same signal as explicit 0 values — both
+// indicate the gateway didn't confirm SLT handling, so the guard
+// should fire either way.
+func checkSilentSLTFailure(dryRun, sltsLocked bool, existingSLTCount, newSLTCount int, changes map[string]interface{}) error {
+	if dryRun || sltsLocked || newSLTCount == 0 || existingSLTCount != 0 {
+		return nil
+	}
+	created, _ := changes["slts_created"].(float64)
+	updated, _ := changes["slts_updated"].(float64)
+	if created != 0 || updated != 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"import reported 0 SLTs created and 0 updated, but the module had %d SLT(s) to apply and was freshly-shelled (0 existing SLTs). "+
+			"This usually means the gateway rejected the payload silently. "+
+			"Re-run with --output json and inspect .changes to see the full response; "+
+			"if the module is truly fresh, verify it was created via 'andamio course create-module' (which seeds SLTs correctly) "+
+			"rather than a raw curl to /course-module/create",
+		newSLTCount)
 }
 
 func runCourseImport(cmd *cobra.Command, args []string) error {
