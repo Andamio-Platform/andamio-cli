@@ -595,6 +595,28 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 			wantSuccessMsg:   "Module 101: advanced from DRAFT to APPROVED.",
 		},
 		{
+			// Fallback coverage: gateway responds 200 with explicit empty-string
+			// status and slt_hash fields (distinct from missing fields).
+			// lookupStringField's `v != ""` guard should still treat these as
+			// "not present" and the envelope falls through to hardcoded values.
+			// Catches the case where a future gateway populates the keys but
+			// leaves the values blank.
+			name:           "registered with empty-string gateway fields falls through to defaults",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusOK,
+			registerResp: map[string]interface{}{
+				"module_id": "m-101",
+				"status":    "",
+				"slt_hash":  "",
+			},
+			wantAction:       "registered",
+			wantStatus:       "APPROVED", // fallback — gateway empty string is not canonical
+			wantSltHash:      "abc123",   // fallback — supplied hash
+			wantAdvancedFrom: nil,
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: registered.",
+		},
+		{
 			// R4 lockdown (already_registered branch): this is the ONLY branch that
 			// guarantees canonical SltHash today. User supplies ABC123 uppercase; DB
 			// stores abc123 lowercase; case-insensitive compare matches; envelope

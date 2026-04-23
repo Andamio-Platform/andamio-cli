@@ -34,9 +34,23 @@ import (
 //
 // Status and SltHash are populated from the gateway response when it carries those
 // fields (via lookupStringField's defensive key search), falling back to hardcoded
-// values when the gateway response is minimal. On the "already_registered" branch,
-// both fields always reflect canonical (stored) values pulled from the teacher
-// modules list — so that branch survives supplied/stored case mismatches cleanly.
+// values when the gateway response is minimal.
+//
+// SltHash source differs by branch (intentional asymmetry — see todo #021):
+//   - "already_registered": always canonical (from existing.SltHash, sourced from
+//     the teacher modules list). Survives supplied-uppercase / stored-lowercase
+//     case mismatches — a caller passing "ABC123" against a stored "abc123" gets
+//     back "abc123" in the envelope.
+//   - "registered" / "advanced": gateway-response field if present, else the
+//     supplied hash (post-trim). Today's preprod gateway typically doesn't
+//     populate these fields on those branches, so consumers see the supplied
+//     casing. The lookup pipe is in place for when fixtures land.
+//
+// Scripts that need guaranteed canonical values should treat `course teacher
+// register-module`'s envelope as transactional and consult `course modules
+// --output json` as the authoritative hash source. Within this envelope:
+// blake2b hex is case-insensitive by convention; compare via strings.EqualFold
+// or lowercase-normalize both sides.
 //
 // Scripts should branch on Action. `--output json` is the stable surface for
 // automation; stderr text is for humans.
