@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -36,7 +37,7 @@ func jwtAuthPreRunE(cmd *cobra.Command, args []string) error {
 }
 
 // getJSON is a helper for simple GET endpoints that return JSON
-func getJSON(path string) error {
+func getJSON(ctx context.Context, path string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -44,7 +45,7 @@ func getJSON(path string) error {
 
 	c := client.New(cfg)
 	var result map[string]interface{}
-	if err := c.Get(path, &result); err != nil {
+	if err := c.Get(ctx, path, &result); err != nil {
 		return err
 	}
 
@@ -52,7 +53,7 @@ func getJSON(path string) error {
 }
 
 // postJSON is a helper for simple POST endpoints that return JSON (no body)
-func postJSON(path string) error {
+func postJSON(ctx context.Context, path string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -60,7 +61,7 @@ func postJSON(path string) error {
 
 	c := client.New(cfg)
 	var result map[string]interface{}
-	if err := c.Post(path, nil, &result); err != nil {
+	if err := c.Post(ctx, path, nil, &result); err != nil {
 		return err
 	}
 
@@ -68,8 +69,8 @@ func postJSON(path string) error {
 }
 
 // getJSONWithHint wraps getJSON and replaces NotFoundError messages with a contextual hint.
-func getJSONWithHint(path, notFoundHint string) error {
-	err := getJSON(path)
+func getJSONWithHint(ctx context.Context, path, notFoundHint string) error {
+	err := getJSON(ctx, path)
 	if err != nil {
 		var notFound *apierr.NotFoundError
 		if errors.As(err, &notFound) {
@@ -90,7 +91,7 @@ func truncateUTF8(s string, maxRunes int) string {
 }
 
 // printList fetches a list endpoint and prints using PrintList
-func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
+func printList(ctx context.Context, path, emptyMsg, titleKey, idKey string, usePost bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -100,9 +101,9 @@ func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
 	var response map[string]interface{}
 	var reqErr error
 	if usePost {
-		reqErr = c.Post(path, nil, &response)
+		reqErr = c.Post(ctx, path, nil, &response)
 	} else {
-		reqErr = c.Get(path, &response)
+		reqErr = c.Get(ctx, path, &response)
 	}
 	if reqErr != nil {
 		return reqErr
@@ -130,7 +131,7 @@ func printList(path, emptyMsg, titleKey, idKey string, usePost bool) error {
 
 // printListPost fetches a POST list endpoint with a payload and prints using PrintList.
 // Use this for role-based list endpoints that require a body (e.g., project-id filter).
-func printListPost(path string, payload interface{}, emptyMsg, titleKey, idKey string) error {
+func printListPost(ctx context.Context, path string, payload interface{}, emptyMsg, titleKey, idKey string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -138,7 +139,7 @@ func printListPost(path string, payload interface{}, emptyMsg, titleKey, idKey s
 
 	c := client.New(cfg)
 	var response map[string]interface{}
-	if err := c.Post(path, payload, &response); err != nil {
+	if err := c.Post(ctx, path, payload, &response); err != nil {
 		return err
 	}
 
@@ -251,7 +252,7 @@ func wrapEvidence(text string) (map[string]interface{}, string, error) {
 // resolveTaskHashFromFlags reads --task-hash and --task-index flags and returns the task_hash.
 // When --task-hash is provided directly, skips API resolution (needed for chain-only tasks).
 // Returns (taskHash, taskIndex, error). taskIndex is -1 when --task-hash is used.
-func resolveTaskHashFromFlags(cmd *cobra.Command, c *client.Client, projectID string) (string, int, error) {
+func resolveTaskHashFromFlags(ctx context.Context, cmd *cobra.Command, c *client.Client, projectID string) (string, int, error) {
 	taskHash, _ := cmd.Flags().GetString("task-hash")
 	taskIndexStr, _ := cmd.Flags().GetString("task-index")
 
@@ -274,7 +275,7 @@ func resolveTaskHashFromFlags(cmd *cobra.Command, c *client.Client, projectID st
 		return "", 0, fmt.Errorf("invalid task-index %q: must be a number", taskIndexStr)
 	}
 
-	hash, err := resolveTaskHash(c, projectID, taskIndex)
+	hash, err := resolveTaskHash(ctx, c, projectID, taskIndex)
 	return hash, taskIndex, err
 }
 
@@ -287,8 +288,8 @@ type ResolvedTask struct {
 
 // resolveTaskHash looks up the task_hash for a given project + task index.
 // Fetches the user-visible task list and matches by task_index.
-func resolveTaskHash(c *client.Client, projectID string, taskIndex int) (string, error) {
-	resolved, err := resolveTaskData(c, projectID, taskIndex)
+func resolveTaskHash(ctx context.Context, c *client.Client, projectID string, taskIndex int) (string, error) {
+	resolved, err := resolveTaskData(ctx, c, projectID, taskIndex)
 	if err != nil {
 		return "", err
 	}
@@ -297,10 +298,10 @@ func resolveTaskHash(c *client.Client, projectID string, taskIndex int) (string,
 
 // resolveTaskData looks up the full task data for a given project + task index.
 // Returns the API task_hash plus the task data needed for local hash verification.
-func resolveTaskData(c *client.Client, projectID string, taskIndex int) (*ResolvedTask, error) {
+func resolveTaskData(ctx context.Context, c *client.Client, projectID string, taskIndex int) (*ResolvedTask, error) {
 	body := map[string]string{"project_id": projectID}
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/user/tasks/list", body, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/user/tasks/list", body, &resp); err != nil {
 		return nil, fmt.Errorf("failed to list tasks: %w", err)
 	}
 
@@ -387,7 +388,7 @@ func resolveTaskData(c *client.Client, projectID string, taskIndex int) (*Resolv
 // resolveSltHashFromFlags reads --slt-hash and --module-code flags and returns the slt_hash.
 // When --slt-hash is provided directly, skips API resolution (needed for chain-only modules).
 // Returns (sltHash, moduleCode, error). moduleCode may be empty when --slt-hash is used.
-func resolveSltHashFromFlags(cmd *cobra.Command, c *client.Client, courseID string) (string, string, error) {
+func resolveSltHashFromFlags(ctx context.Context, cmd *cobra.Command, c *client.Client, courseID string) (string, string, error) {
 	sltHash, _ := cmd.Flags().GetString("slt-hash")
 	moduleCode, _ := cmd.Flags().GetString("module-code")
 
@@ -405,16 +406,16 @@ func resolveSltHashFromFlags(cmd *cobra.Command, c *client.Client, courseID stri
 		return sltHash, "", nil
 	}
 
-	hash, err := resolveSltHash(c, courseID, moduleCode)
+	hash, err := resolveSltHash(ctx, c, courseID, moduleCode)
 	return hash, moduleCode, err
 }
 
 // resolveSltHash looks up the slt_hash for a given course + module code.
 // Fetches the course modules list and matches by module code.
-func resolveSltHash(c *client.Client, courseID, moduleCode string) (string, error) {
+func resolveSltHash(ctx context.Context, c *client.Client, courseID, moduleCode string) (string, error) {
 	path := "/api/v2/course/user/modules/" + url.PathEscape(courseID)
 	var resp map[string]interface{}
-	if err := c.Get(path, &resp); err != nil {
+	if err := c.Get(ctx, path, &resp); err != nil {
 		return "", fmt.Errorf("failed to list modules: %w", err)
 	}
 

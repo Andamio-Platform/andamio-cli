@@ -68,7 +68,7 @@ func runTeacherAssignmentsList(cmd *cobra.Command, args []string) error {
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/assignment-commitments/list", body, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/teacher/assignment-commitments/list", body, &resp); err != nil {
 		return err
 	}
 
@@ -118,7 +118,7 @@ func runTeacherAssignmentsGet(cmd *cobra.Command, args []string) error {
 	// Fetch full commitment data for this course, then filter by module + student
 	body := map[string]string{"course_id": courseID}
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/assignment-commitments/list", body, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/teacher/assignment-commitments/list", body, &resp); err != nil {
 		return err
 	}
 

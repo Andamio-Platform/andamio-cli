@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -68,6 +69,7 @@ type TaskImportResult struct {
 }
 
 func runTaskImport(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	isJSON := output.GetFormat() == output.FormatJSON
 
@@ -78,7 +80,7 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	// Single fetch: resolve project, policy ID, and slug from one API call
-	proj, projects, err := resolveProject(c, args)
+	proj, projects, err := resolveProject(ctx, c, args)
 	if err != nil {
 		return err
 	}
@@ -118,7 +120,7 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 
 	// Fetch existing tasks to check status for updates
 	var existingTasks []map[string]interface{}
-	resp, err := fetchTasks(c, proj.ProjectID)
+	resp, err := fetchTasks(ctx, c, proj.ProjectID)
 	if err == nil {
 		existingTasks = extractTaskList(resp)
 	}
@@ -139,7 +141,7 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 
 	for _, filename := range mdFiles {
 		filePath := filepath.Join(absDir, filename)
-		action, err := importTaskFile(c, filePath, filename, policyID, existingTasks, dryRun, isJSON)
+		action, err := importTaskFile(ctx, c, filePath, filename, policyID, existingTasks, dryRun, isJSON)
 		if err != nil {
 			result.Errors++
 			if !isJSON {
@@ -167,7 +169,7 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 }
 
 // importTaskFile processes a single task file and returns the action taken
-func importTaskFile(c *client.Client, filePath, filename, policyID string, existingTasks []map[string]interface{}, dryRun, isJSON bool) (string, error) {
+func importTaskFile(ctx context.Context, c *client.Client, filePath, filename, policyID string, existingTasks []map[string]interface{}, dryRun, isJSON bool) (string, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
@@ -212,7 +214,7 @@ func importTaskFile(c *client.Client, filePath, filename, policyID string, exist
 
 	if fm.Index == nil {
 		// New task — create
-		return createTaskFromFile(c, fm, policyID, expirationMs, contentJSON, filename, dryRun, isJSON)
+		return createTaskFromFile(ctx, c, fm, policyID, expirationMs, contentJSON, filename, dryRun, isJSON)
 	}
 
 	// Existing task — check status before updating
@@ -241,10 +243,10 @@ func importTaskFile(c *client.Client, filePath, filename, policyID string, exist
 		}
 	}
 
-	return updateTaskFromFile(c, fm, policyID, expirationMs, contentJSON, index, filename, dryRun, isJSON)
+	return updateTaskFromFile(ctx, c, fm, policyID, expirationMs, contentJSON, index, filename, dryRun, isJSON)
 }
 
-func createTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, filename string, dryRun, isJSON bool) (string, error) {
+func createTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, filename string, dryRun, isJSON bool) (string, error) {
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
 		"title":                   fm.Title,
@@ -275,7 +277,7 @@ func createTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirati
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/manager/task/create", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/manager/task/create", payload, &resp); err != nil {
 		return "", fmt.Errorf("failed to create: %w", err)
 	}
 
@@ -285,7 +287,7 @@ func createTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirati
 	return "created", nil
 }
 
-func updateTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, index int, filename string, dryRun, isJSON bool) (string, error) {
+func updateTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, index int, filename string, dryRun, isJSON bool) (string, error) {
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
 		"index":                   index,
@@ -321,7 +323,7 @@ func updateTaskFromFile(c *client.Client, fm TaskFrontmatter, policyID, expirati
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/manager/task/update", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/manager/task/update", payload, &resp); err != nil {
 		return "", fmt.Errorf("failed to update: %w", err)
 	}
 

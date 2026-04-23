@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -189,9 +190,9 @@ type managerProject struct {
 }
 
 // fetchManagerProjects calls POST /v2/project/manager/projects/list and returns parsed projects
-func fetchManagerProjects(c *client.Client) ([]managerProject, error) {
+func fetchManagerProjects(ctx context.Context, c *client.Client) ([]managerProject, error) {
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/manager/projects/list", nil, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/manager/projects/list", nil, &resp); err != nil {
 		return nil, fmt.Errorf("failed to list manager projects: %w", err)
 	}
 
@@ -223,8 +224,8 @@ func fetchManagerProjects(c *client.Client) ([]managerProject, error) {
 
 // resolveProject validates the project-id arg against the manager's project list
 // and returns the matching project along with the full list (for policy ID lookups).
-func resolveProject(c *client.Client, args []string) (*managerProject, []managerProject, error) {
-	projects, err := fetchManagerProjects(c)
+func resolveProject(ctx context.Context, c *client.Client, args []string) (*managerProject, []managerProject, error) {
+	projects, err := fetchManagerProjects(ctx, c)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -254,10 +255,10 @@ func findProjectPolicyID(projects []managerProject, projectID string) (string, e
 }
 
 // fetchTasks calls POST /v2/project/manager/tasks/list and returns the raw response
-func fetchTasks(c *client.Client, projectID string) (map[string]interface{}, error) {
+func fetchTasks(ctx context.Context, c *client.Client, projectID string) (map[string]interface{}, error) {
 	body := map[string]string{"project_id": projectID}
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/manager/tasks/list", body, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/manager/tasks/list", body, &resp); err != nil {
 		return nil, fmt.Errorf("failed to list tasks: %w", err)
 	}
 	return resp, nil
@@ -279,18 +280,19 @@ func extractTaskList(resp map[string]interface{}) []map[string]interface{} {
 }
 
 func runTasksList(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 	c := client.New(cfg)
 
-	proj, _, err := resolveProject(c, args)
+	proj, _, err := resolveProject(ctx, c, args)
 	if err != nil {
 		return err
 	}
 
-	resp, err := fetchTasks(c, proj.ProjectID)
+	resp, err := fetchTasks(ctx, c, proj.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -439,7 +441,8 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	proj, projects, err := resolveProject(c, args)
+	ctx := cmd.Context()
+	proj, projects, err := resolveProject(ctx, c, args)
 	if err != nil {
 		return err
 	}
@@ -494,7 +497,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/manager/task/create", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/manager/task/create", payload, &resp); err != nil {
 		return fmt.Errorf("failed to create task: %w", err)
 	}
 
@@ -521,7 +524,7 @@ func runTaskGet(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	resp, err := fetchTasks(c, projectID)
+	resp, err := fetchTasks(cmd.Context(), c, projectID)
 	if err != nil {
 		return err
 	}
@@ -541,6 +544,7 @@ func runTaskGet(cmd *cobra.Command, args []string) error {
 }
 
 func runTaskUpdate(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	indexStr := args[0]
 	projectID, _ := cmd.Flags().GetString("project-id")
 	isJSON := output.GetFormat() == output.FormatJSON
@@ -564,7 +568,7 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	projects, err := fetchManagerProjects(c)
+	projects, err := fetchManagerProjects(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -621,7 +625,7 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/manager/task/update", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/manager/task/update", payload, &resp); err != nil {
 		return fmt.Errorf("failed to update task: %w", err)
 	}
 
@@ -634,6 +638,7 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func runTaskDelete(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	indexStr := args[0]
 	projectID, _ := cmd.Flags().GetString("project-id")
 	isJSON := output.GetFormat() == output.FormatJSON
@@ -649,7 +654,7 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	projects, err := fetchManagerProjects(c)
+	projects, err := fetchManagerProjects(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -668,7 +673,7 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/manager/task/delete", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/project/manager/task/delete", payload, &resp); err != nil {
 		return fmt.Errorf("failed to delete task: %w", err)
 	}
 
@@ -693,7 +698,7 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 
 	body := map[string]string{"project_id": projectID}
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/project/user/tasks/list", body, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/project/user/tasks/list", body, &resp); err != nil {
 		return fmt.Errorf("failed to list tasks: %w", err)
 	}
 

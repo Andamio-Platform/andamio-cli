@@ -13,6 +13,7 @@ var teacherCoursesCmd = &cobra.Command{
 	Short: "List courses where you are a teacher",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return printList(
+			cmd.Context(),
 			"/api/v2/course/teacher/courses/list",
 			"No courses found where you are a teacher.",
 			"content.title", "course_id", true,

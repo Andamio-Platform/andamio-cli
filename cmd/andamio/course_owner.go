@@ -21,6 +21,7 @@ var courseOwnerListCmd = &cobra.Command{
 	Short: "List courses you own",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return printList(
+			cmd.Context(),
 			"/api/v2/course/owner/courses/list",
 			"No owned courses found.",
 			"content.title", "course_id", true,
@@ -182,7 +183,7 @@ func runCourseOwnerCreate(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/owner/course/create", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/owner/course/create", payload, &resp); err != nil {
 		return fmt.Errorf("failed to create course: %w", err)
 	}
 
@@ -247,7 +248,7 @@ func runCourseOwnerUpdate(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/owner/course/update", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/owner/course/update", payload, &resp); err != nil {
 		return fmt.Errorf("failed to update course: %w", err)
 	}
 
@@ -302,7 +303,7 @@ func runCourseOwnerRegister(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/owner/course/register", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/owner/course/register", payload, &resp); err != nil {
 		return fmt.Errorf("failed to register course: %w", err)
 	}
 
@@ -352,7 +353,7 @@ func runCourseOwnerTeachers(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/owner/teachers/update", payload, &resp); err != nil {
+	if err := c.Post(cmd.Context(), "/api/v2/course/owner/teachers/update", payload, &resp); err != nil {
 		return fmt.Errorf("failed to update teachers: %w", err)
 	}
 

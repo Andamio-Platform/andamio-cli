@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -96,7 +98,15 @@ func init() {
 //	2 — not found (resource doesn't exist)
 //	3 — auth required (no API key or JWT, or 401/403 response)
 func main() {
-	if err := rootCmd.Execute(); err != nil {
+	// Wire SIGINT to the cobra context so Ctrl-C cancels cmd.Context() in
+	// every subcommand. Individual commands that install their own signal
+	// handler (e.g., tx_lifecycle.go) still work — Go multiplexes signals
+	// to all registered channels. A second Ctrl-C falls through to the
+	// default runtime handler and terminates immediately.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		exitCode := 1
 
 		// ReportedError means the command already printed structured output to

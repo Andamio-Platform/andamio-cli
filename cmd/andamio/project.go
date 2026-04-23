@@ -15,7 +15,7 @@ var projectListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available projects",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return printList("/api/v2/project/user/projects/list", "No projects found.", "content.title", "project_id", false)
+		return printList(cmd.Context(), "/api/v2/project/user/projects/list", "No projects found.", "content.title", "project_id", false)
 	},
 }
 
@@ -24,7 +24,7 @@ var projectGetCmd = &cobra.Command{
 	Short: "Get project details",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return getJSON("/api/v2/project/user/project/" + url.PathEscape(args[0]))
+		return getJSON(cmd.Context(), "/api/v2/project/user/project/"+url.PathEscape(args[0]))
 	},
 }
 
@@ -50,6 +50,7 @@ func init() {
 
 func runProjectTasksPublic(cmd *cobra.Command, args []string) error {
 	return printListPost(
+		cmd.Context(),
 		"/api/v2/project/user/tasks/list",
 		map[string]string{"project_id": args[0]},
 		"No tasks found.",

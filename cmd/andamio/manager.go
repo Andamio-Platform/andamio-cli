@@ -13,6 +13,7 @@ var managerProjectsCmd = &cobra.Command{
 	Short: "List projects where you are a manager",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return printList(
+			cmd.Context(),
 			"/api/v2/project/manager/projects/list",
 			"No projects found where you are a manager.",
 			"content.title", "project_id", true,

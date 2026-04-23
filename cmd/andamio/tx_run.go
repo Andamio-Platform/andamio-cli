@@ -145,7 +145,7 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 
 	c := client.New(cfg)
 
-	result, err := executeTxLifecycle(c, cfg, TxLifecycleParams{
+	result, err := executeTxLifecycle(cmd.Context(), c, cfg, TxLifecycleParams{
 		Endpoint:   endpoint,
 		Body:       bodyData,
 		SkeyPath:   skeyPath,
@@ -212,7 +212,7 @@ func pollTxStatus(ctx context.Context, c *client.Client, txHash string, timeout 
 			return lastState, fmt.Errorf("timed out waiting for confirmation (last state: %s)", lastState)
 		case <-ticker.C:
 			var resp map[string]interface{}
-			if err := c.Get(statusPath, &resp); err != nil {
+			if err := c.Get(ctx, statusPath, &resp); err != nil {
 				consecutiveErrors++
 				if !isJSON {
 					fmt.Fprintf(os.Stderr, "  Warning: poll failed (%d/3): %v\n", consecutiveErrors, err)

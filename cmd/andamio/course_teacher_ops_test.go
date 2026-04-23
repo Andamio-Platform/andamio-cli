@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,7 +42,7 @@ func TestIsModuleAlreadyExistsError(t *testing.T) {
 		{"nil", nil, false},
 		{"plain errors.New unrelated", errors.New("boom"), false},
 		{"plain errors.New whose body contains both tokens (non-typed)", errors.New("course_module_code already exists"), false},
-		{"proxied 5xx body mentioning tokens (not a ConflictError)", errors.New("API error 500: internal error: course_module_code already exists somewhere"), false},
+		{"proxied 5xx body mentioning tokens (*ServerError, not *ConflictError)", &apierr.ServerError{Status: 500, Message: "API error 500: internal error: course_module_code already exists somewhere"}, false},
 		{"NotFoundError (wrong type, 404)", &apierr.NotFoundError{Message: "course_module_code already exists"}, false},
 		{"AuthError (wrong type, 401/403)", &apierr.AuthError{Message: "course_module_code already exists"}, false},
 
@@ -272,7 +273,7 @@ func TestLookupTeacherModule(t *testing.T) {
 			defer srv.Close()
 
 			c := client.New(&config.Config{BaseURL: srv.URL})
-			got, err := lookupTeacherModule(c, "course-x", tt.moduleCode)
+			got, err := lookupTeacherModule(context.Background(), c, "course-x", tt.moduleCode)
 
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
@@ -326,7 +327,7 @@ func TestRegisterOrRecoverModule_UpdateStatusPayload(t *testing.T) {
 	defer srv.Close()
 
 	c := client.New(&config.Config{BaseURL: srv.URL})
-	if _, _, err := registerOrRecoverModule(c, "course-x", "101", "h", true); err != nil {
+	if _, _, err := registerOrRecoverModule(context.Background(), c, "course-x", "101", "h", true); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -575,7 +576,7 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 			defer srv.Close()
 
 			c := client.New(&config.Config{BaseURL: srv.URL})
-			envelope, successMsg, err := registerOrRecoverModule(c, "course-x", "101", tt.suppliedHash, true)
+			envelope, successMsg, err := registerOrRecoverModule(context.Background(), c, "course-x", "101", tt.suppliedHash, true)
 
 			if tt.wantErrSubstr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErrSubstr) {
@@ -631,5 +632,96 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 				t.Errorf("advanced_from serialized as %v, want JSON null", parsed["advanced_from"])
 			}
 		})
+	}
+}
+
+// TestRegisterOrRecover_RetriesTransientListFailure pins the Unit 6 contract
+// from issue #65: a transient 5xx on the teacher-modules-list recovery call
+// must NOT be fatal — the lookup retries and the recovery proceeds normally
+// once the gateway responds. Without PostWithRetry in lookupTeacherModule,
+// this test fails with "could not locate it for recovery".
+func TestRegisterOrRecover_RetriesTransientListFailure(t *testing.T) {
+	var registerCalls, listCalls, updateCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/course/teacher/course-module/register":
+			registerCalls++
+			http.Error(w, "course_module_code already exists in this course", http.StatusConflict)
+		case "/api/v2/course/teacher/course-modules/list":
+			listCalls++
+			// First list call returns 502; second returns the module in DRAFT.
+			if listCalls == 1 {
+				http.Error(w, "bad gateway", http.StatusBadGateway)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc",
+						"module_status":      "DRAFT",
+					}},
+				},
+			})
+		case "/api/v2/course/teacher/course-module/update-status":
+			updateCalls++
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := client.New(&config.Config{BaseURL: srv.URL})
+	envelope, _, err := registerOrRecoverModule(context.Background(), c, "course-x", "101", "abc", true)
+	if err != nil {
+		t.Fatalf("expected recovery to succeed despite transient 502, got: %v", err)
+	}
+	if envelope["action"] != "advanced" {
+		t.Errorf("action = %v, want 'advanced'", envelope["action"])
+	}
+	if listCalls < 2 {
+		t.Errorf("expected list call to be retried at least once; got %d calls", listCalls)
+	}
+	if registerCalls != 1 {
+		t.Errorf("register should not be retried (409 non-retryable); got %d calls", registerCalls)
+	}
+	if updateCalls != 1 {
+		t.Errorf("update-status should be called exactly once after successful list; got %d", updateCalls)
+	}
+}
+
+// TestRegisterOrRecover_WrapChainPreservesServerError_OnListExhaustion asserts that
+// when the list call exhausts retries, the final error still unwraps to
+// *apierr.ServerError via errors.As through two fmt.Errorf(%w) wrap layers.
+// This guarantees future callers (exit-code mapping, upstream wrappers) can
+// branch on 5xx.
+func TestRegisterOrRecover_WrapChainPreservesServerError_OnListExhaustion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/course/teacher/course-module/register":
+			http.Error(w, "course_module_code already exists in this course", http.StatusConflict)
+		case "/api/v2/course/teacher/course-modules/list":
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := client.New(&config.Config{BaseURL: srv.URL})
+	_, _, err := registerOrRecoverModule(context.Background(), c, "course-x", "101", "abc", true)
+	if err == nil {
+		t.Fatal("expected error after list exhaustion")
+	}
+	var serverErr *apierr.ServerError
+	if !errors.As(err, &serverErr) {
+		t.Fatalf("errors.As should unwrap *ServerError through double fmt.Errorf(%%w); got %T: %v", err, err)
+	}
+	if serverErr.Status != 502 {
+		t.Errorf("ServerError.Status = %d, want 502", serverErr.Status)
+	}
+	if !strings.Contains(err.Error(), "could not locate it for recovery") {
+		t.Errorf("outer error message should preserve recovery context; got %q", err.Error())
 	}
 }

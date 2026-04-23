@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,6 +133,7 @@ type ImportResult struct {
 
 // ImportParams holds the parameters for importing a single module.
 type ImportParams struct {
+	Ctx        context.Context
 	Client     *client.Client
 	Config     *config.Config
 	ModuleDir  string
@@ -199,7 +201,7 @@ func importModule(p ImportParams) (*ImportResult, error) {
 	}
 
 	// Fetch current module state to determine SLT lock status and preserve metadata
-	existing, err := fetchExistingModule(p.Client, p.CourseID, data.ModuleCode)
+	existing, err := fetchExistingModule(p.Ctx, p.Client, p.CourseID, data.ModuleCode)
 	if err != nil {
 		// Only trigger creation for "not found" errors, not auth/network failures
 		if p.CreateMode && errors.Is(err, errModuleNotFound) {
@@ -234,14 +236,14 @@ func importModule(p ImportParams) (*ImportResult, error) {
 				"sort_order":         p.SortOrder,
 			}
 			var createResp map[string]interface{}
-			if err := p.Client.Post("/api/v2/course/teacher/course-module/create", createPayload, &createResp); err != nil {
+			if err := p.Client.Post(p.Ctx, "/api/v2/course/teacher/course-module/create", createPayload, &createResp); err != nil {
 				return nil, fmt.Errorf("failed to create module: %w", err)
 			}
 			if !p.Quiet {
 				fmt.Printf("Created module: %s (%s)\n", data.Title, data.ModuleCode)
 			}
 			// Re-fetch the newly created module
-			existing, err = fetchExistingModule(p.Client, p.CourseID, data.ModuleCode)
+			existing, err = fetchExistingModule(p.Ctx, p.Client, p.CourseID, data.ModuleCode)
 			if err != nil {
 				return nil, fmt.Errorf("failed to fetch newly created module: %w", err)
 			}
@@ -260,7 +262,7 @@ func importModule(p ImportParams) (*ImportResult, error) {
 	}
 
 	// Update the module via API (or dump payload in dry-run mode)
-	resp, err := updateModuleContent(p.Client, p.CourseID, data, existing, sltsLocked, p.DryRun)
+	resp, err := updateModuleContent(p.Ctx, p.Client, p.CourseID, data, existing, sltsLocked, p.DryRun)
 	if err != nil {
 		return nil, err
 	}
@@ -291,6 +293,7 @@ func importModule(p ImportParams) (*ImportResult, error) {
 }
 
 func runCourseImport(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	moduleDir := args[0]
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	createMode, _ := cmd.Flags().GetBool("create")
@@ -298,7 +301,7 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Resolve course ID from --course-id or --course flag
-	courseID, err := resolveCourseIDFromFlags(cmd)
+	courseID, err := resolveCourseIDFromFlags(ctx, cmd)
 	if err != nil {
 		return err
 	}
@@ -324,6 +327,7 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	importResult, err := importModule(ImportParams{
+		Ctx:        ctx,
 		Client:     c,
 		Config:     cfg,
 		ModuleDir:  moduleDir,
@@ -1119,10 +1123,10 @@ type ExistingModuleData struct {
 // fetchExistingModule gets the current module state from the teacher endpoint.
 // This is used to merge existing metadata (titles, descriptions, image_url, video_url)
 // with the new content being imported.
-func fetchExistingModule(c *client.Client, courseID, moduleCode string) (*ExistingModuleData, error) {
+func fetchExistingModule(ctx context.Context, c *client.Client, courseID, moduleCode string) (*ExistingModuleData, error) {
 	var resp map[string]interface{}
 	reqBody := map[string]string{"course_id": courseID}
-	if err := c.Post("/api/v2/course/teacher/course-modules/list", reqBody, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/course-modules/list", reqBody, &resp); err != nil {
 		return nil, fmt.Errorf("failed to fetch module: %w", err)
 	}
 
@@ -1183,7 +1187,7 @@ func fetchExistingModule(c *client.Client, courseID, moduleCode string) (*Existi
 	return nil, fmt.Errorf("%w: '%s' in course '%s'", errModuleNotFound, moduleCode, courseID)
 }
 
-func updateModuleContent(c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool, dryRun bool) (map[string]interface{}, error) {
+func updateModuleContent(ctx context.Context, c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool, dryRun bool) (map[string]interface{}, error) {
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Build local lessons indexed by SLT number
@@ -1351,7 +1355,7 @@ func updateModuleContent(c *client.Client, courseID string, data *ImportData, ex
 	}
 
 	var resp map[string]interface{}
-	if err := c.Post("/api/v2/course/teacher/course-module/update", payload, &resp); err != nil {
+	if err := c.Post(ctx, "/api/v2/course/teacher/course-module/update", payload, &resp); err != nil {
 		return nil, fmt.Errorf("failed to update module: %w", err)
 	}
 

@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,10 +42,13 @@ func (c *Client) SetUserJWT(jwt string) {
 	c.userJWT = jwt
 }
 
-func (c *Client) Get(path string, result interface{}) error {
+// Get issues a GET request carrying ctx. Cancel ctx to abort the in-flight
+// request; passing nil ctx is a programming error and will panic at
+// http.NewRequestWithContext.
+func (c *Client) Get(ctx context.Context, path string, result interface{}) error {
 	url := c.baseURL + path
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
@@ -59,16 +63,7 @@ func (c *Client) Get(path string, result interface{}) error {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		msg := fmt.Sprintf("API error %d: %s", resp.StatusCode, truncateErrorBody(body))
-		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return &apierr.AuthError{Message: msg}
-		case http.StatusNotFound:
-			return &apierr.NotFoundError{Message: msg}
-		case http.StatusConflict:
-			return &apierr.ConflictError{Message: msg}
-		}
-		return errors.New(msg)
+		return statusError(resp.StatusCode, body)
 	}
 
 	return json.NewDecoder(resp.Body).Decode(result)
@@ -85,8 +80,9 @@ func (c *Client) setHeaders(req *http.Request) {
 	req.Header.Set("Accept", "application/json")
 }
 
-// Post sends a POST request with JSON body and decodes the response.
-func (c *Client) Post(path string, body interface{}, result interface{}) error {
+// Post sends a POST request with JSON body and decodes the response. See Get
+// for ctx semantics.
+func (c *Client) Post(ctx context.Context, path string, body interface{}, result interface{}) error {
 	url := c.baseURL + path
 
 	var reqBody io.Reader
@@ -98,7 +94,7 @@ func (c *Client) Post(path string, body interface{}, result interface{}) error {
 		reqBody = bytes.NewReader(jsonData)
 	}
 
-	req, err := http.NewRequest("POST", url, reqBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, reqBody)
 	if err != nil {
 		return err
 	}
@@ -116,16 +112,7 @@ func (c *Client) Post(path string, body interface{}, result interface{}) error {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		msg := fmt.Sprintf("API error %d: %s", resp.StatusCode, truncateErrorBody(respBody))
-		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return &apierr.AuthError{Message: msg}
-		case http.StatusNotFound:
-			return &apierr.NotFoundError{Message: msg}
-		case http.StatusConflict:
-			return &apierr.ConflictError{Message: msg}
-		}
-		return errors.New(msg)
+		return statusError(resp.StatusCode, respBody)
 	}
 
 	if result != nil {
@@ -134,8 +121,9 @@ func (c *Client) Post(path string, body interface{}, result interface{}) error {
 	return nil
 }
 
-// Put sends a PUT request with JSON body and decodes the response.
-func (c *Client) Put(path string, body interface{}, result interface{}) error {
+// Put sends a PUT request with JSON body and decodes the response. See Get
+// for ctx semantics.
+func (c *Client) Put(ctx context.Context, path string, body interface{}, result interface{}) error {
 	url := c.baseURL + path
 
 	var reqBody io.Reader
@@ -147,7 +135,7 @@ func (c *Client) Put(path string, body interface{}, result interface{}) error {
 		reqBody = bytes.NewReader(jsonData)
 	}
 
-	req, err := http.NewRequest("PUT", url, reqBody)
+	req, err := http.NewRequestWithContext(ctx, "PUT", url, reqBody)
 	if err != nil {
 		return err
 	}
@@ -165,22 +153,33 @@ func (c *Client) Put(path string, body interface{}, result interface{}) error {
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		msg := fmt.Sprintf("API error %d: %s", resp.StatusCode, truncateErrorBody(respBody))
-		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return &apierr.AuthError{Message: msg}
-		case http.StatusNotFound:
-			return &apierr.NotFoundError{Message: msg}
-		case http.StatusConflict:
-			return &apierr.ConflictError{Message: msg}
-		}
-		return errors.New(msg)
+		return statusError(resp.StatusCode, respBody)
 	}
 
 	if result != nil {
 		return json.NewDecoder(resp.Body).Decode(result)
 	}
 	return nil
+}
+
+// statusError maps an HTTP error status to the typed error the CLI expects.
+// 401/403 → AuthError, 404 → NotFoundError, 409 → ConflictError,
+// 5xx → ServerError, anything else → plain error. Error message format
+// ("API error %d: %s") is preserved across all branches.
+func statusError(status int, body []byte) error {
+	msg := fmt.Sprintf("API error %d: %s", status, truncateErrorBody(body))
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return &apierr.AuthError{Message: msg}
+	case http.StatusNotFound:
+		return &apierr.NotFoundError{Message: msg}
+	case http.StatusConflict:
+		return &apierr.ConflictError{Message: msg}
+	}
+	if status >= 500 && status < 600 {
+		return &apierr.ServerError{Status: status, Message: msg}
+	}
+	return errors.New(msg)
 }
 
 // truncateErrorBody limits error message size to prevent log flooding and info leakage
