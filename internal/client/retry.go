@@ -165,22 +165,24 @@ func isNetworkLayerError(err error) bool {
 }
 
 // backoffDuration computes the wait before the next attempt. Applies
-// exponential growth, capped at MaxBackoff, then symmetric jitter. If the
+// exponential growth, optional symmetric jitter, then caps the result at
+// MaxBackoff. Capping AFTER jitter is deliberate — it guarantees MaxBackoff
+// is a strict upper bound, not a "ceiling plus jitter" soft limit. If the
 // error carries a Retry-After hint via *apierr.BackpressureError, that
-// value overrides the exponential value (still capped and jittered).
+// value overrides the exponential value.
 func backoffDuration(cfg retryConfig, attempt int, err error) time.Duration {
 	base := cfg.InitialBackoff << (attempt - 1)
 	var backpressure *apierr.BackpressureError
 	if errors.As(err, &backpressure) && backpressure.RetryAfterSeconds > 0 {
 		base = time.Duration(backpressure.RetryAfterSeconds) * time.Second
 	}
-	if base > cfg.MaxBackoff {
-		base = cfg.MaxBackoff
-	}
 	if cfg.Jitter > 0 {
 		// math/rand/v2 top-level functions are goroutine-safe.
 		factor := 1 + (rand.Float64()*2-1)*cfg.Jitter
 		base = time.Duration(float64(base) * factor)
+	}
+	if base > cfg.MaxBackoff {
+		base = cfg.MaxBackoff
 	}
 	if base < 0 {
 		base = 0

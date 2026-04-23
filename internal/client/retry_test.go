@@ -411,6 +411,15 @@ func TestRetry_BackpressureError_RetryAfter_Parsed(t *testing.T) {
 		{"no hint", "too many requests", 0},
 		{"http-date form (unsupported)", "Retry-After: Wed, 21 Oct 2015 07:28:00 GMT", 0},
 		{"negative (rejected)", "Retry-After: -5 nope", 0},
+		// Boundary — parseRetryAfterSeconds accepts n == 1<<30 (1073741824).
+		// backoffDuration caps via MaxBackoff so the huge raw value is
+		// harmless downstream; the parser just bounds integer-parse work.
+		{"boundary: exactly 1<<30 accepted", "Retry-After: 1073741824 boundary", 1073741824},
+		// Boundary + 1 — rejected by the n > 1<<30 overflow guard.
+		{"boundary: 1<<30+1 rejected", "Retry-After: 1073741825 nope", 0},
+		// Overflow far past boundary — guard fires early during digit
+		// accumulation before int64 wraps.
+		{"way past boundary rejected", "Retry-After: 9999999999999 nope", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -473,7 +482,9 @@ func TestRetry_JitterScalesBackoff(t *testing.T) {
 		MaxBackoff:     1 * time.Second,
 		Jitter:         0.2,
 	}
+	const unjittered = 100 * time.Millisecond
 	seen := make(map[time.Duration]struct{})
+	foundJittered := false
 	for i := 0; i < 50; i++ {
 		d := backoffDuration(cfg, 1, nil)
 		// ±20% of 100ms = [80ms, 120ms]. Allow a small tolerance for
@@ -481,10 +492,38 @@ func TestRetry_JitterScalesBackoff(t *testing.T) {
 		if d < 80*time.Millisecond || d > 120*time.Millisecond {
 			t.Errorf("jitter produced duration %v, expected ~[80ms, 120ms]", d)
 		}
+		if d != unjittered {
+			foundJittered = true
+		}
 		seen[d] = struct{}{}
+	}
+	// Deterministic: at least one sample must differ from the unjittered
+	// base — the probabilistic len(seen) >= 5 check is defense-in-depth.
+	if !foundJittered {
+		t.Errorf("jitter produced no samples that differed from base %v — jitter math may be dead", unjittered)
 	}
 	if len(seen) < 5 {
 		t.Errorf("expected jitter to produce varied durations, got %d distinct values", len(seen))
+	}
+}
+
+// TestRetry_JitterRespectsMaxBackoff pins the MaxBackoff strict-upper-bound
+// invariant when jitter is enabled. Previously the cap was applied before
+// jitter, so an 8th-attempt 25.6s base capped to 5s could still be pushed to
+// ~6s by ±20% jitter — a soft cap, not a hard cap. After the fix, MaxBackoff
+// is the last operation, so no sample exceeds it.
+func TestRetry_JitterRespectsMaxBackoff(t *testing.T) {
+	cfg := retryConfig{
+		InitialBackoff: 10 * time.Second,
+		MaxBackoff:     5 * time.Second,
+		Jitter:         0.2,
+	}
+	for i := 0; i < 200; i++ {
+		// attempt=1, base=10s, then jittered ~[8s, 12s], capped at 5s.
+		d := backoffDuration(cfg, 1, nil)
+		if d > cfg.MaxBackoff {
+			t.Fatalf("backoff %v exceeds MaxBackoff %v — cap must win over jitter", d, cfg.MaxBackoff)
+		}
 	}
 }
 
