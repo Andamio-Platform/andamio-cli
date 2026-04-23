@@ -43,7 +43,8 @@ func init() {
 	courseCmd.AddCommand(courseImportCmd)
 	courseImportCmd.Flags().String("course-id", "", "Course ID to import into")
 	courseImportCmd.Flags().String("course", "", "Course name or substring (alternative to --course-id)")
-	courseImportCmd.Flags().Bool("dry-run", false, "Show the API payload without sending it")
+	courseImportCmd.Flags().Bool("dry-run", false, "Preview the import without sending. Shows summary only; use --show-payload to also emit the full API payload")
+	courseImportCmd.Flags().Bool("show-payload", false, "Also print the full API payload (Tiptap JSON etc.) on --dry-run. Noisy for multi-lesson modules")
 	courseImportCmd.Flags().Bool("create", false, "Create the module if it doesn't exist")
 	courseImportCmd.Flags().Int("sort-order", 0, "Sort order when creating a new module (used with --create)")
 }
@@ -133,15 +134,16 @@ type ImportResult struct {
 
 // ImportParams holds the parameters for importing a single module.
 type ImportParams struct {
-	Ctx        context.Context
-	Client     *client.Client
-	Config     *config.Config
-	ModuleDir  string
-	CourseID   string
-	CreateMode bool
-	DryRun     bool
-	SortOrder  int
-	Quiet      bool // suppress progress output (JSON mode)
+	Ctx         context.Context
+	Client      *client.Client
+	Config      *config.Config
+	ModuleDir   string
+	CourseID    string
+	CreateMode  bool
+	DryRun      bool
+	ShowPayload bool // when DryRun, also print the full API payload to stdout
+	SortOrder   int
+	Quiet       bool // suppress progress output (JSON mode)
 }
 
 // importModule is the shared orchestration logic for importing a single module.
@@ -262,7 +264,7 @@ func importModule(p ImportParams) (*ImportResult, error) {
 	}
 
 	// Update the module via API (or dump payload in dry-run mode)
-	resp, err := updateModuleContent(p.Ctx, p.Client, p.CourseID, data, existing, sltsLocked, p.DryRun)
+	resp, err := updateModuleContent(p.Ctx, p.Client, p.CourseID, data, existing, sltsLocked, p.DryRun, p.ShowPayload)
 	if err != nil {
 		return nil, err
 	}
@@ -271,6 +273,11 @@ func importModule(p ImportParams) (*ImportResult, error) {
 	changes, _ := resp["changes"].(map[string]interface{})
 	if changes == nil {
 		changes = map[string]interface{}{}
+	}
+
+	// Safety net for issue #62 silent-SLT-failure mode.
+	if err := checkSilentSLTFailure(p.DryRun, sltsLocked, existing.SLTCount, len(data.SLTs), changes); err != nil {
+		return nil, err
 	}
 
 	return &ImportResult{
@@ -292,10 +299,46 @@ func importModule(p ImportParams) (*ImportResult, error) {
 	}, nil
 }
 
+// checkSilentSLTFailure returns an error describing issue #62's silent-SLT-
+// failure mode when the preconditions match. Returns nil otherwise.
+//
+// The scoped condition (existingSLTCount == 0) is deliberate:
+//   - Fresh shell (SLTCount == 0) + 0 creates/updates = gateway rejected
+//     the payload silently. This is exactly the bug #62 describes.
+//   - Module had SLTs and user re-imports identical ones = gateway
+//     returns 0 creates + 0 updates because nothing changed. Legitimate
+//     idempotent success. Guard MUST NOT fire here.
+//
+// Without the SLTCount check the guard false-positives on every
+// unchanged re-import (reported during ce:review of PR #73).
+//
+// Type assertions use the blank identifier deliberately: missing keys
+// default to 0, which is the same signal as explicit 0 values — both
+// indicate the gateway didn't confirm SLT handling, so the guard
+// should fire either way.
+func checkSilentSLTFailure(dryRun, sltsLocked bool, existingSLTCount, newSLTCount int, changes map[string]interface{}) error {
+	if dryRun || sltsLocked || newSLTCount == 0 || existingSLTCount != 0 {
+		return nil
+	}
+	created, _ := changes["slts_created"].(float64)
+	updated, _ := changes["slts_updated"].(float64)
+	if created != 0 || updated != 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"import reported 0 SLTs created and 0 updated, but the module had %d SLT(s) to apply and was freshly-shelled (0 existing SLTs). "+
+			"This usually means the gateway rejected the payload silently. "+
+			"Re-run with --output json and inspect .changes to see the full response; "+
+			"if the module is truly fresh, verify it was created via 'andamio course create-module' (which seeds SLTs correctly) "+
+			"rather than a raw curl to /course-module/create",
+		newSLTCount)
+}
+
 func runCourseImport(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	moduleDir := args[0]
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	showPayload, _ := cmd.Flags().GetBool("show-payload")
 	createMode, _ := cmd.Flags().GetBool("create")
 	sortOrder, _ := cmd.Flags().GetInt("sort-order")
 	isJSON := output.GetFormat() == output.FormatJSON
@@ -327,15 +370,16 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	importResult, err := importModule(ImportParams{
-		Ctx:        ctx,
-		Client:     c,
-		Config:     cfg,
-		ModuleDir:  moduleDir,
-		CourseID:   courseID,
-		CreateMode: createMode,
-		DryRun:     dryRun,
-		SortOrder:  sortOrder,
-		Quiet:      isJSON,
+		Ctx:         ctx,
+		Client:      c,
+		Config:      cfg,
+		ModuleDir:   moduleDir,
+		CourseID:    courseID,
+		CreateMode:  createMode,
+		DryRun:      dryRun,
+		ShowPayload: showPayload,
+		SortOrder:   sortOrder,
+		Quiet:       isJSON,
 	})
 	if err != nil {
 		return err
@@ -1187,7 +1231,7 @@ func fetchExistingModule(ctx context.Context, c *client.Client, courseID, module
 	return nil, fmt.Errorf("%w: '%s' in course '%s'", errModuleNotFound, moduleCode, courseID)
 }
 
-func updateModuleContent(ctx context.Context, c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool, dryRun bool) (map[string]interface{}, error) {
+func updateModuleContent(ctx context.Context, c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool, dryRun bool, showPayload bool) (map[string]interface{}, error) {
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Build local lessons indexed by SLT number
@@ -1337,15 +1381,18 @@ func updateModuleContent(ctx context.Context, c *client.Client, courseID string,
 		payload["assignment"] = assign
 	}
 
-	// Dry-run: dump payload as JSON instead of sending
+	// Dry-run: return the payload envelope. In text mode, the handler
+	// renders the summary first; the full JSON payload is printed only
+	// when the caller passes --show-payload. Keeps stderr/stdout noise
+	// proportional to what's useful by default (closes #61).
 	if dryRun {
 		payloadJSON, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal payload: %w", err)
 		}
-		if output.GetFormat() != output.FormatJSON {
-			fmt.Println("Dry-run payload (not sent):")
-			fmt.Println(string(payloadJSON))
+		if showPayload && output.GetFormat() != output.FormatJSON {
+			fmt.Fprintln(os.Stderr, "Dry-run payload (not sent):")
+			fmt.Fprintln(os.Stderr, string(payloadJSON))
 		}
 		return map[string]interface{}{
 			"dry_run": true,

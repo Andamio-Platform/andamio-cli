@@ -7,6 +7,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 ## [Unreleased]
 
 ### Added
+- `course import --show-payload` (and `course import-all --show-payload`) — emit the full Tiptap JSON payload on `--dry-run`. Default dry-run is now summary-only; scripts that previously had to `tail -20` past hundreds of lines of JSON to reach the summary no longer need to. When `--show-payload` is set, the payload prints to stderr (not stdout) so piped JSON consumers remain unaffected (#61).
 - `CHANGELOG.md` at the repo root as the source of truth for user-facing release notes (#67).
 - `andamio --version --output json` emits `{version, commit, built}` as structured JSON. `commit` is the 7-character short form matching the plain-text `--version` output; `built` is the verbatim ldflag-injected timestamp (RFC3339 UTC for goreleaser builds; `"unknown"` for dev builds without ldflags). Plain-text `--version` output now uses the same 7-character short commit for both release and dev builds (#67).
 - `scripts/release.sh` preflight check that warns when the target version has no heading in `CHANGELOG.md` before tagging (#67).
@@ -25,6 +26,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 - `register-module` recovery now tolerates transient gateway failures. The teacher-modules-list lookup that runs after a 409 conflict retries up to 3 times on 5xx or network errors before giving up. Users may see a brief "retrying..." note on stderr during recovery (suppressed in `--output json` mode); scripts that strictly parse stderr content should note the possible new lines (#65).
 - **Cosmetic JSON ordering (`course teacher register-module` with `--output json`):** envelope keys now emit in declaration order (`action, status, slt_hash, advanced_from, response`) rather than alphabetical order (`action, advanced_from, response, slt_hash, status`). Consumers parsing JSON with `jq` / `JSON.parse` see identical data; byte-for-byte output-diff consumers will see a diff. Same five keys, same types, same null semantics (#66).
 - `course teacher register-module` `--output json` envelope's `slt_hash` on the `already_registered` branch now reflects the canonical stored hash (from the teacher modules list) rather than echoing the supplied input. A caller that registers with `"ABC123"` against a module stored as `"abc123"` now sees `.slt_hash == "abc123"` in the envelope, matching what `course modules --output json` returns for the same module. The `registered` and `advanced` branches continue to fall back to the supplied hash when the gateway response is minimal (today's observed behavior) — the asymmetry is documented; full gateway-state population on those branches lights up automatically when real preprod fixtures land (#66, todo #021).
+
+### Fixed
+- `user status` no longer prints `User ID: undefined` when the browser wallet-auth callback returned a literal `"undefined"` or `"null"` URL query value. New `sanitizeCallbackValue` helper drops those JavaScript-style literals (plus pure whitespace) at the store site, so historic configs don't leak them either. The `--output json` envelope already used `omitempty` on `user_id`; sanitization keeps the JSON output aligned with the text output (#60).
+- `course import` now errors loudly when the gateway reports 0 SLTs created AND 0 updated but the local module had SLTs to apply. Previously this silently succeeded with `slts_created: 0`, which also caused all subsequent lesson imports to no-op (no SLT slots to attach to). The guard fires only when SLTs were sent (module not locked) and is bypassed on `--dry-run` (#62).
 
 ## [0.11.2] - 2026-04-08
 

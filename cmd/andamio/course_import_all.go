@@ -20,7 +20,8 @@ func init() {
 	courseImportAllCmd.Flags().String("course-id", "", "Course ID to import into")
 	courseImportAllCmd.Flags().String("course", "", "Course name or substring (alternative to --course-id)")
 	courseImportAllCmd.Flags().Bool("create", false, "Create modules that don't exist")
-	courseImportAllCmd.Flags().Bool("dry-run", false, "Show what would be imported without sending")
+	courseImportAllCmd.Flags().Bool("dry-run", false, "Show what would be imported without sending. Summary-only; use --show-payload to also emit full API payloads per module")
+	courseImportAllCmd.Flags().Bool("show-payload", false, "Also print full API payloads on --dry-run. Noisy across many modules")
 	courseImportAllCmd.Flags().Bool("continue-on-error", false, "Continue past failures")
 	courseImportAllCmd.Flags().Int("sort-order-start", 0, "Starting sort order for --create (increments per module)")
 }
@@ -66,6 +67,7 @@ func runImportAll(cmd *cobra.Command, args []string) error {
 	baseDir := args[0]
 	createMode, _ := cmd.Flags().GetBool("create")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	showPayload, _ := cmd.Flags().GetBool("show-payload")
 	continueOnError, _ := cmd.Flags().GetBool("continue-on-error")
 	sortOrderStart, _ := cmd.Flags().GetInt("sort-order-start")
 	isJSON := output.GetFormat() == output.FormatJSON
@@ -124,7 +126,7 @@ func runImportAll(cmd *cobra.Command, args []string) error {
 		moduleDir := filepath.Join(baseDir, dirName)
 		sortOrder := sortOrderStart + i
 
-		summary := importSingleModule(ctx, c, cfg, moduleDir, courseID, createMode, dryRun, sortOrder, isJSON)
+		summary := importSingleModule(ctx, c, cfg, moduleDir, courseID, createMode, dryRun, showPayload, sortOrder, isJSON)
 		summaries = append(summaries, summary)
 
 		if summary.Error != "" {
@@ -172,7 +174,7 @@ func runImportAll(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func importSingleModule(ctx context.Context, c *client.Client, cfg *config.Config, moduleDir, courseID string, createMode, dryRun bool, sortOrder int, isJSON bool) ModuleImportSummary {
+func importSingleModule(ctx context.Context, c *client.Client, cfg *config.Config, moduleDir, courseID string, createMode, dryRun, showPayload bool, sortOrder int, isJSON bool) ModuleImportSummary {
 	summary := ModuleImportSummary{Dir: filepath.Base(moduleDir)}
 
 	if !isJSON {
@@ -190,15 +192,16 @@ func importSingleModule(ctx context.Context, c *client.Client, cfg *config.Confi
 
 	// Delegate to shared import orchestration
 	result, err := importModule(ImportParams{
-		Ctx:        ctx,
-		Client:     c,
-		Config:     cfg,
-		ModuleDir:  moduleDir,
-		CourseID:   courseID,
-		CreateMode: createMode,
-		DryRun:     dryRun,
-		SortOrder:  sortOrder,
-		Quiet:      isJSON,
+		Ctx:         ctx,
+		Client:      c,
+		Config:      cfg,
+		ModuleDir:   moduleDir,
+		CourseID:    courseID,
+		CreateMode:  createMode,
+		DryRun:      dryRun,
+		ShowPayload: showPayload,
+		SortOrder:   sortOrder,
+		Quiet:       isJSON,
 	})
 	if err != nil {
 		summary.Error = err.Error()
