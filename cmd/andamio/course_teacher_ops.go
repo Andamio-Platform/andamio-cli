@@ -15,6 +15,46 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// RegisterModuleEnvelope is the stable --output json contract for
+// `course teacher register-module`. All success branches emit this shape;
+// errors render via the global {"error": "..."} path in main.go.
+//
+// Action takes one of three values, each with different nullability:
+//
+//   - "registered"         — the module was newly created on this call. Response
+//                            wraps the gateway register-response body. AdvancedFrom is nil.
+//   - "advanced"           — an existing DRAFT module with matching slt_hash was
+//                            advanced to APPROVED on this call. Response wraps the
+//                            update-status response. AdvancedFrom is non-nil (today
+//                            always "DRAFT", the only status we advance from).
+//   - "already_registered" — an existing module with matching slt_hash was found
+//                            in a non-DRAFT state; this call was a no-op. Response
+//                            is nil (no gateway round-trip happened after the 409).
+//                            AdvancedFrom is nil.
+//
+// Status and SltHash are populated from the gateway response via
+// lookupStringField's defensive key search, with hardcoded fallbacks when the
+// response is minimal. SltHash canonicalization is asymmetric by branch
+// (todo #021 unblocks full symmetry):
+//   - "already_registered": always canonical (existing.SltHash from the teacher
+//     modules list). Supplied "ABC123" against stored "abc123" returns "abc123".
+//   - "registered" / "advanced": gateway field if present, else the supplied
+//     hash (post-trim). Today's gateway typically doesn't populate it on these
+//     branches, so consumers see supplied casing until real preprod fixtures land.
+//
+// Scripts that need guaranteed canonical values should treat this envelope as
+// transactional and consult `course modules --output json` for authoritative
+// hashes. Within the envelope: blake2b hex is case-insensitive by convention;
+// use strings.EqualFold or lowercase-normalize both sides when comparing.
+// Branch on Action; `--output json` is the stable automation surface.
+type RegisterModuleEnvelope struct {
+	Action       string         `json:"action"`
+	Status       string         `json:"status"`
+	SltHash      string         `json:"slt_hash"`
+	AdvancedFrom *string        `json:"advanced_from"`
+	Response     map[string]any `json:"response"`
+}
+
 // courseTeacherCmd is the nested "course teacher" subgroup for module lifecycle and reviews.
 // The existing top-level "teacher" command stays as-is — both work.
 var courseTeacherCmd = &cobra.Command{
@@ -38,22 +78,11 @@ partially completed), behavior depends on its current status:
   ON_CHAIN       + matching hash -> no-op (exit 0)
   hash mismatch  (any status)    -> error; suggests delete-module
 
-With --output json, success branches emit a stable envelope:
-
-  {
-    "action":        "registered" | "advanced" | "already_registered",
-    "status":        "<current-status>",
-    "slt_hash":      "<supplied>",
-    "advanced_from": "DRAFT" | null,
-    "response":      <gateway-response> | null
-  }
-
-Scripts should branch on 'action' (not on stderr text — text mode is
-for humans, --output json is the stable surface for automation).
-Gateway fields that were previously returned at the top level are now
-nested under 'response'. Error branches (mismatch, lookup failure,
-unexpected status) return the global {"error": "..."} shape, not the
-envelope.
+With --output json, success branches emit RegisterModuleEnvelope (see
+the Go struct for the authoritative field-level contract). Scripts
+should branch on 'action' — text mode is for humans, --output json is
+the stable surface for automation. Error branches return the global
+{"error": "..."} shape, not the envelope.
 
 Examples:
   andamio course teacher register-module --course-id <id> --module-code 101 --slt-hash <hash>
@@ -156,21 +185,11 @@ func init() {
 	courseTeacherCommitmentsCmd.MarkFlagRequired("course-id")
 }
 
-// runCourseTeacherRegisterModule handles register-module. When the gateway rejects
-// the call because the module already exists (created earlier by `course import --create`
-// or a prior partial run), this handler inspects the existing module and either:
-//   - advances DRAFT → APPROVED via update-status (matching slt_hash), or
-//   - exits 0 as a no-op when already APPROVED/PENDING_TX/ON_CHAIN with matching hash, or
-//   - returns an error wrapping the original gateway error when the supplied hash mismatches.
-//
-// The JSON envelope is stable across all success branches:
-//
-//	{action, status, slt_hash, advanced_from, response}
-//
-// where action ∈ {"registered", "advanced", "already_registered"} and advanced_from is
-// "DRAFT" only on the advance branch (null otherwise). Error branches (mismatch, lookup
-// failure, unexpected status) return a Go error; --output json consumers see the global
-// {"error": "..."} shape on those paths, not the envelope.
+// runCourseTeacherRegisterModule handles register-module. See
+// registerOrRecoverModule for the recovery flow and RegisterModuleEnvelope for
+// the --output json shape. Error branches (mismatch, lookup failure,
+// unexpected status) return a Go error rendered via the global
+// {"error": "..."} path in main.go, not the envelope.
 func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	courseID, _ := cmd.Flags().GetString("course-id")
@@ -216,23 +235,35 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 }
 
 // registerOrRecoverModule drives the register-module POST and, on an "already exists"
-// conflict, performs the hash-compare / status-branch recovery. Returns the JSON envelope
-// and a human-readable success message.
+// conflict, performs the hash-compare / status-branch recovery. See
+// RegisterModuleEnvelope for the --output json shape.
 //
 // isJSON controls only the single intermediate progress line printed to stderr when a
 // conflict is detected (so humans see the recovery is in flight rather than staring at
 // a silent terminal for up to two 30 s POSTs). Tests pass true to keep stderr quiet.
-func registerOrRecoverModule(ctx context.Context, c *client.Client, courseID, moduleCode, sltHash string, isJSON bool) (map[string]interface{}, string, error) {
+func registerOrRecoverModule(ctx context.Context, c *client.Client, courseID, moduleCode, sltHash string, isJSON bool) (*RegisterModuleEnvelope, string, error) {
 	resp, err := postRegisterModule(ctx, c, courseID, moduleCode, sltHash)
 	if err == nil {
-		envelope := map[string]interface{}{
-			"action":        "registered",
-			"status":        "APPROVED",
-			"slt_hash":      sltHash,
-			"advanced_from": nil,
-			"response":      resp,
+		// Gateway-state population: prefer real response fields when the gateway
+		// supplies them. Candidate key names follow lookupTeacherModule's drift
+		// handling (slt_hash / course_module_slt_hash, status / course_module_status).
+		// When the response is minimal (today's observed behavior — see plan's
+		// Key Technical Decisions), the fallbacks preserve the pre-refactor contract.
+		status := lookupStringField(resp, "status", "course_module_status", "module_status")
+		if status == "" {
+			status = "APPROVED"
 		}
-		return envelope, fmt.Sprintf("Module %s: registered.", moduleCode), nil
+		respHash := lookupStringField(resp, "slt_hash", "course_module_slt_hash")
+		if respHash == "" {
+			respHash = sltHash
+		}
+		return &RegisterModuleEnvelope{
+			Action:       "registered",
+			Status:       status,
+			SltHash:      respHash,
+			AdvancedFrom: nil,
+			Response:     resp,
+		}, fmt.Sprintf("Module %s: registered.", moduleCode), nil
 	}
 
 	if !isModuleAlreadyExistsError(err) {
@@ -263,24 +294,39 @@ func registerOrRecoverModule(ctx context.Context, c *client.Client, courseID, mo
 		if updateErr != nil {
 			return nil, "", fmt.Errorf("module %s exists in DRAFT with matching hash, but advancing to APPROVED failed: %w", moduleCode, updateErr)
 		}
-		envelope := map[string]interface{}{
-			"action":        "advanced",
-			"status":        "APPROVED",
-			"slt_hash":      sltHash,
-			"advanced_from": "DRAFT",
-			"response":      updateResp,
+		// Same gateway-state-first pattern as the registered branch; today's
+		// update-status response shape typically lacks these fields, so the
+		// supplied/hardcoded fallbacks carry the envelope. Widen the key
+		// candidates when preprod fixtures capture a real response.
+		status := lookupStringField(updateResp, "status", "course_module_status", "module_status")
+		if status == "" {
+			status = "APPROVED"
 		}
-		return envelope, fmt.Sprintf("Module %s: advanced from DRAFT to APPROVED.", moduleCode), nil
+		respHash := lookupStringField(updateResp, "slt_hash", "course_module_slt_hash")
+		if respHash == "" {
+			respHash = sltHash
+		}
+		draftFrom := "DRAFT"
+		return &RegisterModuleEnvelope{
+			Action:       "advanced",
+			Status:       status,
+			SltHash:      respHash,
+			AdvancedFrom: &draftFrom,
+			Response:     updateResp,
+		}, fmt.Sprintf("Module %s: advanced from DRAFT to APPROVED.", moduleCode), nil
 
 	case "APPROVED", "PENDING_TX", "ON_CHAIN":
-		envelope := map[string]interface{}{
-			"action":        "already_registered",
-			"status":        existing.Status,
-			"slt_hash":      sltHash,
-			"advanced_from": nil,
-			"response":      nil,
-		}
-		return envelope, fmt.Sprintf("Module %s: already registered (status: %s).", moduleCode, existing.Status), nil
+		// Canonical values from the teacher-list lookup. No additional gateway
+		// round-trip happened on this branch — Response is nil. This is the only
+		// branch where SltHash is guaranteed canonical today (survives the
+		// supplied-uppercase / stored-lowercase case-insensitivity surface).
+		return &RegisterModuleEnvelope{
+			Action:       "already_registered",
+			Status:       existing.Status,
+			SltHash:      existing.SltHash,
+			AdvancedFrom: nil,
+			Response:     nil,
+		}, fmt.Sprintf("Module %s: already registered (status: %s).", moduleCode, existing.Status), nil
 
 	default:
 		return nil, "", fmt.Errorf("module %s exists in unexpected status %q with matching hash; not advancing automatically", moduleCode, existing.Status)
@@ -401,18 +447,27 @@ func lookupTeacherModule(ctx context.Context, c *client.Client, courseID, module
 }
 
 // lookupStringField returns the first non-empty string match for any of the given
-// field names, checking the top level of m first and then m["content"]. Used for
-// defensive lookup when API field names vary across environments or response shapes.
+// field names, checking the top level of m first and then m["content"]. Values
+// are whitespace-trimmed before the non-empty check and before returning — a
+// gateway response with "status": " " or "status": "\t\n" is treated as
+// "not present" so the caller's fallback kicks in, and a surrounding-whitespace
+// value like " APPROVED " returns as "APPROVED" rather than leaking padding
+// into downstream equality checks against canonical status strings.
+// Used for defensive lookup when API field names vary across environments or response shapes.
 func lookupStringField(m map[string]interface{}, names ...string) string {
 	for _, name := range names {
-		if v, ok := m[name].(string); ok && v != "" {
-			return v
+		if v, ok := m[name].(string); ok {
+			if trimmed := strings.TrimSpace(v); trimmed != "" {
+				return trimmed
+			}
 		}
 	}
 	if content, ok := m["content"].(map[string]interface{}); ok {
 		for _, name := range names {
-			if v, ok := content[name].(string); ok && v != "" {
-				return v
+			if v, ok := content[name].(string); ok {
+				if trimmed := strings.TrimSpace(v); trimmed != "" {
+					return trimmed
+				}
 			}
 		}
 	}

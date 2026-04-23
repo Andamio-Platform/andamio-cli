@@ -352,6 +352,12 @@ func TestRegisterOrRecoverModule_UpdateStatusPayload(t *testing.T) {
 	}
 }
 
+// strPtr is a file-local helper for building *string literals in tests — Go
+// forbids taking the address of an unnamed string constant, so &"DRAFT" is a
+// compile error. Used by wantAdvancedFrom table values and by a few gateway-
+// state helper fixtures.
+func strPtr(s string) *string { return &s }
+
 // TestRegisterOrRecoverModule drives the envelope-producing inner function end-to-end
 // against an httptest gateway and asserts the exact envelope shape for every success
 // branch. The cobra handler is not exercised (config.Load requires filesystem state),
@@ -367,10 +373,11 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 		listStatus         int // HTTP status for the list POST; 0 defaults to OK
 		listResponse       map[string]interface{}
 		updateStatusStatus int // HTTP status for the update-status POST; 0 defaults to OK
+		updateStatusResp   map[string]interface{} // body the gateway returns on update-status; defaults to {"ok": true}
 		wantAction         string
 		wantStatus         string
 		wantSltHash        string
-		wantAdvancedFrom   interface{}
+		wantAdvancedFrom   *string
 		wantResponseNil    bool
 		wantSuccessMsg     string
 		wantErrSubstr      string
@@ -403,7 +410,7 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 			wantAction:       "advanced",
 			wantStatus:       "APPROVED",
 			wantSltHash:      "abc123",
-			wantAdvancedFrom: "DRAFT",
+			wantAdvancedFrom: strPtr("DRAFT"),
 			wantResponseNil:  false,
 			wantSuccessMsg:   "Module 101: advanced from DRAFT to APPROVED.",
 		},
@@ -463,7 +470,7 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 			wantAction:       "advanced",
 			wantStatus:       "APPROVED",
 			wantSltHash:      "ABC123", // supplied value is preserved in envelope
-			wantAdvancedFrom: "DRAFT",
+			wantAdvancedFrom: strPtr("DRAFT"),
 			wantResponseNil:  false,
 			wantSuccessMsg:   "Module 101: advanced from DRAFT to APPROVED.",
 		},
@@ -539,6 +546,167 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 			listStatus:     http.StatusInternalServerError,
 			wantErrSubstr:  "could not locate it for recovery",
 		},
+		{
+			// R3 lockdown (registered branch): gateway register response carries a
+			// status field. Envelope Status reflects it, not the "APPROVED" fallback.
+			// Proves the lookupStringField pipe in the registered branch is alive and
+			// wins over the hardcoded fallback when the gateway populates the field.
+			name:           "registered with gateway-provided status reflects it, not fallback",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusOK,
+			registerResp: map[string]interface{}{
+				"module_id": "m-101",
+				"status":    "PENDING_VERIFY",
+				"slt_hash":  "canonical_hash",
+			},
+			wantAction:       "registered",
+			wantStatus:       "PENDING_VERIFY",
+			wantSltHash:      "canonical_hash",
+			wantAdvancedFrom: nil,
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: registered.",
+		},
+		{
+			// R3 lockdown (advanced branch): update-status response carries a status
+			// field. Envelope Status reflects it, not "APPROVED". Today's real
+			// gateway usually returns {"ok": true} here (no status field), but when
+			// fixtures land or the gateway expands its response, the envelope tracks.
+			name:           "advanced with gateway-provided status reflects it, not fallback",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc123",
+						"module_status":      "DRAFT",
+					}},
+				},
+			},
+			updateStatusResp: map[string]interface{}{
+				"status":   "APPROVED_WITH_WARNING",
+				"slt_hash": "canonical_hash",
+			},
+			wantAction:       "advanced",
+			wantStatus:       "APPROVED_WITH_WARNING",
+			wantSltHash:      "canonical_hash",
+			wantAdvancedFrom: strPtr("DRAFT"),
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: advanced from DRAFT to APPROVED.",
+		},
+		{
+			// Fallback coverage: gateway responds 200 with explicit empty-string
+			// status and slt_hash fields (distinct from missing fields).
+			// lookupStringField's `v != ""` guard should still treat these as
+			// "not present" and the envelope falls through to hardcoded values.
+			// Catches the case where a future gateway populates the keys but
+			// leaves the values blank.
+			name:           "registered with empty-string gateway fields falls through to defaults",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusOK,
+			registerResp: map[string]interface{}{
+				"module_id": "m-101",
+				"status":    "",
+				"slt_hash":  "",
+			},
+			wantAction:       "registered",
+			wantStatus:       "APPROVED", // fallback — gateway empty string is not canonical
+			wantSltHash:      "abc123",   // fallback — supplied hash
+			wantAdvancedFrom: nil,
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: registered.",
+		},
+		{
+			// Whitespace-only fields are also treated as "not present" by the
+			// trimmed lookupStringField guard. A buggy or misconfigured gateway
+			// returning "status": " " must not leak a single-space value into
+			// downstream equality checks against canonical status strings.
+			name:           "registered with whitespace-only gateway fields falls through to defaults",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusOK,
+			registerResp: map[string]interface{}{
+				"module_id": "m-101",
+				"status":    "   ",
+				"slt_hash":  "\t\n",
+			},
+			wantAction:       "registered",
+			wantStatus:       "APPROVED",
+			wantSltHash:      "abc123",
+			wantAdvancedFrom: nil,
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: registered.",
+		},
+		{
+			// Surrounding whitespace on an otherwise-valid value is trimmed to
+			// match the canonical form. Prevents " APPROVED " from silently
+			// differing from "APPROVED" in downstream comparisons.
+			name:           "registered with surrounding-whitespace status gets trimmed",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusOK,
+			registerResp: map[string]interface{}{
+				"module_id": "m-101",
+				"status":    "  PENDING_VERIFY  ",
+			},
+			wantAction:       "registered",
+			wantStatus:       "PENDING_VERIFY",
+			wantSltHash:      "abc123", // no gateway slt_hash, falls back
+			wantAdvancedFrom: nil,
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: registered.",
+		},
+		{
+			// Symmetric coverage for the advanced branch: update-status endpoint
+			// returns explicit empty-string fields. Mirrors the registered case
+			// above. Confirms both branches handle the empty-string edge case
+			// identically via the same lookupStringField guard.
+			name:           "advanced with empty-string update-status fields falls through to defaults",
+			suppliedHash:   "abc123",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc123",
+						"module_status":      "DRAFT",
+					}},
+				},
+			},
+			updateStatusResp: map[string]interface{}{
+				"status":   "",
+				"slt_hash": "",
+			},
+			wantAction:       "advanced",
+			wantStatus:       "APPROVED", // fallback
+			wantSltHash:      "abc123",   // fallback — supplied
+			wantAdvancedFrom: strPtr("DRAFT"),
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: advanced from DRAFT to APPROVED.",
+		},
+		{
+			// R4 lockdown (already_registered branch): this is the ONLY branch that
+			// guarantees canonical SltHash today. User supplies ABC123 uppercase; DB
+			// stores abc123 lowercase; case-insensitive compare matches; envelope
+			// returns the stored lowercase, not the supplied uppercase. Catches P2 #8
+			// from PR #63 review directly.
+			name:           "already_registered returns canonical slt_hash, not supplied casing",
+			suppliedHash:   "ABC123",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc123",
+						"module_status":      "APPROVED",
+					}},
+				},
+			},
+			wantAction:       "already_registered",
+			wantStatus:       "APPROVED",
+			wantSltHash:      "abc123",
+			wantAdvancedFrom: nil,
+			wantResponseNil:  true,
+			wantSuccessMsg:   "Module 101: already registered (status: APPROVED).",
+		},
 	}
 
 	for _, tt := range tests {
@@ -569,7 +737,11 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 						http.Error(w, "update-status failed", tt.updateStatusStatus)
 						return
 					}
-					_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+					body := tt.updateStatusResp
+					if body == nil {
+						body = map[string]interface{}{"ok": true}
+					}
+					_ = json.NewEncoder(w).Encode(body)
 				default:
 					t.Errorf("unexpected path: %s", r.URL.Path)
 				}
@@ -592,23 +764,31 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if envelope["action"] != tt.wantAction {
-				t.Errorf("action = %v, want %v", envelope["action"], tt.wantAction)
+			if envelope.Action != tt.wantAction {
+				t.Errorf("Action = %v, want %v", envelope.Action, tt.wantAction)
 			}
-			if envelope["status"] != tt.wantStatus {
-				t.Errorf("status = %v, want %v", envelope["status"], tt.wantStatus)
+			if envelope.Status != tt.wantStatus {
+				t.Errorf("Status = %v, want %v", envelope.Status, tt.wantStatus)
 			}
-			if envelope["slt_hash"] != tt.wantSltHash {
-				t.Errorf("slt_hash = %v, want %v", envelope["slt_hash"], tt.wantSltHash)
+			if envelope.SltHash != tt.wantSltHash {
+				t.Errorf("SltHash = %v, want %v", envelope.SltHash, tt.wantSltHash)
 			}
-			if envelope["advanced_from"] != tt.wantAdvancedFrom {
-				t.Errorf("advanced_from = %v, want %v", envelope["advanced_from"], tt.wantAdvancedFrom)
+			// Pointer-value compare: nil-check both sides, then dereference when
+			// both non-nil. Pointer identity is wrong here (each test builds its
+			// own *string via strPtr).
+			switch {
+			case tt.wantAdvancedFrom == nil && envelope.AdvancedFrom != nil:
+				t.Errorf("AdvancedFrom = %q, want nil", *envelope.AdvancedFrom)
+			case tt.wantAdvancedFrom != nil && envelope.AdvancedFrom == nil:
+				t.Errorf("AdvancedFrom = nil, want %q", *tt.wantAdvancedFrom)
+			case tt.wantAdvancedFrom != nil && envelope.AdvancedFrom != nil && *envelope.AdvancedFrom != *tt.wantAdvancedFrom:
+				t.Errorf("AdvancedFrom = %q, want %q", *envelope.AdvancedFrom, *tt.wantAdvancedFrom)
 			}
-			if tt.wantResponseNil && envelope["response"] != nil {
-				t.Errorf("response = %v, want nil", envelope["response"])
+			if tt.wantResponseNil && envelope.Response != nil {
+				t.Errorf("Response = %v, want nil", envelope.Response)
 			}
-			if !tt.wantResponseNil && envelope["response"] == nil {
-				t.Errorf("response is nil, want non-nil gateway response")
+			if !tt.wantResponseNil && envelope.Response == nil {
+				t.Errorf("Response is nil, want non-nil gateway response")
 			}
 			if successMsg != tt.wantSuccessMsg {
 				t.Errorf("successMsg = %q, want %q", successMsg, tt.wantSuccessMsg)
@@ -678,8 +858,8 @@ func TestRegisterOrRecover_RetriesTransientListFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected recovery to succeed despite transient 502, got: %v", err)
 	}
-	if envelope["action"] != "advanced" {
-		t.Errorf("action = %v, want 'advanced'", envelope["action"])
+	if envelope.Action != "advanced" {
+		t.Errorf("Action = %v, want 'advanced'", envelope.Action)
 	}
 	if listCalls < 2 {
 		t.Errorf("expected list call to be retried at least once; got %d calls", listCalls)
