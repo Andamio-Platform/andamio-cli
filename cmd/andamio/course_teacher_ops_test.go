@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
@@ -688,6 +689,60 @@ func TestRegisterOrRecover_RetriesTransientListFailure(t *testing.T) {
 	}
 	if updateCalls != 1 {
 		t.Errorf("update-status should be called exactly once after successful list; got %d", updateCalls)
+	}
+}
+
+// TestRegisterOrRecover_OnRetryCallbackFires asserts that when the retry
+// path is taken during recovery, the Client.SetOnRetry callback is invoked.
+// This pins the CHANGELOG promise that "retrying..." messages appear on
+// stderr (the command-layer callback logs the attempt; this test verifies
+// the wiring).
+func TestRegisterOrRecover_OnRetryCallbackFires(t *testing.T) {
+	var listCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/course/teacher/course-module/register":
+			http.Error(w, "course_module_code already exists in this course", http.StatusConflict)
+		case "/api/v2/course/teacher/course-modules/list":
+			listCalls++
+			if listCalls == 1 {
+				http.Error(w, "bad gateway", http.StatusBadGateway)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc",
+						"module_status":      "DRAFT",
+					}},
+				},
+			})
+		case "/api/v2/course/teacher/course-module/update-status":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := client.New(&config.Config{BaseURL: srv.URL})
+	var callbacks int
+	c.SetOnRetry(func(attempt int, wait time.Duration, err error) {
+		callbacks++
+		if err == nil {
+			t.Errorf("OnRetry received nil err")
+		}
+		if attempt < 2 {
+			t.Errorf("attempt = %d, want >=2 (first retry)", attempt)
+		}
+	})
+
+	if _, _, err := registerOrRecoverModule(context.Background(), c, "course-x", "101", "abc", true); err != nil {
+		t.Fatalf("recovery should succeed, got: %v", err)
+	}
+	if callbacks != 1 {
+		t.Errorf("expected 1 retry callback invocation, got %d", callbacks)
 	}
 }
 

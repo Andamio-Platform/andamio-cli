@@ -7,7 +7,6 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/url"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -15,8 +14,7 @@ import (
 )
 
 // retryConfig tunes the retry wrapper. Not exported: callers use
-// PostWithRetry (production defaults) or, in tests, the test-only
-// newTestRetryConfig helper that builds a faster config.
+// PostWithRetry (production defaults) or, in tests, newTestRetryConfig.
 type retryConfig struct {
 	// MaxAttempts is the total number of attempts (initial + retries).
 	// A value of 3 means: initial, retry 1, retry 2.
@@ -31,9 +29,7 @@ type retryConfig struct {
 	// [0.8, 1.2].
 	Jitter float64
 	// OnRetry is optional. When set, called once per retry after the sleep
-	// finishes and before the next attempt begins. Lets the cobra layer
-	// log retries to stderr without coupling internal/client to
-	// internal/output.
+	// finishes and before the next attempt begins.
 	OnRetry func(attempt int, wait time.Duration, err error)
 }
 
@@ -50,12 +46,18 @@ func defaultRetryConfig() retryConfig {
 
 // PostWithRetry wraps Post with bounded retries on transient failures. Safe
 // only for idempotent (side-effect-free) POST endpoints — the caller
-// asserts this per endpoint. See retry.isRetryable for the retry predicate.
+// asserts this per endpoint.
 //
-// On exhaustion returns the last error unwrapped (it preserves typed errors
-// via errors.As through any outer fmt.Errorf(%w) wrap chain).
+// Retries on network errors, *apierr.ServerError (5xx), and
+// *apierr.BackpressureError (408/425/429, honoring Retry-After when set).
+// Never retries *apierr.AuthError (401/403), *apierr.NotFoundError (404),
+// *apierr.ConflictError (409), context.Canceled, or context.DeadlineExceeded.
+//
+// On exhaustion returns the last error unwrapped — typed errors survive
+// errors.As through any outer fmt.Errorf(%w) wrap chain.
 func (c *Client) PostWithRetry(ctx context.Context, path string, body interface{}, result interface{}) error {
 	cfg := defaultRetryConfig()
+	cfg.OnRetry = c.onRetry
 	return c.doWithRetry(ctx, cfg, func() error {
 		return c.Post(ctx, path, body, result)
 	})
@@ -97,8 +99,11 @@ func (c *Client) doWithRetry(ctx context.Context, cfg retryConfig, fn func() err
 
 // isRetryable decides whether err is worth retrying. Conservative: only
 // network-layer errors, 5xx responses, and specific 4xx backpressure
-// signals (408/425/429). Everything else — including unknown error types —
-// is not retried.
+// signals (408/425/429 via *apierr.BackpressureError). Everything else —
+// including unknown error types — is not retried.
+//
+// Classification uses typed errors (errors.As) rather than string parsing
+// so the retry predicate is not coupled to the statusError message format.
 func isRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -107,43 +112,26 @@ func isRetryable(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	// Typed errors from the client:
-	//   - ServerError: 5xx, retry.
-	//   - AuthError / NotFoundError / ConflictError: non-retryable
-	//     (401/403/404/409 have semantic meaning).
-	//   - StatusError (backpressure 408/425/429): retry.
-	var serverErr *apierr.ServerError
-	if errors.As(err, &serverErr) {
-		return true
-	}
+	// Semantic 4xx — never retry. Check these first so a future-added
+	// field on these types cannot accidentally pass the retry predicate.
 	var authErr *apierr.AuthError
 	var notFound *apierr.NotFoundError
 	var conflict *apierr.ConflictError
 	if errors.As(err, &authErr) || errors.As(err, &notFound) || errors.As(err, &conflict) {
 		return false
 	}
-	if isBackpressureError(err) {
+	// 5xx — retry.
+	var serverErr *apierr.ServerError
+	if errors.As(err, &serverErr) {
 		return true
 	}
-	// Network-layer errors: connection refused, reset, unexpected EOF,
-	// DNS, etc. Raw errors from http.Client.Do fall into these buckets.
+	// 408/425/429 — transient backpressure, retry.
+	var backpressure *apierr.BackpressureError
+	if errors.As(err, &backpressure) {
+		return true
+	}
+	// Network-layer errors from http.Client.Do — retry.
 	return isNetworkLayerError(err)
-}
-
-// isBackpressureError returns true for 408 / 425 / 429 responses. These
-// arrive as plain `errors.New("API error %d: ...")` today (no typed
-// variant) — parse the status out of the message prefix.
-func isBackpressureError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	for _, prefix := range []string{"API error 408", "API error 425", "API error 429"} {
-		if len(msg) >= len(prefix) && msg[:len(prefix)] == prefix {
-			return true
-		}
-	}
-	return false
 }
 
 // isNetworkLayerError returns true for errors that represent a transport
@@ -178,12 +166,13 @@ func isNetworkLayerError(err error) bool {
 
 // backoffDuration computes the wait before the next attempt. Applies
 // exponential growth, capped at MaxBackoff, then symmetric jitter. If the
-// error carries a Retry-After hint (429), that value overrides the
-// exponential value (still capped and jittered).
+// error carries a Retry-After hint via *apierr.BackpressureError, that
+// value overrides the exponential value (still capped and jittered).
 func backoffDuration(cfg retryConfig, attempt int, err error) time.Duration {
 	base := cfg.InitialBackoff << (attempt - 1)
-	if retryAfter, ok := retryAfterFromError(err); ok {
-		base = retryAfter
+	var backpressure *apierr.BackpressureError
+	if errors.As(err, &backpressure) && backpressure.RetryAfterSeconds > 0 {
+		base = time.Duration(backpressure.RetryAfterSeconds) * time.Second
 	}
 	if base > cfg.MaxBackoff {
 		base = cfg.MaxBackoff
@@ -197,47 +186,4 @@ func backoffDuration(cfg retryConfig, attempt int, err error) time.Duration {
 		base = 0
 	}
 	return base
-}
-
-// retryAfterFromError parses a Retry-After hint embedded in a 429 error
-// message. The gateway's 429 body may optionally include "Retry-After: N"
-// (seconds); if absent, the classifier falls through to exponential
-// backoff. Returns (duration, true) on a successful parse.
-//
-// This is a conservative parse: only integer seconds from a body that
-// contains "Retry-After:" are accepted. HTTP Retry-After can also be a
-// date — we do not support that form here; the fallback schedule
-// handles it gracefully.
-func retryAfterFromError(err error) (time.Duration, bool) {
-	if err == nil {
-		return 0, false
-	}
-	msg := err.Error()
-	idx := -1
-	for i := 0; i+len("Retry-After:") <= len(msg); i++ {
-		if msg[i:i+len("Retry-After:")] == "Retry-After:" {
-			idx = i + len("Retry-After:")
-			break
-		}
-	}
-	if idx < 0 {
-		return 0, false
-	}
-	// Skip whitespace.
-	for idx < len(msg) && (msg[idx] == ' ' || msg[idx] == '\t') {
-		idx++
-	}
-	// Read digits.
-	end := idx
-	for end < len(msg) && msg[end] >= '0' && msg[end] <= '9' {
-		end++
-	}
-	if end == idx {
-		return 0, false
-	}
-	n, err := strconv.Atoi(msg[idx:end])
-	if err != nil || n < 0 {
-		return 0, false
-	}
-	return time.Duration(n) * time.Second, true
 }

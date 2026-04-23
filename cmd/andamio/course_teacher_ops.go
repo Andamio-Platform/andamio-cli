@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
@@ -187,6 +188,16 @@ func runCourseTeacherRegisterModule(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	c := client.New(cfg)
+
+	// Wire a retry log to stderr for the recovery list call. Suppressed in
+	// JSON mode to keep the scripting surface clean. lookupTeacherModule is
+	// the only PostWithRetry caller today; when more land, factor this into
+	// a shared helper.
+	if !isJSON {
+		c.SetOnRetry(func(attempt int, wait time.Duration, err error) {
+			fmt.Fprintf(os.Stderr, "  retrying in %s (attempt %d): %v\n", wait.Round(time.Millisecond), attempt, err)
+		})
+	}
 
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "Registering module %s...\n", moduleCode)

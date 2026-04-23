@@ -12,7 +12,9 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 - `scripts/release.sh` preflight check that warns when the target version has no heading in `CHANGELOG.md` before tagging (#67).
 - `apierr.ConflictError` typed error for HTTP 409 responses. Surfaced by `internal/client.Get`/`Post`/`Put` so callers can use `errors.As(err, &conflict)` instead of string-matching gateway error bodies (#64, #68).
 - `apierr.ServerError` typed error for HTTP 5xx responses. Carries the raw status code so retry classifiers can branch on server-side failure without parsing error strings (#65).
+- `apierr.BackpressureError` typed error for HTTP 408/425/429. Carries the parsed `Retry-After` hint when present so retry backoff can honor server-supplied pacing (#65).
 - `Client.PostWithRetry` for opt-in bounded retries on idempotent POST calls. Retries transient network errors, 5xx responses, and 408/425/429 backpressure signals (honoring `Retry-After` when present); never retries 4xx semantic failures (401/403/404/409). Default schedule: 3 attempts total with exponential backoff + ±20% jitter (#65).
+- `Client.SetOnRetry` for registering a callback fired between retry attempts. Lets the cobra layer log "retrying..." progress to stderr without `internal/client` taking a dependency on `internal/output` (#65).
 
 ### Changed
 - **Breaking (`--output json` consumers of `course teacher register-module`):** the response is now wrapped in an envelope `{action, status, slt_hash, advanced_from, response}`. Gateway fields that were previously returned at the top level are now nested under `.response`. Scripts that branch on gateway fields must read them under `.response.*`. The `action` field (`"registered"` / `"advanced"` / `"already_registered"`) is the new branching key (#57, #63).

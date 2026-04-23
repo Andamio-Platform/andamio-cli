@@ -27,6 +27,23 @@ type ServerError struct {
 
 func (e *ServerError) Error() string { return e.Message }
 
+// BackpressureError is returned when a request hits a transient backpressure
+// status — HTTP 408 (Request Timeout), 425 (Too Early), or 429 (Too Many
+// Requests). These are 4xx responses that represent "try again later" rather
+// than semantic failures, so the retry helper treats them as retryable via
+// errors.As rather than string-matching gateway error bodies.
+//
+// RetryAfterSeconds carries a parsed Retry-After hint when present (0 means
+// "not supplied or unparseable"; callers fall through to exponential backoff).
+// Only integer-second form is parsed — HTTP-date form is unsupported.
+type BackpressureError struct {
+	Status            int
+	Message           string
+	RetryAfterSeconds int
+}
+
+func (e *BackpressureError) Error() string { return e.Message }
+
 // ReportedError wraps an error whose output has already been printed to stdout
 // (e.g., a structured JSON result). main.go should set the exit code from the
 // wrapped error but skip printing a second error message.
