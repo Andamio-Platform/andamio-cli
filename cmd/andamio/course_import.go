@@ -275,6 +275,27 @@ func importModule(p ImportParams) (*ImportResult, error) {
 		changes = map[string]interface{}{}
 	}
 
+	// Safety net: loudly surface the silent-SLT-failure mode from issue #62.
+	// If the caller sent SLTs and the module was unlocked (so we expected the
+	// gateway to apply them), but the response shows neither creates nor
+	// updates, something upstream swallowed them. Without this guard, the
+	// lesson attachments that follow also silently fail (no SLT slots to
+	// attach to), and the user sees a "successful" import with no content.
+	// Skip on dry-run (the `changes` map is synthetic there).
+	if !p.DryRun && !sltsLocked && len(data.SLTs) > 0 {
+		created, _ := changes["slts_created"].(float64)
+		updated, _ := changes["slts_updated"].(float64)
+		if created == 0 && updated == 0 {
+			return nil, fmt.Errorf(
+				"import reported 0 SLTs created and 0 updated, but the module had %d SLT(s) to apply. "+
+					"This usually means the module existed with 0 SLTs and the gateway rejected the payload silently. "+
+					"Re-run with --output json and inspect .changes to see the full response; "+
+					"if the module is truly fresh, verify it was created via 'andamio course create-module' (which seeds SLTs correctly) "+
+					"rather than a raw curl to /course-module/create",
+				len(data.SLTs))
+		}
+	}
+
 	return &ImportResult{
 		CourseID:       p.CourseID,
 		ModuleCode:     data.ModuleCode,
