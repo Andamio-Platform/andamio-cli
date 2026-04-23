@@ -264,6 +264,7 @@ andamio project task create "$PROJECT_ID" --title "..." --lovelace 5000000 --exp
 | TX Lifecycle | `docs/TX-LIFECYCLE.md` | 5-step pipeline, terminal states, recovery procedures, all 17 TX types |
 | Course Lifecycle | `docs/COURSE-LIFECYCLE.md` | Course creation, module import, SLT hashes, publishing, student enrollment |
 | Project Lifecycle | `docs/PROJECT-LIFECYCLE.md` | Project creation, task management, contributor workflow, assessments |
+| Solutions Index | `docs/solutions/` | Documented solutions to past problems (bugs, patterns, workflow learnings), organized by category with YAML frontmatter (`tags`, `problem_type`). Relevant when implementing or debugging in documented areas. |
 
 ## Planned Features
 
