@@ -157,6 +157,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project owner register --project-id <id> --title <t>` | `/v2/project/owner/project/register` | jwt | Register on-chain project with off-chain metadata. `--title` required |
 | `project tasks <project-id>` | `/v2/project/user/tasks/list` | either | List tasks (public view) |
 | `project manager commitments --project-id <id>` | `/v2/project/manager/commitments/list` | jwt | List pending assessments |
+| `project manager qualified-contributors --project-id <id>` | `/v2/project/manager/contributors/get-qualified` | jwt | List aliases qualified to commit (holds every prerequisite SLT). Capped at 500; JSON surfaces `truncated`. |
 | `project contributor list` | `/v2/project/contributor/projects/list` | jwt | List contributor projects |
 | `project contributor commitments` | `/v2/project/contributor/commitments/list` | jwt | List task commitments |
 | `project contributor commitment` | `/v2/project/contributor/commitment/get` | jwt | Get commitment. `--project-id`, `--task-index` |
