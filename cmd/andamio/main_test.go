@@ -108,6 +108,44 @@ func TestBuildVersionOutput_EmptyOutputFormat(t *testing.T) {
 	}
 }
 
+// TestBuildVersionOutput_JSONCaseInsensitive confirms `JSON`/`Json`/`json` all route
+// to the JSON envelope. Cobra's --version path bypasses output.SetFormat (which
+// lowercases input), so buildVersionOutput must handle casing itself. Without the
+// strings.EqualFold guard, `--output JSON` silently fell through to text output.
+func TestBuildVersionOutput_JSONCaseInsensitive(t *testing.T) {
+	for _, form := range []string{"json", "JSON", "Json", "jSoN"} {
+		t.Run(form, func(t *testing.T) {
+			restore := setVersionVars(t, "0.12.0", "abcdef1", "2026-04-22", form)
+			defer restore()
+
+			got := buildVersionOutput()
+			if !strings.HasPrefix(got, "{") {
+				t.Errorf("--output %q did not emit JSON: %q", form, got)
+			}
+		})
+	}
+}
+
+// TestBuildVersionOutput_InvalidOutputFallsThroughToText documents the chosen behavior
+// for non-"json" --output values on the --version path: silent fallback to text.
+// Full parity with other commands' --output validation (which rejects unknown values
+// with exit 1) would require re-routing the --version template through a normal RunE.
+// This test pins the current behavior so future work on Option B/C (strict validation)
+// is a deliberate choice, not an accidental regression.
+func TestBuildVersionOutput_InvalidOutputFallsThroughToText(t *testing.T) {
+	for _, form := range []string{"xml", "csv", "markdown", "bogus"} {
+		t.Run(form, func(t *testing.T) {
+			restore := setVersionVars(t, "0.12.0", "abcdef1", "2026-04-22", form)
+			defer restore()
+
+			got := buildVersionOutput()
+			if !strings.HasPrefix(got, "andamio ") {
+				t.Errorf("--output %q did not fall through to text: %q", form, got)
+			}
+		})
+	}
+}
+
 // TestVersionFlag_TextMode_Integration runs the built binary and asserts the plain-text
 // --version output is unchanged from pre-refactor. Proves Cobra's template wiring works
 // end-to-end.
