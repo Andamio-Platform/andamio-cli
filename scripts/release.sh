@@ -65,7 +65,14 @@ if git tag | grep -q "^${TAG}$"; then
 fi
 echo "  ✓ Tag $TAG is available"
 
-# CHANGELOG.md entry check — heading-match (not Unreleased-body inspection) per plan decision.
+# CHANGELOG.md entry check. Two paths:
+#   1. If '## [$VERSION]' heading exists, accept and proceed.
+#   2. If it doesn't, inspect '## [Unreleased]' body:
+#      - Non-empty (has bullets) → hard-exit. This is the "maintainer accumulated
+#        entries but forgot to promote" case that the heading-only check used to miss,
+#        and it's exactly what this preflight exists to catch — so no bypass prompt.
+#      - Empty → soft prompt (the current warn+confirm UX). A patch release with no
+#        user-facing change is a legitimate no-op.
 if [[ ! -f CHANGELOG.md ]]; then
   echo "  ✗ CHANGELOG.md missing at repo root"
   echo "    Create one before releasing (see https://keepachangelog.com/)."
@@ -74,10 +81,23 @@ fi
 if grep -qF "## [${VERSION}]" CHANGELOG.md; then
   echo "  ✓ CHANGELOG entry found for $VERSION"
 else
+  # Extract the body of [Unreleased] (lines after the heading, stopping at the next
+  # '## [' heading). Match a non-whitespace bullet ('-' or '*') to determine "has content".
+  UNRELEASED_BODY=$(awk '/^## \[Unreleased\]/{flag=1; next} /^## \[/{flag=0} flag' CHANGELOG.md)
+  if echo "$UNRELEASED_BODY" | grep -qE '^[[:space:]]*[-*]'; then
+    echo "  ✗ '## [Unreleased]' has entries but no '## [$VERSION]' heading"
+    echo "    Promote Unreleased content to a new versioned heading before tagging:"
+    echo "      ## [$VERSION] - $(date +%Y-%m-%d)"
+    echo ""
+    echo "    This guard blocks the 'accumulated entries under Unreleased, forgot to rename'"
+    echo "    failure mode. Shipping unpromoted misattributes breaking-change callouts to"
+    echo "    the wrong version. No bypass prompt — promote or cancel."
+    exit 1
+  fi
   echo "  ! No CHANGELOG entry matching '## [$VERSION]' found"
   echo "    Expected heading format: ## [$VERSION] - YYYY-MM-DD"
-  echo "    Move content from '## [Unreleased]' into a new versioned heading,"
-  echo "    or proceed if this release genuinely has no user-facing change."
+  echo "    '## [Unreleased]' is empty — if this release has no user-facing changes"
+  echo "    you can proceed, otherwise add a CHANGELOG entry first."
   read -p "    Continue without a CHANGELOG entry for $VERSION? [y/N] " -n 1 -r
   echo ""
   if [[ ! $REPLY =~ ^[Yy]$ ]]; then
