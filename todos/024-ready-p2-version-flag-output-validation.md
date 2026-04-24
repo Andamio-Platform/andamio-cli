@@ -1,5 +1,5 @@
 ---
-status: pending
+status: ready
 priority: p2
 issue_id: "024"
 tags: [code-review, cli, version, output-validation, pr-69-followup]
