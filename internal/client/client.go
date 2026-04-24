@@ -185,7 +185,7 @@ func statusError(status int, body []byte) error {
 	msg := fmt.Sprintf("API error %d: %s", status, truncateErrorBody(body))
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return &apierr.AuthError{Message: msg}
+		return &apierr.AuthError{HTTPStatus: status, Message: msg}
 	case http.StatusNotFound:
 		return &apierr.NotFoundError{Message: msg}
 	case http.StatusConflict:
