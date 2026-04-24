@@ -351,21 +351,42 @@ func postRegisterModule(ctx context.Context, c *client.Client, courseID, moduleC
 }
 
 // isModuleAlreadyExistsError reports whether err looks like a duplicate course-module
-// conflict from the gateway. Three gates, ANDed together:
-//   - errors.As against *apierr.ConflictError gates on HTTP 409 (surfaced by internal/client)
-//   - "already exists" body substring gates on conflict semantics (vs e.g. 409 validation)
-//   - "course_module_code" body substring gates on the specific field (vs other 409s like
-//     duplicate teacher, duplicate credential, etc.)
+// conflict from the gateway. Two paths:
+//
+//  1. Strict path — *apierr.ConflictError (HTTP 409) AND the body contains both
+//     "already exists" and "course_module_code". This is the original design intent.
+//
+//  2. Fallback path — gateway returns a non-409 error (today's reality: the andamio-api
+//     handlers/v2/merged_handlers maps the DUPLICATE_CODE orchestration error to
+//     fiber.StatusBadRequest / HTTP 400, not 409). When the body-token pair is present
+//     regardless of status code, treat as a conflict and emit a stderr warning so the
+//     wording/status drift is visible. Without this fallback, register-module's
+//     idempotency recovery silently regresses on every duplicate-code POST.
+//
+// When the gateway fix lands (maps DUPLICATE_CODE to 409), the strict path fires first
+// and the fallback's warning never appears — no change needed here on that day.
 func isModuleAlreadyExistsError(err error) bool {
 	if err == nil {
 		return false
 	}
 	var conflict *apierr.ConflictError
-	if !errors.As(err, &conflict) {
-		return false
+	if errors.As(err, &conflict) {
+		msg := strings.ToLower(conflict.Message)
+		return strings.Contains(msg, "already exists") && strings.Contains(msg, "course_module_code")
 	}
-	msg := strings.ToLower(conflict.Message)
-	return strings.Contains(msg, "already exists") && strings.Contains(msg, "course_module_code")
+	// Fallback: body tokens match but the typed-error gate didn't fire (gateway returned
+	// 400/500/etc). Accept the match and warn the operator about the status drift.
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "already exists") && strings.Contains(msg, "course_module_code") {
+		if output.GetFormat() != output.FormatJSON {
+			fmt.Fprintln(os.Stderr,
+				"warning: duplicate course_module_code detected via body-token fallback; "+
+					"gateway did not surface HTTP 409. Please report the status/wording drift "+
+					"to the andamio-api team.")
+		}
+		return true
+	}
+	return false
 }
 
 // existingModule is the minimal projection of a teacher-list module record used by
