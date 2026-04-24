@@ -1,5 +1,5 @@
 ---
-status: pending
+status: ready
 priority: p2
 issue_id: "021"
 tags: [code-review, reliability, client, conflict-detection, pr-68, blocks-pr-66]
