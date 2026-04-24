@@ -7,8 +7,14 @@ type NotFoundError struct{ Message string }
 func (e *NotFoundError) Error() string { return e.Message }
 
 // AuthError is returned when a request lacks valid credentials (HTTP 401/403).
-// main.go maps this to exit code 3.
-type AuthError struct{ Message string }
+// main.go maps this to exit code 3. HTTPStatus carries the originating status
+// code so callers can distinguish "not authenticated" (401) from "not
+// authorized for this resource" (403) without substring-matching Message.
+// HTTPStatus is 0 for hand-built errors that don't come from statusError.
+type AuthError struct {
+	HTTPStatus int
+	Message    string
+}
 
 func (e *AuthError) Error() string { return e.Message }
 

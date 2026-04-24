@@ -40,6 +40,9 @@ func TestClient_StatusCodeToTypedError(t *testing.T) {
 				if !strings.Contains(authErr.Message, "401") {
 					t.Errorf("AuthError.Message should contain status 401, got %q", authErr.Message)
 				}
+				if authErr.HTTPStatus != 401 {
+					t.Errorf("AuthError.HTTPStatus = %d, want 401", authErr.HTTPStatus)
+				}
 			},
 		},
 		{
@@ -53,6 +56,9 @@ func TestClient_StatusCodeToTypedError(t *testing.T) {
 				}
 				if !strings.Contains(authErr.Message, "403") {
 					t.Errorf("AuthError.Message should contain status 403, got %q", authErr.Message)
+				}
+				if authErr.HTTPStatus != 403 {
+					t.Errorf("AuthError.HTTPStatus = %d, want 403", authErr.HTTPStatus)
 				}
 			},
 		},

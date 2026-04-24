@@ -236,6 +236,11 @@ The project manager reviews submitted work and assesses tasks on-chain:
 # List pending assessments
 andamio project manager commitments --project-id <project-id>
 
+# See who is qualified to commit (holds every prerequisite SLT).
+# Useful for pre-assigning tasks or planning outreach.
+# Capped at 500 aliases; --output json surfaces the truncated flag.
+andamio project manager qualified-contributors --project-id <project-id>
+
 # Assess tasks (on-chain)
 andamio tx run /v2/tx/project/manager/tasks/assess \
   --body '{"alias":"<your-alias>","project_id":"<project-id>","assessment_decisions":[...]}' \
