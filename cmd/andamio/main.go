@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -41,9 +42,12 @@ func versionString() string {
 // Called by the Cobra version template via the "versionOutput" template function, which
 // runs after flag parsing populates the outputFormat package var (cobra's --version path
 // bypasses PersistentPreRunE, so output.SetFormat is never called — we read outputFormat
-// directly).
+// directly). Case-insensitive JSON match so `--output JSON` works the same as `--output
+// json`, matching how other commands handle --output (normalized inside SetFormat).
+// Non-"json" values silently fall through to text — documented in --help; strict
+// validation would require re-plumbing Cobra's template path through a normal RunE.
 func buildVersionOutput() string {
-	if output.Format(outputFormat) == output.FormatJSON {
+	if strings.EqualFold(outputFormat, "json") {
 		payload := struct {
 			Version string `json:"version"`
 			Commit  string `json:"commit"`

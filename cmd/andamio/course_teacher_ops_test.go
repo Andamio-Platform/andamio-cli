@@ -17,8 +17,12 @@ import (
 )
 
 func TestIsModuleAlreadyExistsError(t *testing.T) {
-	// Three gates: errors.As(*apierr.ConflictError) + "already exists" + "course_module_code".
-	// The type gate blocks non-409 errors; body checks narrow WHICH 409.
+	// Two paths, both requiring the body-token pair ("already exists" + "course_module_code"):
+	//   1. Strict: *apierr.ConflictError (409). Fires first.
+	//   2. Fallback: any other error type with matching body tokens. Today's gateway returns
+	//      400 for DUPLICATE_CODE (see andamio-api merged_handlers.go:888), so without the
+	//      fallback the idempotency recovery silently fails. Trade-off documented in todo #021:
+	//      potential false positives on adversarial 5xx bodies containing both tokens.
 	conflict := func(body string) error { return &apierr.ConflictError{Message: body} }
 
 	tests := []struct {
@@ -26,29 +30,35 @@ func TestIsModuleAlreadyExistsError(t *testing.T) {
 		err  error
 		want bool
 	}{
-		// Happy paths — type + stem + field all satisfied.
+		// Strict path — 409 + tokens.
 		{"ConflictError with 'already exists' and course_module_code", conflict("API error 409: course_module_code already exists in this course"), true},
 		{"ConflictError case-insensitive (mixed case body)", conflict("Course_Module_Code Already Exists"), true},
 
-		// Stem gate negatives — type passes, field passes, but no "already exists".
+		// Strict path token-gate negatives — type passes but tokens don't.
 		{"ConflictError mentioning course_module_code but no 'already exists' stem (validation 409)", conflict("course_module_code is invalid"), false},
 		{"ConflictError 'course_module_code must be numeric' (different stem)", conflict("course_module_code must be numeric"), false},
-
-		// Field gate negatives — type passes, stem passes, but no course_module_code.
 		{"ConflictError 'module already exists' without course_module_code token", conflict("API error 409: module already exists"), false},
 		{"ConflictError 'asset module already exists' adjacent wording", conflict("API error 409: asset module already exists"), false},
 		{"ConflictError 'teacher already exists' (different resource)", conflict("API error 409: teacher already exists"), false},
 
-		// Type gate negatives — not a ConflictError, regardless of body.
+		// Fallback path — non-409 error types with matching body tokens. These WOULD have
+		// returned false under the old three-gate design; they now return true by accepting
+		// the trade-off in todo #021 so the gateway's current 400-for-DUPLICATE_CODE response
+		// routes through the idempotency recovery instead of failing loudly.
+		{"plain errors.New with both tokens (today's gateway 400 body)", errors.New("API error 400: course_module_code already exists in this course"), true},
+		{"NotFoundError 404 (proxy rewrite scenario) with both tokens", &apierr.NotFoundError{Message: "course_module_code already exists"}, true},
+		{"AuthError 401/403 with both tokens (forbidden proxy rewrite)", &apierr.AuthError{HTTPStatus: 403, Message: "course_module_code already exists"}, true},
+		{"ServerError 5xx with both tokens (accepted false-positive trade-off)", &apierr.ServerError{Status: 500, Message: "API error 500: internal error: course_module_code already exists somewhere"}, true},
+
+		// Still-negative cases — no body tokens at all.
 		{"nil", nil, false},
 		{"plain errors.New unrelated", errors.New("boom"), false},
-		{"plain errors.New whose body contains both tokens (non-typed)", errors.New("course_module_code already exists"), false},
-		{"proxied 5xx body mentioning tokens (*ServerError, not *ConflictError)", &apierr.ServerError{Status: 500, Message: "API error 500: internal error: course_module_code already exists somewhere"}, false},
-		{"NotFoundError (wrong type, 404)", &apierr.NotFoundError{Message: "course_module_code already exists"}, false},
-		{"AuthError (wrong type, 401/403)", &apierr.AuthError{Message: "course_module_code already exists"}, false},
+		{"ServerError without tokens", &apierr.ServerError{Status: 500, Message: "API error 500: internal error"}, false},
 
-		// Wrap-chain — errors.As walks through fmt.Errorf(%w).
+		// Wrap-chain — errors.As walks through fmt.Errorf(%w) for the strict path.
 		{"wrapped ConflictError (via fmt.Errorf %w)", fmt.Errorf("register failed: %w", conflict("API error 409: course_module_code already exists")), true},
+		// Wrap-chain through fallback path — body substring is still present via Error() traversal.
+		{"wrapped non-typed error with tokens (fallback via Error() string)", fmt.Errorf("register failed: %w", errors.New("API error 400: course_module_code already exists")), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

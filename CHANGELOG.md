@@ -6,6 +6,11 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Fixed
+- `course teacher register-module` idempotency recovery now fires correctly. The gateway returns HTTP 400 (not 409) for `DUPLICATE_CODE`, so the typed-`ConflictError` gate was silently failing. `isModuleAlreadyExistsError` now layers a body-token fallback that matches `"already exists"` + `"course_module_code"` regardless of status code, with a stderr warning about the status drift. Strict 409 path remains primary; fallback is a belt-and-braces bridge until andamio-api is fixed. Fixture: `internal/client/testdata/preprod-duplicate-module-response.md` (todo #021).
+- `andamio --version --output JSON` (uppercase or mixed-case) now emits JSON instead of silently falling through to text. `buildVersionOutput` uses `strings.EqualFold` for the JSON match — Cobra's `--version` path bypasses `output.SetFormat` (which lowercases), so the check has to do the normalization itself. Non-`json` values (xml/csv/markdown/invalid) still fall through to text; test pins this behavior so future strict-validation work is a deliberate change (todo #024).
+- `scripts/release.sh` preflight now hard-blocks when `## [Unreleased]` has content but no `## [$VERSION]` heading exists — the "maintainer accumulated bullets under Unreleased but forgot to rename the heading" failure mode. Empty Unreleased still soft-prompts as before (todo #026).
+
 ### Added
 - `project manager qualified-contributors --project-id <id>` — list aliases qualified to commit to a managed project. Wraps gateway `GET /api/v2/project/manager/contributors/get-qualified` (andamio-api v2.3). Text mode prints one alias per line to stdout; JSON mode passes through the `{projectId, aliases, totalCount, truncated}` envelope. Server-capped at 500 aliases — text mode emits a stderr warning when `truncated=true`. Error messages: 403 → "not a manager of project <id>", 404 → "project <id> not found", 502 → "scan temporarily unavailable, retry later" (#70).
 - `apierr.AuthError.HTTPStatus` field carrying the originating 401/403 status code. Lets callers branch on authentication-vs-authorization failures without substring-matching `Message`. Backward compatible: hand-built `&apierr.AuthError{Message: "..."}` literals default the new field to zero (#70).
