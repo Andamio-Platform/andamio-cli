@@ -163,6 +163,9 @@ func Load() (*Config, error) {
 			if devJWT := os.Getenv("ANDAMIO_DEV_JWT"); devJWT != "" {
 				cfg.DevJWT = devJWT
 			}
+			if devRefresh := os.Getenv("ANDAMIO_DEV_REFRESH_TOKEN"); devRefresh != "" {
+				cfg.DevRefreshToken = devRefresh
+			}
 			return cfg, nil
 		}
 		return nil, err
@@ -184,6 +187,17 @@ func Load() (*Config, error) {
 	// commands.
 	if devJWT := os.Getenv("ANDAMIO_DEV_JWT"); devJWT != "" {
 		cfg.DevJWT = devJWT
+	}
+
+	// ANDAMIO_DEV_REFRESH_TOKEN env var overrides the stored refresh token.
+	// Parallel to ANDAMIO_DEV_JWT — lets ephemeral CI/CD agents inject a
+	// rotation credential at job start, run `dev refresh` once, and then read
+	// the rotated token from the resulting config. Without this override,
+	// long-lived sessions across stateless container runs would require
+	// committing the refresh token to the image (don't) or re-running the
+	// CIP-30 login flow each invocation (slow).
+	if devRefresh := os.Getenv("ANDAMIO_DEV_REFRESH_TOKEN"); devRefresh != "" {
+		cfg.DevRefreshToken = devRefresh
 	}
 
 	// ANDAMIO_SUBMIT_URL env var overrides stored submit URL
@@ -225,5 +239,16 @@ func Save(cfg *Config) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0600)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	// os.WriteFile honors the mode arg only on file CREATION. If the file
+	// already exists with a relaxed mode (e.g., 0644 from a manual chmod, a
+	// non-Unix backup restore, or a copy from a container layer), WriteFile
+	// preserves it and the secrets we just wrote (UserJWT, DevJWT,
+	// DevRefreshToken — the durable 30-day rotation credential) leak to
+	// any local user with read access. Force 0600 explicitly so Save is
+	// the single point of truth on permissions regardless of the previous
+	// state of the file.
+	return os.Chmod(path, 0600)
 }

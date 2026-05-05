@@ -209,6 +209,15 @@ func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed2551
 	}
 	var tokenResp secureLoginResponse
 	if err := c.Post(ctx, devLoginCompletePath, completeReq, &tokenResp); err != nil {
+		// 401 at /complete almost always means the wallet that signed the
+		// nonce does not match the address recorded at session creation —
+		// i.e., the .skey and --address flags belong to different wallets.
+		// Surface that hypothesis up front so users don't waste a retry.
+		// Underlying typed error stays reachable via errors.As.
+		var authErr *apierr.AuthError
+		if errors.As(err, &authErr) && authErr.HTTPStatus == 401 {
+			return fmt.Errorf("developer authentication failed (likely the wallet address does not match the .skey signing key — re-check --address and --skey): %w", err)
+		}
 		return fmt.Errorf("developer authentication failed: %w", err)
 	}
 	if tokenResp.JWT.Token == "" {
@@ -318,12 +327,22 @@ func runDevRefreshFlow(ctx context.Context, cfg *config.Config) error {
 	refreshReq := map[string]string{"refresh_token": cfg.DevRefreshToken}
 	var tokenResp secureLoginResponse
 	if err := c.Post(ctx, devTokenRefreshPath, refreshReq, &tokenResp); err != nil {
-		// 401 is the gateway's signal for "refresh token expired, revoked, or
-		// already rotated" — re-login is the only recovery. Surface the hint
-		// inline so users don't need to inspect the wrapped error.
+		// 401 specifically means the refresh token is dead server-side —
+		// expired, revoked, or already rotated by another process. The
+		// stored token is now misleading: `dev status` would still show it
+		// as valid based on the persisted expiry. Clear the dev slot so
+		// state matches reality and the next `dev status` reports the
+		// truth. Other AuthError statuses (403) are NOT cleared — those
+		// could be transient policy decisions on the gateway side.
 		var authErr *apierr.AuthError
-		if errors.As(err, &authErr) {
-			return fmt.Errorf("refresh token rejected (%w). Run 'andamio dev login --skey <path> --alias <name> --address <bech32>' to re-authenticate", authErr)
+		if errors.As(err, &authErr) && authErr.HTTPStatus == 401 {
+			cfg.ClearDevAuth()
+			if saveErr := config.Save(cfg); saveErr != nil {
+				// Both the refresh and the cleanup failed. Surface both so
+				// the user can choose to manually clear ~/.andamio/config.json.
+				return fmt.Errorf("refresh token rejected (%w); cleanup of stale config also failed (%v) — manually run 'andamio dev logout' or remove ~/.andamio/config.json, then 'andamio dev login --skey <path> --alias <name> --address <bech32>' to re-authenticate", err, saveErr)
+			}
+			return fmt.Errorf("refresh token rejected (%w); stored dev credentials cleared. Run 'andamio dev login --skey <path> --alias <name> --address <bech32>' to re-authenticate", err)
 		}
 		return fmt.Errorf("token refresh failed: %w", err)
 	}
