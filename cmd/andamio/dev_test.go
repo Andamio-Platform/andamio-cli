@@ -330,6 +330,14 @@ func TestRunDevHeadlessLogin_CompleteAuthErrorBubblesAsTypedAuthError(t *testing
 	if authErr.HTTPStatus != http.StatusUnauthorized {
 		t.Errorf("HTTPStatus = %d, want 401", authErr.HTTPStatus)
 	}
+	// 401 from /complete almost always means the wallet that signed the
+	// nonce doesn't match the address recorded at session creation. The
+	// error message must name --address and --skey explicitly so users
+	// don't waste a retry on the same flags. Pinned here so a future copy
+	// rewrite that drops the hint is a deliberate, test-failing change.
+	if !strings.Contains(err.Error(), "--address") || !strings.Contains(err.Error(), "--skey") {
+		t.Errorf("err = %q, want hint that names both --address and --skey (the most likely root cause of a 401 at /complete)", err.Error())
+	}
 }
 
 // -----------------------------------------------------------------------------
