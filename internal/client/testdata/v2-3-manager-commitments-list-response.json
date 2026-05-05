@@ -1,0 +1,45 @@
+{
+  "data": [
+    {
+      "project_id": "projA",
+      "task_hash": "hashRewarded",
+      "submitted_by": "alice",
+      "source": "db_only",
+      "content": {
+        "evidence": {
+          "type": "doc",
+          "content": [
+            { "type": "paragraph", "text": "completed work evidence" }
+          ]
+        },
+        "task_evidence_hash": "evidhash-alice",
+        "commitment_status": "REWARDED",
+        "assessed_by": "managerBob",
+        "task_outcome": "accept"
+      }
+    },
+    {
+      "project_id": "projA",
+      "task_hash": "hashCommitted",
+      "submitted_by": "charlie",
+      "submission_tx": "tx-submit-charlie",
+      "on_chain_content": "on-chain-content-charlie",
+      "source": "merged",
+      "task": {
+        "expiration": "2026-12-31T23:59:59Z",
+        "expiration_posix": 1798761599,
+        "lovelace_amount": 5000000
+      },
+      "content": {
+        "evidence": {
+          "type": "doc",
+          "content": [
+            { "type": "paragraph", "text": "pending work evidence" }
+          ]
+        },
+        "task_evidence_hash": "evidhash-charlie",
+        "commitment_status": "COMMITTED"
+      }
+    }
+  ]
+}

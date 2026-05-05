@@ -25,13 +25,35 @@ var projectManagerCmd = &cobra.Command{
 
 var projectManagerCommitmentsCmd = &cobra.Command{
 	Use:   "commitments",
-	Short: "List pending task assessments",
-	Long: `List task commitments awaiting assessment for a project.
+	Short: "List task commitments — pending and assessed (with evidence)",
+	Long: `List task commitments for a managed project.
+
+As of andamio-api v2.3, this returns ALL task commitments — pending review and
+already-assessed (the latter with evidence and decision details). Pre-v2.3 the
+endpoint returned only pending rows; that filter has been removed.
+
+Each row carries:
+  - top level:  project_id, task_hash, submitted_by, submission_tx,
+                on_chain_content, source ("merged"/"db_only"/"chain_only")
+  - task:       on_chain_content, expiration, lovelace_amount, assets
+  - content:    evidence (Tiptap doc), task_evidence_hash, commitment_status,
+                assessed_by, task_outcome ("accept"/"refuse"/"deny")
+
+The --output json envelope passes the gateway response through verbatim, so
+downstream filters can branch on commitment_status, source, or task_outcome.
+For example, to surface only rows still awaiting assessment — defined as
+"no decision yet recorded" rather than matching a specific commitment_status
+value (which can grow as the gateway adds non-terminal states like
+PENDING_TX_*):
+
+  andamio project manager commitments --project-id <id> --output json \
+    | jq '.data[] | select(.content.task_outcome == null)'
 
 Find your project IDs with: andamio project list --output json
 
 Examples:
-  andamio project manager commitments --project-id <id>`,
+  andamio project manager commitments --project-id <id>
+  andamio project manager commitments --project-id <id> --output json`,
 	RunE: runProjectManagerCommitments,
 }
 
@@ -71,12 +93,17 @@ func init() {
 
 func runProjectManagerCommitments(cmd *cobra.Command, args []string) error {
 	projectID, _ := cmd.Flags().GetString("project-id")
+	// Text-mode columns: submitted_by (who) + task_hash (what). The pre-v2.3
+	// pairing (content.title + commitment_id) referenced fields that the
+	// gateway never populates on ManagerCommitmentItem — text mode rendered
+	// empty cells for both columns. Both new keys are top-level required
+	// fields on every row regardless of pending/assessed/source.
 	return printListPost(
 		cmd.Context(),
 		"/api/v2/project/manager/commitments/list",
 		map[string]string{"project_id": projectID},
-		"No pending assessments found.",
-		"content.title", "commitment_id",
+		"No commitments found.",
+		"submitted_by", "task_hash",
 	)
 }
 
