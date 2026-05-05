@@ -1,0 +1,507 @@
+package main
+
+import (
+	"context"
+	"crypto/ed25519"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
+	"github.com/Andamio-Platform/andamio-cli/internal/client"
+	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
+	"github.com/spf13/cobra"
+)
+
+// Gateway endpoint paths for the CIP-30-verified developer login flow shipped
+// in andamio-api #410. The pair (session → complete) mirrors the existing
+// developer-registration shape but mints a 60-minute RS256 developer JWT plus
+// a 30-day single-use rotation refresh token. The legacy lookup-only path
+// `/v2/auth/developer/account/login` returns 410 Gone when the gateway's
+// kill-switch flag is on (default true) — the CLI does not call it.
+//
+// The developer JWT is the credential `/v2/keys` and other developer-portal
+// endpoints accept under BearerAuth. Wallet-scoped (user) JWTs are not
+// accepted by the developer-JWT middleware and vice versa; this is why the
+// CLI keeps the two slots distinct in Config (UserJWT vs DevJWT).
+const (
+	devLoginSessionPath  = "/api/v2/auth/developer/login/session"
+	devLoginCompletePath = "/api/v2/auth/developer/login/complete"
+	devTokenRefreshPath  = "/api/v2/auth/developer/token/refresh"
+)
+
+var devCmd = &cobra.Command{
+	Use:   "dev",
+	Short: "Developer-portal operations (login, manage API keys)",
+	Long: `Developer-portal commands operate on the developer JWT slot — distinct
+from the wallet/user JWT used by course/project commands. The dev JWT is
+required for /v2/keys and other developer-scoped endpoints.
+
+Run 'andamio dev login --skey <path> --alias <name> --address <bech32>' to
+mint one. The flow mirrors 'user login --skey' but binds the resulting JWT
+to your developer account rather than your end-user account.`,
+}
+
+var devLoginCmd = &cobra.Command{
+	Use:   "login",
+	Short: "Authenticate as a developer via wallet signing (headless CIP-8)",
+	Long: `Mint a developer JWT by signing a gateway nonce with your wallet.
+
+Mirrors the headless 'user login --skey' flow but binds the resulting JWT
+to your developer account. The developer JWT is required for /v2/keys and
+other developer-portal endpoints.
+
+Examples:
+  andamio dev login --skey ./payment.skey --alias myalias --address $(cat wallet.addr)`,
+	RunE: runDevLogin,
+}
+
+var devLogoutCmd = &cobra.Command{
+	Use:   "logout",
+	Short: "Clear stored developer JWT and refresh token",
+	Long: `Clear the stored developer JWT and refresh token. Does not affect the
+wallet/user JWT — 'andamio user logout' clears that slot independently.
+
+After logout, 'dev refresh' will fail; re-run 'dev login' to mint a new
+session.`,
+	RunE: runDevLogout,
+}
+
+var devRefreshCmd = &cobra.Command{
+	Use:   "refresh",
+	Short: "Rotate the developer JWT using the stored refresh token",
+	Long: `Use the stored 30-day refresh token to mint a new 60-minute developer
+JWT. Both tokens rotate atomically — the old refresh token is invalidated
+server-side after a successful refresh, and the new pair is persisted to
+config.
+
+The refresh-token rotation is single-use server-side. If the rotation fails
+on the gateway side AND the compensating revoke also fails, the gateway logs
+a critical alert; the CLI sees a 5xx and a re-run will mint cleanly.
+
+Examples:
+  andamio dev refresh
+  andamio dev refresh --output json`,
+	RunE: runDevRefresh,
+}
+
+var devStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show developer authentication status",
+	Long: `Show whether a developer JWT is stored and (if a known expiry was
+returned at login) when it expires. Reports independently of 'user status' —
+the two slots are distinct.`,
+	RunE: runDevStatus,
+}
+
+func init() {
+	rootCmd.AddCommand(devCmd)
+	devCmd.AddCommand(devLoginCmd)
+	devCmd.AddCommand(devLogoutCmd)
+	devCmd.AddCommand(devRefreshCmd)
+	devCmd.AddCommand(devStatusCmd)
+
+	devLoginCmd.Flags().String("skey", "", "Path to .skey file (required)")
+	devLoginCmd.Flags().String("alias", "", "Developer access-token alias (required)")
+	devLoginCmd.Flags().String("address", "", "Bech32 wallet address bound to the access-token alias (required)")
+	devLoginCmd.MarkFlagRequired("skey")
+	devLoginCmd.MarkFlagRequired("alias")
+	devLoginCmd.MarkFlagRequired("address")
+}
+
+func runDevLogin(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	skeyPath, _ := cmd.Flags().GetString("skey")
+	alias, _ := cmd.Flags().GetString("alias")
+	address, _ := cmd.Flags().GetString("address")
+
+	privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
+	if err != nil {
+		return fmt.Errorf("failed to load signing key: %w", err)
+	}
+	return runDevHeadlessLogin(cmd.Context(), cfg, privKey, pubKey, skeyPath, alias, address)
+}
+
+// secureLoginResponse mirrors andamio-api's `auth_viewmodels.SecureLoginResponse`
+// shape — the body returned by both `/login/complete` and `/token/refresh`.
+// JWT and refresh-token expiries are nested inside the respective objects
+// rather than top-level so we can keep the two clocks straight in cfg + status.
+type secureLoginResponse struct {
+	UserID string `json:"user_id"`
+	Alias  string `json:"alias"`
+	Tier   string `json:"tier"`
+	JWT    struct {
+		Token     string `json:"token"`
+		ExpiresAt string `json:"expires_at"`
+	} `json:"jwt"`
+	RefreshToken struct {
+		Token     string `json:"token"`
+		ExpiresAt string `json:"expires_at"`
+	} `json:"refresh_token"`
+}
+
+// runDevHeadlessLogin is the testable core of `andamio dev login`. Split from
+// runDevLogin so unit tests can inject an ephemeral ed25519 keypair without
+// staging a real .skey file. skeyPath is taken purely for the human-readable
+// stderr signing message and otherwise has no effect on the flow.
+//
+// Wire shape sourced from andamio-api #410 (`auth_viewmodels.LoginSessionRequest`,
+// `LoginCompleteRequest`, `SecureLoginResponse`).
+func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed25519.PrivateKey, pubKey ed25519.PublicKey, skeyPath, alias, address string) error {
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	c := client.New(cfg)
+
+	// Step 1: Open login session keyed to (alias, wallet_address). The gateway
+	// looks up the developer account, persists a 5-min nonce against the
+	// (user_id, wallet_address) pair, and returns the nonce for signing. The
+	// alias+address bind here, not at /complete — the gateway rejects a
+	// /complete that uses a session created against a different binding.
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Requesting developer login session...\n")
+	}
+	sessionReq := map[string]string{
+		"alias":          alias,
+		"wallet_address": address,
+	}
+	var session struct {
+		SessionID string `json:"session_id"`
+		Nonce     string `json:"nonce"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := c.Post(ctx, devLoginSessionPath, sessionReq, &session); err != nil {
+		return fmt.Errorf("failed to open developer login session: %w", err)
+	}
+	if session.Nonce == "" || session.SessionID == "" {
+		return fmt.Errorf("invalid login session response: missing nonce or session_id")
+	}
+
+	// Step 2: Sign the nonce with the wallet's signing key (CIP-8). The
+	// gateway's complete handler verifies the signature against the
+	// wallet_address recorded at session creation, so the signing key must
+	// match that address.
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Signing nonce with %s...\n", skeyPath)
+	}
+	signResult, err := cardano.SignMessage([]byte(session.Nonce), privKey, pubKey)
+	if err != nil {
+		return fmt.Errorf("failed to sign nonce: %w", err)
+	}
+
+	// Step 3: Submit signature. Body carries only session_id + signature —
+	// alias and address are already bound to the session server-side.
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Submitting signature...\n")
+	}
+	completeReq := map[string]interface{}{
+		"session_id": session.SessionID,
+		"signature": map[string]string{
+			"key":       signResult.Key,
+			"signature": signResult.Signature,
+		},
+	}
+	var tokenResp secureLoginResponse
+	if err := c.Post(ctx, devLoginCompletePath, completeReq, &tokenResp); err != nil {
+		return fmt.Errorf("developer authentication failed: %w", err)
+	}
+	if tokenResp.JWT.Token == "" {
+		return fmt.Errorf("developer authentication failed: no JWT received")
+	}
+	if tokenResp.RefreshToken.Token == "" {
+		// Refresh token is the durable credential; refusing to persist a
+		// session without one prevents a confusing future `dev refresh` that
+		// blames the user for the gateway's omission.
+		return fmt.Errorf("developer authentication failed: no refresh token received")
+	}
+
+	// Step 4: Persist all four moving parts of the dev session — JWT (60-min),
+	// refresh token (30-day, single-use), tier (surfaced in `dev status`), and
+	// the canonical alias/user_id from the gateway response.
+	persistDevSession(cfg, &tokenResp, signResult.KeyHash, alias)
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(map[string]interface{}{
+			"alias":              cfg.DevAlias,
+			"dev_id":             cfg.DevID,
+			"tier":               cfg.DevTier,
+			"key_hash":           signResult.KeyHash,
+			"jwt_expires_at":     cfg.DevJWTExpiresAt,
+			"refresh_expires_at": cfg.DevRefreshTokenExpiresAt,
+		})
+	}
+	fmt.Fprintf(os.Stderr, "\nAuthenticated as developer: %s", cfg.DevAlias)
+	if cfg.DevTier != "" {
+		fmt.Fprintf(os.Stderr, " (tier: %s)", cfg.DevTier)
+	}
+	fmt.Fprintln(os.Stderr)
+	if cfg.DevID != "" {
+		fmt.Fprintf(os.Stderr, "Developer ID: %s\n", cfg.DevID)
+	}
+	fmt.Fprintln(os.Stderr, "\nDeveloper JWT (60 min) + refresh token (30 days) stored.")
+	fmt.Fprintln(os.Stderr, "Run 'andamio dev refresh' before the JWT expires to rotate without re-signing.")
+	return nil
+}
+
+// persistDevSession copies a SecureLoginResponse + the locally-derived key
+// hash into Config. Pulled out so login and refresh share one persistence
+// rule and `dev refresh` cannot drift from `dev login` on which fields it
+// updates. fallbackAlias covers the (currently unobserved) case where the
+// gateway returns an empty alias — refresh has no alias to fall back to, so
+// callers from refresh pass the existing cfg.DevAlias.
+func persistDevSession(cfg *config.Config, resp *secureLoginResponse, keyHash, fallbackAlias string) {
+	cfg.DevJWT = resp.JWT.Token
+	cfg.DevJWTExpiresAt = resp.JWT.ExpiresAt
+	cfg.DevRefreshToken = resp.RefreshToken.Token
+	cfg.DevRefreshTokenExpiresAt = resp.RefreshToken.ExpiresAt
+	if resp.Alias != "" {
+		cfg.DevAlias = resp.Alias
+	} else if fallbackAlias != "" {
+		cfg.DevAlias = fallbackAlias
+	}
+	cfg.DevID = resp.UserID
+	cfg.DevTier = resp.Tier
+	if keyHash != "" {
+		cfg.DevKeyHash = keyHash
+	}
+}
+
+func runDevLogout(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if !cfg.HasDevAuth() {
+		fmt.Fprintln(os.Stderr, "No developer JWT stored.")
+		return nil
+	}
+	cfg.ClearDevAuth()
+	if err := config.Save(cfg); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Developer JWT and refresh token cleared.")
+	return nil
+}
+
+func runDevRefresh(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if cfg.DevRefreshToken == "" {
+		return fmt.Errorf("no refresh token stored. Run 'andamio dev login --skey <path> --alias <name> --address <bech32>' first")
+	}
+	return runDevRefreshFlow(cmd.Context(), cfg)
+}
+
+// runDevRefreshFlow is the testable core of `andamio dev refresh`. Split from
+// runDevRefresh so unit tests can stub the gateway response without touching
+// real config.
+func runDevRefreshFlow(ctx context.Context, cfg *config.Config) error {
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	c := client.New(cfg)
+
+	if !isJSON {
+		fmt.Fprintln(os.Stderr, "Rotating developer JWT...")
+	}
+
+	refreshReq := map[string]string{"refresh_token": cfg.DevRefreshToken}
+	var tokenResp secureLoginResponse
+	if err := c.Post(ctx, devTokenRefreshPath, refreshReq, &tokenResp); err != nil {
+		// 401 is the gateway's signal for "refresh token expired, revoked, or
+		// already rotated" — re-login is the only recovery. Surface the hint
+		// inline so users don't need to inspect the wrapped error.
+		var authErr *apierr.AuthError
+		if errors.As(err, &authErr) {
+			return fmt.Errorf("refresh token rejected (%w). Run 'andamio dev login --skey <path> --alias <name> --address <bech32>' to re-authenticate", authErr)
+		}
+		return fmt.Errorf("token refresh failed: %w", err)
+	}
+	if tokenResp.JWT.Token == "" {
+		return fmt.Errorf("token refresh failed: no JWT received")
+	}
+	if tokenResp.RefreshToken.Token == "" {
+		return fmt.Errorf("token refresh failed: no refresh token in rotation response")
+	}
+
+	// Refresh keeps the existing key hash (we did not re-sign) and falls back
+	// to the existing alias if the gateway does not echo it.
+	persistDevSession(cfg, &tokenResp, cfg.DevKeyHash, cfg.DevAlias)
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	if isJSON {
+		return output.PrintJSON(map[string]interface{}{
+			"alias":              cfg.DevAlias,
+			"dev_id":             cfg.DevID,
+			"tier":               cfg.DevTier,
+			"jwt_expires_at":     cfg.DevJWTExpiresAt,
+			"refresh_expires_at": cfg.DevRefreshTokenExpiresAt,
+		})
+	}
+	fmt.Fprintf(os.Stderr, "Developer JWT rotated (alias: %s).\n", cfg.DevAlias)
+	if cfg.DevJWTExpiresAt != "" {
+		fmt.Fprintf(os.Stderr, "New JWT expires at: %s\n", cfg.DevJWTExpiresAt)
+	}
+	if cfg.DevRefreshTokenExpiresAt != "" {
+		fmt.Fprintf(os.Stderr, "New refresh token expires at: %s\n", cfg.DevRefreshTokenExpiresAt)
+	}
+	return nil
+}
+
+// devStatusResult is the JSON envelope shape of `andamio dev status --output json`.
+// Field set mirrors userStatusResult (api_key_set, base_url) plus the dev-JWT
+// fields. Distinct envelope from user status so callers branch on the slot
+// they care about without coupling.
+//
+// Two clocks: the JWT expires in ~60 minutes, the refresh token in 30 days.
+// `*Expired` and `*RemainingSeconds` mirror the userStatusResult convention so
+// scripts can branch deterministically on JSON without parsing timestamps.
+type devStatusResult struct {
+	APIKeySet                      bool   `json:"api_key_set"`
+	BaseURL                        string `json:"base_url"`
+	DevAuthenticated               bool   `json:"dev_authenticated"`
+	DevAlias                       string `json:"dev_alias,omitempty"`
+	DevID                          string `json:"dev_id,omitempty"`
+	DevTier                        string `json:"dev_tier,omitempty"`
+	DevKeyHash                     string `json:"dev_key_hash,omitempty"`
+	JWTExpiresAt                   string `json:"jwt_expires_at,omitempty"`
+	JWTExpired                     *bool  `json:"jwt_expired,omitempty"`
+	JWTRemainingSeconds            int64  `json:"jwt_remaining_seconds,omitempty"`
+	RefreshTokenStored             bool   `json:"refresh_token_stored"`
+	RefreshTokenExpiresAt          string `json:"refresh_token_expires_at,omitempty"`
+	RefreshTokenExpired            *bool  `json:"refresh_token_expired,omitempty"`
+	RefreshTokenRemainingSeconds   int64  `json:"refresh_token_remaining_seconds,omitempty"`
+}
+
+func runDevStatus(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if output.GetFormat() == output.FormatJSON {
+		result := devStatusResult{
+			APIKeySet:          cfg.APIKey != "",
+			BaseURL:            cfg.BaseURL,
+			DevAuthenticated:   cfg.HasDevAuth(),
+			RefreshTokenStored: cfg.DevRefreshToken != "",
+		}
+		if cfg.HasDevAuth() {
+			result.DevAlias = cfg.DevAlias
+			result.DevID = cfg.DevID
+			result.DevTier = cfg.DevTier
+			result.DevKeyHash = cfg.DevKeyHash
+			result.JWTExpiresAt = cfg.DevJWTExpiresAt
+			if expired, remaining, ok := timeUntil(cfg.DevJWTExpiresAt); ok {
+				result.JWTExpired = &expired
+				if !expired {
+					result.JWTRemainingSeconds = int64(remaining.Seconds())
+				}
+			}
+		}
+		if cfg.DevRefreshToken != "" {
+			result.RefreshTokenExpiresAt = cfg.DevRefreshTokenExpiresAt
+			if expired, remaining, ok := timeUntil(cfg.DevRefreshTokenExpiresAt); ok {
+				result.RefreshTokenExpired = &expired
+				if !expired {
+					result.RefreshTokenRemainingSeconds = int64(remaining.Seconds())
+				}
+			}
+		}
+		return output.PrintJSON(result)
+	}
+
+	fmt.Println("Developer Authentication Status")
+	fmt.Println("-------------------------------")
+
+	if cfg.APIKey != "" {
+		fmt.Println("API Key: ****... (configured)")
+	} else {
+		fmt.Println("API Key: not configured")
+	}
+	fmt.Printf("Base URL: %s\n", cfg.BaseURL)
+	fmt.Println()
+
+	if !cfg.HasDevAuth() {
+		fmt.Println("Developer: not authenticated")
+		fmt.Println("\nRun 'andamio dev login --skey <path> --alias <name> --address <bech32>' to authenticate.")
+		return nil
+	}
+
+	fmt.Printf("Developer: %s", cfg.DevAlias)
+	if cfg.DevTier != "" {
+		fmt.Printf(" (tier: %s)", cfg.DevTier)
+	}
+	fmt.Println()
+	if cfg.DevID != "" {
+		fmt.Printf("Developer ID: %s\n", cfg.DevID)
+	}
+	printExpiryLine("JWT", cfg.DevJWTExpiresAt, "Run 'andamio dev refresh' to rotate without re-signing.")
+	if cfg.DevRefreshToken != "" {
+		printExpiryLine("Refresh token", cfg.DevRefreshTokenExpiresAt, "Run 'andamio dev login ...' to re-authenticate.")
+	} else {
+		fmt.Println("Refresh token: not stored")
+	}
+	if cfg.DevKeyHash != "" {
+		fmt.Printf("Key hash: %s\n", cfg.DevKeyHash)
+	}
+	return nil
+}
+
+// timeUntil parses an RFC3339 timestamp and returns (expired, remaining, ok).
+// ok=false means the timestamp was empty or unparseable — callers should
+// treat the field as absent rather than expired/valid.
+func timeUntil(rfc3339 string) (expired bool, remaining time.Duration, ok bool) {
+	if rfc3339 == "" {
+		return false, 0, false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		return false, 0, false
+	}
+	now := time.Now()
+	if now.After(expiresAt) {
+		return true, 0, true
+	}
+	return false, expiresAt.Sub(now), true
+}
+
+// printExpiryLine prints "<label>: valid until <time> (<remaining>)" or
+// "<label>: EXPIRED (at <time>)" + a follow-up hint, falling back to the raw
+// timestamp when parsing fails. Shared between JWT and refresh-token rendering
+// so both clocks present identically in `dev status`.
+func printExpiryLine(label, rfc3339, expiredHint string) {
+	if rfc3339 == "" {
+		fmt.Printf("%s: active (no expiry info)\n", label)
+		return
+	}
+	expiresAt, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		fmt.Printf("%s expires: %s\n", label, rfc3339)
+		return
+	}
+	now := time.Now()
+	if now.After(expiresAt) {
+		fmt.Printf("%s: EXPIRED (at %s)\n", label, expiresAt.Local().Format(time.RFC1123))
+		if expiredHint != "" {
+			fmt.Printf("  → %s\n", expiredHint)
+		}
+		return
+	}
+	fmt.Printf("%s: valid until %s (%s remaining)\n",
+		label,
+		expiresAt.Local().Format(time.RFC1123),
+		formatDuration(expiresAt.Sub(now)))
+}

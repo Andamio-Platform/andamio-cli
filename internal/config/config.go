@@ -16,9 +16,24 @@ type Config struct {
 	JWTExpiresAt string `json:"jwt_expires_at,omitempty"`
 	UserAlias    string `json:"user_alias,omitempty"`
 	UserID       string `json:"user_id,omitempty"`
-	UserKeyHash   string            `json:"user_key_hash,omitempty"`
-	SubmitURL     string            `json:"submit_url,omitempty"`
-	SubmitHeaders map[string]string `json:"submit_headers,omitempty"`
+	UserKeyHash  string `json:"user_key_hash,omitempty"`
+	// Developer-portal auth — RS256 JWT minted by the gateway's CIP-30
+	// signature-verified developer login (`POST /v2/auth/developer/login/...`)
+	// and required for /v2/keys + future developer-scoped endpoints. Stored
+	// alongside (not replacing) the wallet/user JWT above; the two cover
+	// distinct gateway middlewares. JWT lifetime is short (60 min as of
+	// andamio-api #410) so the refresh token below is the durable credential
+	// — `dev refresh` rotates it. See `andamio dev login`.
+	DevJWT                   string            `json:"dev_jwt,omitempty"`
+	DevJWTExpiresAt          string            `json:"dev_jwt_expires_at,omitempty"`
+	DevAlias                 string            `json:"dev_alias,omitempty"`
+	DevID                    string            `json:"dev_id,omitempty"`
+	DevKeyHash               string            `json:"dev_key_hash,omitempty"`
+	DevTier                  string            `json:"dev_tier,omitempty"`
+	DevRefreshToken          string            `json:"dev_refresh_token,omitempty"`
+	DevRefreshTokenExpiresAt string            `json:"dev_refresh_token_expires_at,omitempty"`
+	SubmitURL                string            `json:"submit_url,omitempty"`
+	SubmitHeaders            map[string]string `json:"submit_headers,omitempty"`
 }
 
 // ClearUserAuth removes all user authentication fields from the config.
@@ -33,6 +48,27 @@ func (c *Config) ClearUserAuth() {
 // HasUserAuth returns true if the config has a user JWT stored.
 func (c *Config) HasUserAuth() bool {
 	return c.UserJWT != ""
+}
+
+// ClearDevAuth removes all developer-portal authentication fields. Mirrors
+// ClearUserAuth — the two clear independent slots so `dev logout` does not
+// disturb wallet/user sessions and vice versa. Includes the refresh token so
+// logout fully unbinds the device; subsequent `dev refresh` will fail and
+// `dev login` is required.
+func (c *Config) ClearDevAuth() {
+	c.DevJWT = ""
+	c.DevJWTExpiresAt = ""
+	c.DevAlias = ""
+	c.DevID = ""
+	c.DevKeyHash = ""
+	c.DevTier = ""
+	c.DevRefreshToken = ""
+	c.DevRefreshTokenExpiresAt = ""
+}
+
+// HasDevAuth returns true if the config has a developer JWT stored.
+func (c *Config) HasDevAuth() bool {
+	return c.DevJWT != ""
 }
 
 func DefaultConfig() *Config {
@@ -124,6 +160,9 @@ func Load() (*Config, error) {
 			if jwt := os.Getenv("ANDAMIO_JWT"); jwt != "" {
 				cfg.UserJWT = jwt
 			}
+			if devJWT := os.Getenv("ANDAMIO_DEV_JWT"); devJWT != "" {
+				cfg.DevJWT = devJWT
+			}
 			return cfg, nil
 		}
 		return nil, err
@@ -137,6 +176,14 @@ func Load() (*Config, error) {
 	// ANDAMIO_JWT env var overrides stored JWT (for CI/CD and headless environments)
 	if jwt := os.Getenv("ANDAMIO_JWT"); jwt != "" {
 		cfg.UserJWT = jwt
+	}
+
+	// ANDAMIO_DEV_JWT env var overrides stored developer JWT, parallel to
+	// ANDAMIO_JWT. Required by `dev keys` operations and other developer-
+	// portal endpoints; distinct from ANDAMIO_JWT which targets wallet-scoped
+	// commands.
+	if devJWT := os.Getenv("ANDAMIO_DEV_JWT"); devJWT != "" {
+		cfg.DevJWT = devJWT
 	}
 
 	// ANDAMIO_SUBMIT_URL env var overrides stored submit URL
