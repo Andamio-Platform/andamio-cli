@@ -178,6 +178,35 @@ func (c *Client) Put(ctx context.Context, path string, body interface{}, result 
 	return nil
 }
 
+// Delete sends a DELETE request and returns nil on any 2xx (typically 204
+// No Content for resource-revoke endpoints like DELETE /v2/keys/{id}).
+// Does not decode a response body — DELETE conventions don't carry one and
+// the few endpoints that do should use a separate method to keep the
+// no-body contract structural rather than convention-driven. See Get for
+// ctx semantics.
+func (c *Client) Delete(ctx context.Context, path string) error {
+	url := c.baseURL + path
+
+	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	if err != nil {
+		return err
+	}
+
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return statusError(resp.StatusCode, body)
+	}
+	return nil
+}
+
 // statusError maps an HTTP error status to the typed error the CLI expects.
 // 401/403 → AuthError, 404 → NotFoundError, 409 → ConflictError,
 // 408/425/429 → BackpressureError (retryable transient backpressure),
