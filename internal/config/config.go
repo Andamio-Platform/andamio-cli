@@ -34,6 +34,31 @@ type Config struct {
 	DevRefreshTokenExpiresAt string            `json:"dev_refresh_token_expires_at,omitempty"`
 	SubmitURL                string            `json:"submit_url,omitempty"`
 	SubmitHeaders            map[string]string `json:"submit_headers,omitempty"`
+
+	// envInjected captures values pulled from environment variables at
+	// Load time. Save() consults this snapshot to omit env-sourced values
+	// that haven't been rotated since Load — env-injected credentials are
+	// documented as ephemeral so a CI/CD agent can inject `ANDAMIO_DEV_*`
+	// without polluting the on-disk config. When code mutates a field
+	// (e.g., persistDevSession after a successful refresh) the new value
+	// differs from the snapshot and is persisted normally — rotation
+	// keeps working as designed.
+	//
+	// Unexported, so Go's json package skips it on Marshal AND Unmarshal
+	// — no `json:"-"` tag needed (it would only matter on exported fields).
+	envInjected envSnapshot
+}
+
+// envSnapshot records the credential values pulled from environment
+// variables at Load time. Used by Save to distinguish "still env-sourced"
+// from "rotated since Load and should persist." Fields are intentionally
+// only the credential-bearing ones (DevRefreshToken, DevJWT, UserJWT) —
+// non-secret env overrides (ANDAMIO_SUBMIT_URL, ANDAMIO_SUBMIT_HEADERS)
+// are persisted normally because they're configuration, not secrets.
+type envSnapshot struct {
+	DevRefreshToken string
+	DevJWT          string
+	UserJWT         string
 }
 
 // ClearUserAuth removes all user authentication fields from the config.
@@ -139,6 +164,33 @@ func ValidateSubmitURL(rawURL string) error {
 	return nil
 }
 
+// applyCredentialEnvOverrides reads ANDAMIO_JWT, ANDAMIO_DEV_JWT, and
+// ANDAMIO_DEV_REFRESH_TOKEN from the environment and applies them to cfg
+// AND records the original env values in cfg.envInjected. The snapshot is
+// the load-bearing piece for the "ephemeral env credentials" contract —
+// Save consults it to decide whether each field's current value still
+// matches what env injected (omit on save) or has since been rotated by
+// code (persist normally).
+//
+// Non-credential env overrides (ANDAMIO_SUBMIT_URL, ANDAMIO_SUBMIT_HEADERS)
+// are intentionally NOT tracked — they're configuration, not secrets, and
+// persisting them is the documented behavior. They're handled inline in
+// Load() below.
+func applyCredentialEnvOverrides(cfg *Config) {
+	if jwt := os.Getenv("ANDAMIO_JWT"); jwt != "" {
+		cfg.UserJWT = jwt
+		cfg.envInjected.UserJWT = jwt
+	}
+	if devJWT := os.Getenv("ANDAMIO_DEV_JWT"); devJWT != "" {
+		cfg.DevJWT = devJWT
+		cfg.envInjected.DevJWT = devJWT
+	}
+	if devRefresh := os.Getenv("ANDAMIO_DEV_REFRESH_TOKEN"); devRefresh != "" {
+		cfg.DevRefreshToken = devRefresh
+		cfg.envInjected.DevRefreshToken = devRefresh
+	}
+}
+
 func ConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -157,15 +209,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			cfg := DefaultConfig()
-			if jwt := os.Getenv("ANDAMIO_JWT"); jwt != "" {
-				cfg.UserJWT = jwt
-			}
-			if devJWT := os.Getenv("ANDAMIO_DEV_JWT"); devJWT != "" {
-				cfg.DevJWT = devJWT
-			}
-			if devRefresh := os.Getenv("ANDAMIO_DEV_REFRESH_TOKEN"); devRefresh != "" {
-				cfg.DevRefreshToken = devRefresh
-			}
+			applyCredentialEnvOverrides(cfg)
 			return cfg, nil
 		}
 		return nil, err
@@ -176,29 +220,7 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	// ANDAMIO_JWT env var overrides stored JWT (for CI/CD and headless environments)
-	if jwt := os.Getenv("ANDAMIO_JWT"); jwt != "" {
-		cfg.UserJWT = jwt
-	}
-
-	// ANDAMIO_DEV_JWT env var overrides stored developer JWT, parallel to
-	// ANDAMIO_JWT. Required by `dev keys` operations and other developer-
-	// portal endpoints; distinct from ANDAMIO_JWT which targets wallet-scoped
-	// commands.
-	if devJWT := os.Getenv("ANDAMIO_DEV_JWT"); devJWT != "" {
-		cfg.DevJWT = devJWT
-	}
-
-	// ANDAMIO_DEV_REFRESH_TOKEN env var overrides the stored refresh token.
-	// Parallel to ANDAMIO_DEV_JWT — lets ephemeral CI/CD agents inject a
-	// rotation credential at job start, run `dev refresh` once, and then read
-	// the rotated token from the resulting config. Without this override,
-	// long-lived sessions across stateless container runs would require
-	// committing the refresh token to the image (don't) or re-running the
-	// CIP-30 login flow each invocation (slow).
-	if devRefresh := os.Getenv("ANDAMIO_DEV_REFRESH_TOKEN"); devRefresh != "" {
-		cfg.DevRefreshToken = devRefresh
-	}
+	applyCredentialEnvOverrides(&cfg)
 
 	// ANDAMIO_SUBMIT_URL env var overrides stored submit URL
 	if submitURL := os.Getenv("ANDAMIO_SUBMIT_URL"); submitURL != "" {
@@ -234,21 +256,95 @@ func Save(cfg *Config) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	// Strip env-sourced credentials before serializing so the documented
+	// "ephemeral" contract holds: env-injected values stay in process
+	// memory only, not written to disk on every successful save. When a
+	// field is mutated by code (e.g., persistDevSession after a successful
+	// refresh) the new value differs from the snapshot and is persisted
+	// normally — so rotation keeps working.
+	serialized := *cfg
+	if cfg.envInjected.DevRefreshToken != "" && serialized.DevRefreshToken == cfg.envInjected.DevRefreshToken {
+		serialized.DevRefreshToken = ""
+		serialized.DevRefreshTokenExpiresAt = ""
+	}
+	if cfg.envInjected.DevJWT != "" && serialized.DevJWT == cfg.envInjected.DevJWT {
+		serialized.DevJWT = ""
+		serialized.DevJWTExpiresAt = ""
+	}
+	if cfg.envInjected.UserJWT != "" && serialized.UserJWT == cfg.envInjected.UserJWT {
+		serialized.UserJWT = ""
+		serialized.JWTExpiresAt = ""
+	}
+
+	data, err := json.MarshalIndent(&serialized, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return err
+	return atomicWriteSecret(path, data)
+}
+
+// atomicWriteSecret writes data to path via a sibling tempfile + rename,
+// chmod'd to 0600 before any bytes hit disk. Compared to the prior
+// os.WriteFile + os.Chmod sequence, this closes two failure modes:
+//
+//  1. TOCTOU window. os.WriteFile honors its mode arg only on file
+//     creation; on overwrite, secret bytes touch disk under the existing
+//     mode (potentially 0644 from a prior buggy save, a manual chmod, or
+//     a non-Unix backup restore) before a follow-up chmod tightens.
+//     A co-tenant polling the path during that microsecond window can
+//     read the freshly-written secrets.
+//
+//  2. Concurrent-writer corruption. WriteFile's underlying syscalls are
+//     truncate + write with no advisory lock. Two concurrent Save calls
+//     (e.g., parallel `dev refresh` shells, or a CI matrix job) can
+//     interleave bytes and produce malformed JSON, locking subsequent
+//     Loads out until the user manually deletes the file.
+//
+// os.Rename is atomic on POSIX same-filesystem and inherits the
+// tempfile's 0600 mode. On rename failure, the tempfile is cleaned up so
+// a successful prior save remains on disk and a subsequent save retries
+// from a clean slate.
+//
+// The tempfile is created via os.CreateTemp (atomic O_CREAT|O_EXCL with
+// a randomized name) at mode 0600; an explicit chmod follows as a
+// belt-and-braces guard against unusual filesystem semantics.
+func atomicWriteSecret(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config.json.tmp.*")
+	if err != nil {
+		return fmt.Errorf("create tempfile: %w", err)
 	}
-	// os.WriteFile honors the mode arg only on file CREATION. If the file
-	// already exists with a relaxed mode (e.g., 0644 from a manual chmod, a
-	// non-Unix backup restore, or a copy from a container layer), WriteFile
-	// preserves it and the secrets we just wrote (UserJWT, DevJWT,
-	// DevRefreshToken — the durable 30-day rotation credential) leak to
-	// any local user with read access. Force 0600 explicitly so Save is
-	// the single point of truth on permissions regardless of the previous
-	// state of the file.
-	return os.Chmod(path, 0600)
+	tmpPath := tmp.Name()
+
+	// Track success so the deferred cleanup only fires on error paths.
+	// On success we must NOT remove the tempfile because os.Rename has
+	// already moved it onto the canonical path.
+	success := false
+	defer func() {
+		if !success {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod tempfile: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write tempfile: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync tempfile: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close tempfile: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename tempfile: %w", err)
+	}
+
+	success = true
+	return nil
 }
