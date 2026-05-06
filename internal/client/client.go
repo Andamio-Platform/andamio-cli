@@ -83,6 +83,9 @@ func (c *Client) Get(ctx context.Context, path string, result interface{}) error
 }
 
 // setHeaders adds common headers to a request.
+//
+// TODO(#80 PR-B): wire `cfg.DevJWT` into Authorization for /v2/keys and
+// other developer-portal endpoints — see #84 item 3 for design tradeoffs.
 func (c *Client) setHeaders(req *http.Request) {
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)

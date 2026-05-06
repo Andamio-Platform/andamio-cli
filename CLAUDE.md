@@ -74,9 +74,10 @@ Export and import are the two complex commands. They follow a different pattern:
 
 ### Auth Flow
 
-Two auth methods coexist in config:
+Three auth slots coexist in config:
 - **API Key** (`auth login --api-key`) — stored in `config.api_key`, sent as `X-API-Key` header. Read-only access.
-- **User JWT** (`user login`) — browser-based wallet signing flow: starts ephemeral local HTTP server, opens browser to `{appURL}/auth/cli?redirect_uri=...&state=...`, user connects Cardano wallet and signs nonce, receives JWT via callback. CSRF protection via random state parameter. Required for edit operations.
+- **User JWT** (`user login`) — browser-based wallet signing flow: starts ephemeral local HTTP server, opens browser to `{appURL}/auth/cli?redirect_uri=...&state=...`, user connects Cardano wallet and signs nonce, receives JWT via callback. CSRF protection via random state parameter. Required for edit operations on course/project commands. Headless variant: `user login --skey --alias --address`.
+- **Developer JWT** (`dev login`) — headless CIP-30 signature-verified login (andamio-api #410). Two-step flow: `POST /v2/auth/developer/login/session` opens a 5-min session keyed to `(alias, wallet_address)` and returns a nonce; the CLI signs the nonce locally with `internal/cardano.SignMessage`; `POST /v2/auth/developer/login/complete` submits the signature and receives a 60-minute RS256 JWT plus a 30-day single-use rotation refresh token. The dev JWT is required for `/v2/keys` and other developer-portal endpoints — the gateway's `developerJWTAuth` middleware does not accept wallet/user JWTs and vice versa. Distinct config slot (`dev_jwt` + `dev_refresh_token`) so the two JWTs don't clobber each other. `dev refresh` rotates without re-signing (uses the refresh token); a 401 from refresh clears the dev slot and instructs re-login. `dev logout` clears the entire dev slot whenever **either** `dev_jwt` **or** `dev_refresh_token` is persisted (the durable 30-day refresh token gets cleared even when the 60-min JWT is empty). Override at runtime via `ANDAMIO_DEV_JWT` and/or `ANDAMIO_DEV_REFRESH_TOKEN` env vars (parallel to `ANDAMIO_JWT` for the user slot — the refresh-token override is the path for ephemeral CI/CD agents that want to rotate without committing tokens to the image). **Caveat:** env-sourced values are written to `~/.andamio/config.json` on the next save (every successful login/refresh/logout); for truly ephemeral runs, point `$HOME` at a tmpfs or wipe `~/.andamio/` on exit. The legacy lookup-only `/v2/auth/developer/account/login` is intentionally not used — it returns 410 Gone behind the gateway's kill-switch flag and does not prove wallet ownership.
 
 The app URL is derived from the API URL by replacing `.api.` with `.app.` in the hostname.
 
@@ -191,6 +192,14 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 |---------|----------|------|-------------|
 | `apikey usage` | `/api/v2/apikey/developer/usage/get` | api-key | Key usage stats |
 | `apikey profile` | `/api/v2/apikey/developer/profile/get` | api-key | Key profile |
+
+### dev — Developer-portal authentication and operations
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `dev login --skey <path> --alias <name> --address <bech32>` | `/v2/auth/developer/login/session` + `/v2/auth/developer/login/complete` | api-key | Headless CIP-30 signature-verified developer login. Mints a 60-min RS256 developer JWT + 30-day rotation refresh token. Required for `/v2/keys` and other developer-portal endpoints. |
+| `dev refresh` | `/v2/auth/developer/token/refresh` | dev-jwt-rotation (refresh token) | Rotate the developer JWT using the stored refresh token. Single-use rotation server-side; both tokens update atomically. 401 → re-run `dev login`. |
+| `dev logout` | local | none | Clear entire dev slot (JWT, refresh token, alias, ID, tier, key hash). Does not affect user JWT. |
+| `dev status` | local | none | Show developer auth status — JWT expiry, refresh-token expiry, tier. JSON envelope surfaces `jwt_expires_at` / `refresh_token_expires_at` / `*_expired` / `*_remaining_seconds` for scriptable branching. `*_remaining_seconds` is always present (no `omitempty`): zero means "sub-second remaining" (refresh now); branch on `*_expired` to disambiguate "fully expired" from "not parseable". Branch on `dev_authenticated` first. |
 
 ### spec — OpenAPI spec
 | Command | Endpoint | Auth | Description |
