@@ -22,10 +22,15 @@ import (
 // developer key ids. Validation is structural (not strict per RFC 4122) —
 // any 8-4-4-4-12 hex sequence is accepted; deeper checks are gateway-side.
 // The point of validating client-side is to catch typos and shell-expansion
-// accidents — a stray `?` truncates the path, a `..` segment is forwarded
-// literally (verified via httptest), and an empty `$ID` builds the list
-// path with DELETE — before they hit the wire as confusing 4xx errors or,
-// worse, target a different resource than the user named.
+// accidents before they hit the wire as confusing 4xx errors or, worse,
+// target a different resource than the user named: a stray `?` would
+// truncate the path (Go's net/url splits the path from the query),
+// a `..` segment would be forwarded literally and resolved router-side
+// (router-dependent — nginx normalizes, std http.ServeMux does not), and
+// an empty `$ID` would build the collection path with DELETE.
+// `TestRunDevKeysDelete_RejectsMalformedID` pins the rejection — none of
+// these inputs reaches the gateway — so the literal-forwarding behavior
+// stays a documented hazard rather than a tested one.
 var devKeyIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // PR-B (#80 second slice) — wraps andamio-api's `/v2/keys` developer-portal

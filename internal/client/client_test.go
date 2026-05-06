@@ -360,3 +360,71 @@ func TestClient_ContextCancel_MidBody(t *testing.T) {
 		t.Errorf("ctx cancel during body read should abort promptly; took %v", elapsed)
 	}
 }
+
+// TestClient_Delete_204_NilResult pins the canonical DELETE shape: 204 No
+// Content with the caller passing nil — the method should NOT attempt to
+// decode (no body to decode anyway) and should return nil. This is the
+// path every current caller takes (DELETE /v2/keys/{id}).
+func TestClient_Delete_204_NilResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("expected DELETE, got %s", r.Method)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := New(&config.Config{BaseURL: srv.URL})
+	if err := c.Delete(context.Background(), "/resource/abc", nil); err != nil {
+		t.Errorf("Delete with 204+nil-result should succeed; got %v", err)
+	}
+}
+
+// TestClient_Delete_200WithBody_DecodesIntoResult pins the second shape
+// the round-2 signature change exists to support: a DELETE that returns
+// 200 with a JSON body (e.g., a future revoke endpoint that emits an
+// audit-log id). The decode branch (`if result != nil`) is otherwise
+// dead from a test perspective since the only production caller passes
+// nil.
+func TestClient_Delete_200WithBody_DecodesIntoResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"audit_id":"audit-42","status":"revoked"}`))
+	}))
+	defer srv.Close()
+
+	c := New(&config.Config{BaseURL: srv.URL})
+	var got struct {
+		AuditID string `json:"audit_id"`
+		Status  string `json:"status"`
+	}
+	if err := c.Delete(context.Background(), "/resource/abc", &got); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if got.AuditID != "audit-42" || got.Status != "revoked" {
+		t.Errorf("decode = %+v, want {AuditID:audit-42 Status:revoked}", got)
+	}
+}
+
+// TestClient_Delete_404_TypedError verifies non-2xx status codes still
+// produce the typed errors the rest of the client surfaces. 404 should
+// be *apierr.NotFoundError so callers can `errors.As` against it for the
+// "not found OR not owned" disambiguation that `dev keys delete` does.
+func TestClient_Delete_404_TypedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
+	}))
+	defer srv.Close()
+
+	c := New(&config.Config{BaseURL: srv.URL})
+	err := c.Delete(context.Background(), "/resource/missing", nil)
+	if err == nil {
+		t.Fatal("expected error on 404")
+	}
+	var nfErr *apierr.NotFoundError
+	if !errors.As(err, &nfErr) {
+		t.Errorf("expected *apierr.NotFoundError, got %T: %v", err, err)
+	}
+}

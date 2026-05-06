@@ -506,10 +506,17 @@ func TestRunDevKeysDelete_JSONEnvelope(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestDevKeysClient_StripsAPIKeyAndPromotesDevJWT(t *testing.T) {
+	// Seed SubmitHeaders too so the deep-clone contract is observable via
+	// the source-not-mutated invariant below (the production code calls
+	// maps.Clone(cfg.SubmitHeaders) explicitly to break the shared-pointer
+	// hazard).
 	cfg := &config.Config{
 		APIKey:  "should-be-stripped",
 		UserJWT: "wallet-jwt-should-not-promote",
 		DevJWT:  "dev-jwt-should-be-bearer",
+		SubmitHeaders: map[string]string{
+			"project_id": "blockfrost-secret-MUST-NOT-LEAK",
+		},
 	}
 	c, err := devKeysClient(cfg)
 	if err != nil {
@@ -527,6 +534,14 @@ func TestDevKeysClient_StripsAPIKeyAndPromotesDevJWT(t *testing.T) {
 		if got := r.Header.Get("X-API-Key"); got != "" {
 			t.Errorf("X-API-Key = %q, want empty (dual-credential requests are rejected)", got)
 		}
+		// Submit headers are Cardano-side concerns; they MUST NOT ride on
+		// dev-portal requests. The current Client doesn't read SubmitHeaders
+		// from cfg, so this assertion is forward-looking — if a future
+		// refactor wires submit headers into request emission, this test
+		// catches it.
+		if got := r.Header.Get("project_id"); got != "" {
+			t.Errorf("project_id header = %q, want empty (Cardano-side header must not ride on /v2/keys)", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"keys":[]}`))
 	}))
@@ -543,6 +558,37 @@ func TestDevKeysClient_StripsAPIKeyAndPromotesDevJWT(t *testing.T) {
 	// Subsequent config.Save() should write the unchanged state back.
 	if cfg.APIKey != "should-be-stripped" || cfg.UserJWT != "wallet-jwt-should-not-promote" {
 		t.Errorf("devKeysClient mutated source cfg: APIKey=%q UserJWT=%q (want unchanged)", cfg.APIKey, cfg.UserJWT)
+	}
+	// Source SubmitHeaders must remain intact AND retain its original
+	// content. The maps.Clone in devKeysClient is the structural backstop
+	// — without it, a future code path that mutates the cloned cfg's
+	// SubmitHeaders would leak into the source via the shared map pointer.
+	if got, want := cfg.SubmitHeaders["project_id"], "blockfrost-secret-MUST-NOT-LEAK"; got != want {
+		t.Errorf("source cfg.SubmitHeaders[\"project_id\"] = %q, want %q (devKeysClient may have mutated the shared map)", got, want)
+	}
+	if len(cfg.SubmitHeaders) != 1 {
+		t.Errorf("source cfg.SubmitHeaders length = %d, want 1 (devKeysClient may have added/removed keys via shared map)", len(cfg.SubmitHeaders))
+	}
+}
+
+// TestDevRawKey_LogValueRedacts pins the slog redaction contract: any
+// future refactor that drops LogValue() (or returns the raw value) must
+// fail this test rather than silently leaking the secret to slog handlers.
+// The type exists ONLY for this defense-in-depth contract — without a
+// direct test, the contract is invisible.
+func TestDevRawKey_LogValueRedacts(t *testing.T) {
+	k := devRawKey("ak_secret_RAW_VALUE")
+
+	// Direct method: explicit redaction text.
+	v := k.LogValue()
+	if v.String() != "[redacted]" {
+		t.Errorf("LogValue = %q, want \"[redacted]\" (defense-in-depth: slog handlers must not see the raw key)", v.String())
+	}
+
+	// Underlying string is preserved for non-slog uses (fmt.Println,
+	// JSON marshal, equality with ""). The redaction is slog-specific.
+	if string(k) != "ak_secret_RAW_VALUE" {
+		t.Errorf("underlying string lost; got %q, want %q (LogValue must not affect non-slog code paths)", string(k), "ak_secret_RAW_VALUE")
 	}
 }
 
