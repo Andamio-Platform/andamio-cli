@@ -213,6 +213,76 @@ func TestRunDevHeadlessLogin_HappyPath_PersistsAllSlots(t *testing.T) {
 	}
 }
 
+// TestRunDevHeadlessLogin_JSONOutputShape pins the --output json envelope
+// for `dev login`: keys agents will read, alignment with `dev status`, and
+// — critically — that the JWT and refresh-token bodies the CLI just
+// persisted to ~/.andamio/config.json never appear on stdout. Tokens belong
+// on disk, not in shell histories or CI logs.
+func TestRunDevHeadlessLogin_JSONOutputShape(t *testing.T) {
+	stub := &devGatewayStub{
+		sessionRespBody: []byte(`{"session_id":"sess-uuid","nonce":"please-sign-this","expires_at":"2099-01-01T00:05:00Z"}`),
+		completeRespBody: secureLoginBody(
+			"jwt.SECRET.SHOULD-NOT-LEAK",
+			"refresh.SECRET.SHOULD-NOT-LEAK",
+			"myalias",
+			"dev-user-1",
+			"pioneer",
+			"2099-01-01T01:00:00Z",
+			"2099-02-01T00:00:00Z",
+		),
+	}
+	cfg, priv, pub := devTestEnv(t, stub)
+
+	captured := captureStdout(t, func() {
+		_ = output.SetFormat("json")
+		t.Cleanup(func() { _ = output.SetFormat("text") })
+		if err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "ignored.skey", "myalias", "addr_test1xyz"); err != nil {
+			t.Fatalf("login: %v", err)
+		}
+	})
+
+	// Security guard: token bodies must never reach stdout. captureStdout
+	// reads only os.Stdout, so anything routed correctly to os.Stderr stays
+	// out of `captured`.
+	if strings.Contains(captured, "SECRET.SHOULD-NOT-LEAK") {
+		t.Fatalf("token body leaked to stdout — JSON envelope must NEVER carry the JWT or refresh token. Captured bytes:\n%s", captured)
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(captured), &got); err != nil {
+		t.Fatalf("decode dev login JSON: %v\nbytes: %s", err, captured)
+	}
+
+	// Key set: must match dev status / dev refresh on the shared keys.
+	for k, want := range map[string]interface{}{
+		"alias":                    "myalias",
+		"dev_id":                   "dev-user-1",
+		"tier":                     "pioneer",
+		"jwt_expires_at":           "2099-01-01T01:00:00Z",
+		"refresh_token_expires_at": "2099-02-01T00:00:00Z",
+	} {
+		if got[k] != want {
+			t.Errorf("envelope[%q] = %v, want %v", k, got[k], want)
+		}
+	}
+	// key_hash is login-only (refresh does not re-sign). Must be present
+	// AND non-empty here so agents can pin the signing key for audit.
+	if kh, _ := got["key_hash"].(string); kh == "" {
+		t.Errorf("envelope is missing key_hash on login output — present-and-nonempty is the contract for the login envelope")
+	}
+	// Token-shaped keys MUST NOT exist in the envelope.
+	for _, k := range []string{"jwt", "dev_jwt", "refresh_token", "dev_refresh_token"} {
+		if _, present := got[k]; present {
+			t.Errorf("envelope must not include %q — token bodies stay on disk only", k)
+		}
+	}
+	// Cross-command consistency: assert NOT the legacy `refresh_expires_at`
+	// (the pre-fix name) so a future revert is caught.
+	if _, present := got["refresh_expires_at"]; present {
+		t.Errorf("envelope still uses legacy `refresh_expires_at` key — should be `refresh_token_expires_at` to align with `dev status`")
+	}
+}
+
 func TestRunDevHeadlessLogin_FallsBackToFlagAliasWhenResponseEmpty(t *testing.T) {
 	// The gateway echoes a populated alias on success, but the CLI must defend
 	// against a future shape where it's omitted (omitempty) — the flag value
@@ -311,6 +381,32 @@ func TestRunDevHeadlessLogin_CompleteMissingRefreshTokenErrors(t *testing.T) {
 	}
 }
 
+// TestRunDevHeadlessLogin_SessionExpiredDuringSigningEmitsClearError pins
+// the pre-check at runDevHeadlessLogin step 2b: when the gateway returned
+// a session with an already-past expires_at, the CLI must NOT call /complete
+// (which would 401 with the misleading address/.skey hint). Instead, surface
+// the actual cause: signing took longer than the 5-min server window.
+func TestRunDevHeadlessLogin_SessionExpiredDuringSigningEmitsClearError(t *testing.T) {
+	stub := &devGatewayStub{
+		// Year-1 timestamp serializes from a zero time.Time and is reliably
+		// in the past regardless of system clock skew.
+		sessionRespBody:  []byte(`{"session_id":"sess-x","nonce":"n","expires_at":"0001-01-01T00:00:00Z"}`),
+		completeRespBody: []byte(`unreachable`),
+	}
+	cfg, priv, pub := devTestEnv(t, stub)
+
+	err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "myalias", "addr")
+	if err == nil {
+		t.Fatal("expected error when session expired during signing")
+	}
+	if !strings.Contains(err.Error(), "session expired during signing") {
+		t.Errorf("err = %q, want substring %q (the user-facing diagnostic)", err.Error(), "session expired during signing")
+	}
+	if stub.gotCompleteRequest {
+		t.Errorf("complete endpoint must NOT be called after a locally-detected expired session — the whole point is to skip the gateway 401 + misleading hint")
+	}
+}
+
 func TestRunDevHeadlessLogin_CompleteAuthErrorBubblesAsTypedAuthError(t *testing.T) {
 	stub := &devGatewayStub{
 		sessionRespBody:    []byte(`{"session_id":"sess-x","nonce":"n"}`),
@@ -394,6 +490,72 @@ func TestRunDevRefreshFlow_HappyPath_RotatesAllTokens(t *testing.T) {
 	// rotation that has nothing to re-sign with.
 	if got, want := cfg.DevKeyHash, "kh"; got != want {
 		t.Errorf("cfg.DevKeyHash mutated by refresh; got %q want %q (refresh must preserve)", got, want)
+	}
+}
+
+// TestRunDevRefreshFlow_JSONOutputShape pins the --output json envelope for
+// `dev refresh`. Same key-set contract as login except `key_hash` is absent
+// (refresh does not re-sign). Token-leak guard runs here too — the rotation
+// path is the most credential-dense of all three commands.
+func TestRunDevRefreshFlow_JSONOutputShape(t *testing.T) {
+	stub := &devGatewayStub{
+		refreshRespBody: secureLoginBody(
+			"jwt.NEW.SECRET.SHOULD-NOT-LEAK",
+			"refresh.NEW.SECRET.SHOULD-NOT-LEAK",
+			"myalias",
+			"dev-user-1",
+			"pioneer",
+			"2099-01-01T02:00:00Z",
+			"2099-02-15T00:00:00Z",
+		),
+	}
+	cfg, _, _ := devTestEnv(t, stub)
+	cfg.DevJWT = "jwt.OLD"
+	cfg.DevRefreshToken = "refresh.OLD"
+	cfg.DevAlias = "myalias"
+	cfg.DevID = "dev-user-1"
+	cfg.DevTier = "pioneer"
+	cfg.DevKeyHash = "kh"
+
+	captured := captureStdout(t, func() {
+		_ = output.SetFormat("json")
+		t.Cleanup(func() { _ = output.SetFormat("text") })
+		if err := runDevRefreshFlow(context.Background(), cfg); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+	})
+
+	if strings.Contains(captured, "SECRET.SHOULD-NOT-LEAK") {
+		t.Fatalf("rotated token body leaked to stdout — refresh envelope must NEVER carry the JWT or refresh token. Captured:\n%s", captured)
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(captured), &got); err != nil {
+		t.Fatalf("decode dev refresh JSON: %v\nbytes: %s", err, captured)
+	}
+
+	for k, want := range map[string]interface{}{
+		"alias":                    "myalias",
+		"dev_id":                   "dev-user-1",
+		"tier":                     "pioneer",
+		"jwt_expires_at":           "2099-01-01T02:00:00Z",
+		"refresh_token_expires_at": "2099-02-15T00:00:00Z",
+	} {
+		if got[k] != want {
+			t.Errorf("envelope[%q] = %v, want %v", k, got[k], want)
+		}
+	}
+	// key_hash is login-only — refresh does not re-sign so must omit.
+	if _, present := got["key_hash"]; present {
+		t.Errorf("refresh envelope must not include key_hash (refresh does not re-sign)")
+	}
+	for _, k := range []string{"jwt", "dev_jwt", "refresh_token", "dev_refresh_token"} {
+		if _, present := got[k]; present {
+			t.Errorf("envelope must not include %q — token bodies stay on disk only", k)
+		}
+	}
+	if _, present := got["refresh_expires_at"]; present {
+		t.Errorf("refresh envelope still uses legacy `refresh_expires_at` — should be `refresh_token_expires_at`")
 	}
 }
 
@@ -520,6 +682,86 @@ func TestRunDevLogout_NoAuthStored_Idempotent(t *testing.T) {
 	}
 	if err := cmd.RunE(cmd, []string{}); err != nil {
 		t.Fatalf("second logout (still no auth) should not error: %v", err)
+	}
+}
+
+// TestRunDevLogout_ClearsRefreshTokenWhenJWTEmpty pins the gate fix from
+// PR-A review: if only the refresh token is persisted (env-override path,
+// manual config edit, etc.), `dev logout` must still clear it. Pre-fix,
+// the gate `!cfg.HasDevAuth()` (JWT-only) returned early and stranded the
+// 30-day rotation credential on disk.
+func TestRunDevLogout_ClearsRefreshTokenWhenJWTEmpty(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &config.Config{
+		// JWT empty (e.g., expired and never refreshed) but refresh token
+		// still persisted — the strand case the gate fix addresses.
+		DevRefreshToken:          "stranded.refresh.token",
+		DevRefreshTokenExpiresAt: "2099-02-01T00:00:00Z",
+	}
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	cmd := devLogoutCmd
+	if err := cmd.RunE(cmd, []string{}); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load after logout: %v", err)
+	}
+	if loaded.DevRefreshToken != "" {
+		t.Errorf("DevRefreshToken = %q after logout; want \"\" (the durable 30-day credential must be cleared even when DevJWT is empty)", loaded.DevRefreshToken)
+	}
+	if loaded.DevRefreshTokenExpiresAt != "" {
+		t.Errorf("DevRefreshTokenExpiresAt = %q after logout; want \"\"", loaded.DevRefreshTokenExpiresAt)
+	}
+}
+
+// TestRunDevLogout_JSONEnvelope pins the {cleared: bool} envelope shape and
+// the distinction between "nothing was stored" (false) vs "wiped real
+// credentials" (true). Agents scripting cleanup pipelines branch on this
+// to detect whether re-login was needed.
+func TestRunDevLogout_JSONEnvelope(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := config.Save(&config.Config{
+		DevJWT:          "dev.jwt",
+		DevRefreshToken: "dev.refresh",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	captured := captureStdout(t, func() {
+		_ = output.SetFormat("json")
+		t.Cleanup(func() { _ = output.SetFormat("text") })
+		if err := devLogoutCmd.RunE(devLogoutCmd, []string{}); err != nil {
+			t.Fatalf("logout: %v", err)
+		}
+	})
+
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(captured), &got); err != nil {
+		t.Fatalf("decode: %v\nbytes: %s", err, captured)
+	}
+	if v, _ := got["cleared"].(bool); !v {
+		t.Errorf("cleared = %v on a populated slot; want true", got["cleared"])
+	}
+
+	// Second call: no credentials remain — cleared should be false.
+	captured2 := captureStdout(t, func() {
+		_ = output.SetFormat("json")
+		t.Cleanup(func() { _ = output.SetFormat("text") })
+		if err := devLogoutCmd.RunE(devLogoutCmd, []string{}); err != nil {
+			t.Fatalf("second logout: %v", err)
+		}
+	})
+	var got2 map[string]interface{}
+	if err := json.Unmarshal([]byte(captured2), &got2); err != nil {
+		t.Fatalf("decode 2: %v\nbytes: %s", err, captured2)
+	}
+	if v, _ := got2["cleared"].(bool); v {
+		t.Errorf("cleared = %v on second call (no credentials); want false (idempotency contract)", got2["cleared"])
 	}
 }
 

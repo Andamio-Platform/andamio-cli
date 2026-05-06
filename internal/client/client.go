@@ -84,16 +84,8 @@ func (c *Client) Get(ctx context.Context, path string, result interface{}) error
 
 // setHeaders adds common headers to a request.
 //
-// TODO(#80 PR-B): wire developer JWT (`cfg.DevJWT`) into the Authorization
-// header for `/v2/keys` and other developer-portal endpoints. The gateway's
-// `developerJWTAuth` middleware does not accept wallet/user JWTs; the dev
-// JWT is a separate credential minted by `andamio dev login` and lives in a
-// distinct config slot. Today this client only forwards `userJWT`. PR-A
-// (issue #80, this branch) ships the login + storage; PR-B follows with
-// either (a) a `Client.SetDevJWT` builder + per-call swap, or (b) a clone
-// of the cfg with `DevJWT` promoted into `UserJWT` for keys requests
-// (mirroring the api-key-only swap in `cmd/andamio/apikey.go`). Until PR-B
-// lands, callers of `/v2/keys` have no auth path through this client.
+// TODO(#80 PR-B): wire `cfg.DevJWT` into Authorization for /v2/keys and
+// other developer-portal endpoints — see #84 item 3 for design tradeoffs.
 func (c *Client) setHeaders(req *http.Request) {
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)

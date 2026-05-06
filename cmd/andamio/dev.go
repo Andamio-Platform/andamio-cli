@@ -42,7 +42,23 @@ required for /v2/keys and other developer-scoped endpoints.
 
 Run 'andamio dev login --skey <path> --alias <name> --address <bech32>' to
 mint one. The flow mirrors 'user login --skey' but binds the resulting JWT
-to your developer account rather than your end-user account.`,
+to your developer account rather than your end-user account.
+
+Environment:
+  ANDAMIO_DEV_JWT             Override the stored developer JWT for this
+                              process. Parallel to ANDAMIO_JWT for the user
+                              slot. Useful for one-off scripted requests.
+  ANDAMIO_DEV_REFRESH_TOKEN   Override the stored 30-day rotation refresh
+                              token. Lets ephemeral CI/CD agents inject a
+                              rotation credential without committing it to
+                              the image, run 'dev refresh' once, and read
+                              the rotated token from the resulting config.
+                              NOTE: env-sourced values are written to
+                              ~/.andamio/config.json on the next config
+                              save (every successful login, refresh, or
+                              logout triggers a save). For truly ephemeral
+                              runs, point HOME at a tmpfs or remove the
+                              .andamio directory on exit.`,
 }
 
 var devLoginCmd = &cobra.Command{
@@ -56,6 +72,7 @@ other developer-portal endpoints.
 
 Examples:
   andamio dev login --skey ./payment.skey --alias myalias --address $(cat wallet.addr)`,
+	Args: cobra.NoArgs,
 	RunE: runDevLogin,
 }
 
@@ -67,6 +84,7 @@ wallet/user JWT — 'andamio user logout' clears that slot independently.
 
 After logout, 'dev refresh' will fail; re-run 'dev login' to mint a new
 session.`,
+	Args: cobra.NoArgs,
 	RunE: runDevLogout,
 }
 
@@ -85,6 +103,7 @@ a critical alert; the CLI sees a 5xx and a re-run will mint cleanly.
 Examples:
   andamio dev refresh
   andamio dev refresh --output json`,
+	Args: cobra.NoArgs,
 	RunE: runDevRefresh,
 }
 
@@ -94,6 +113,7 @@ var devStatusCmd = &cobra.Command{
 	Long: `Show whether a developer JWT is stored and (if a known expiry was
 returned at login) when it expires. Reports independently of 'user status' —
 the two slots are distinct.`,
+	Args: cobra.NoArgs,
 	RunE: runDevStatus,
 }
 
@@ -127,6 +147,26 @@ func runDevLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load signing key: %w", err)
 	}
 	return runDevHeadlessLogin(cmd.Context(), cfg, privKey, pubKey, skeyPath, alias, address)
+}
+
+// devSessionResult is the typed `--output json` envelope shape for both
+// `dev login` and `dev refresh`. Single struct so the two commands cannot
+// drift on field naming (e.g., `refresh_expires_at` vs `refresh_token_expires_at`),
+// and so a future copy-edit that drops or renames a key is a compile error
+// rather than a silent contract break. Field names match `devStatusResult`
+// so a script can read `refresh_token_expires_at` from any of the three
+// commands and use the same path.
+//
+// CRITICAL: this struct must NEVER carry the JWT or refresh-token bodies.
+// Tokens belong on disk (~/.andamio/config.json at 0600), not on stdout.
+// `TestRunDev*_JSONOutputDoesNotLeakTokens` enforces this.
+type devSessionResult struct {
+	Alias                 string `json:"alias"`
+	DevID                 string `json:"dev_id"`
+	Tier                  string `json:"tier,omitempty"`
+	KeyHash               string `json:"key_hash,omitempty"`
+	JWTExpiresAt          string `json:"jwt_expires_at"`
+	RefreshTokenExpiresAt string `json:"refresh_token_expires_at"`
 }
 
 // secureLoginResponse mirrors andamio-api's `auth_viewmodels.SecureLoginResponse`
@@ -195,6 +235,18 @@ func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed2551
 		return fmt.Errorf("failed to sign nonce: %w", err)
 	}
 
+	// Step 2b: Detect a session that expired during signing (slow hardware
+	// wallet, OS sleep, debugger pause). Without this guard, the gateway's
+	// /complete returns 401 and the CLI surfaces the misleading "wallet
+	// address does not match the .skey" hint, accusing the user's flags
+	// when the actual cause is a clock issue. Skip when ExpiresAt is empty
+	// or unparseable — let the gateway have the final word in those cases.
+	if session.ExpiresAt != "" {
+		if expiresAt, err := time.Parse(time.RFC3339, session.ExpiresAt); err == nil && time.Now().After(expiresAt) {
+			return fmt.Errorf("developer login session expired during signing (sessions are valid for 5 minutes; signing took longer). Re-run 'andamio dev login --skey <path> --alias <name> --address <bech32>' to start fresh")
+		}
+	}
+
 	// Step 3: Submit signature. Body carries only session_id + signature —
 	// alias and address are already bound to the session server-side.
 	if !isJSON {
@@ -233,19 +285,26 @@ func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed2551
 	// Step 4: Persist all four moving parts of the dev session — JWT (60-min),
 	// refresh token (30-day, single-use), tier (surfaced in `dev status`), and
 	// the canonical alias/user_id from the gateway response.
+	//
+	// ClearDevAuth before persistDevSession makes login a clean overwrite: a
+	// re-login switching accounts cannot inherit the prior session's DevAlias
+	// or DevKeyHash if a future gateway response shape omits a field that the
+	// existing slot has populated. Refresh's call to persistDevSession is a
+	// deliberate merge (preserves DevKeyHash, no re-sign happened) and stays.
+	cfg.ClearDevAuth()
 	persistDevSession(cfg, &tokenResp, signResult.KeyHash, alias)
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
 	if isJSON {
-		return output.PrintJSON(map[string]interface{}{
-			"alias":              cfg.DevAlias,
-			"dev_id":             cfg.DevID,
-			"tier":               cfg.DevTier,
-			"key_hash":           signResult.KeyHash,
-			"jwt_expires_at":     cfg.DevJWTExpiresAt,
-			"refresh_expires_at": cfg.DevRefreshTokenExpiresAt,
+		return output.PrintJSON(devSessionResult{
+			Alias:                 cfg.DevAlias,
+			DevID:                 cfg.DevID,
+			Tier:                  cfg.DevTier,
+			KeyHash:               signResult.KeyHash,
+			JWTExpiresAt:          cfg.DevJWTExpiresAt,
+			RefreshTokenExpiresAt: cfg.DevRefreshTokenExpiresAt,
 		})
 	}
 	fmt.Fprintf(os.Stderr, "\nAuthenticated as developer: %s", cfg.DevAlias)
@@ -284,18 +343,41 @@ func persistDevSession(cfg *config.Config, resp *secureLoginResponse, keyHash, f
 	}
 }
 
+// devLogoutResult is the typed `dev logout --output json` envelope. The
+// `cleared` flag distinguishes "nothing was stored, nothing to do" (false)
+// from "credentials were present and have been wiped" (true) — agents
+// scripting cleanup branch on this without parsing stderr.
+type devLogoutResult struct {
+	Cleared bool `json:"cleared"`
+}
+
 func runDevLogout(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	if !cfg.HasDevAuth() {
-		fmt.Fprintln(os.Stderr, "No developer JWT stored.")
+	// Gate on ANY persisted dev credential, not just the JWT. If the user
+	// has only a refresh token (env-override path, manual config edit, or
+	// any future code path that outlives the 60-min JWT but persists the
+	// 30-day rotation credential), HasDevAuth() returns false but the
+	// durable credential is still on disk. Clearing only when the JWT is
+	// present would silently strand the refresh token — the more valuable
+	// of the two — directly contradicting the command's promise.
+	hadCredentials := cfg.HasDevAuth() || cfg.DevRefreshToken != ""
+	isJSON := output.GetFormat() == output.FormatJSON
+	if !hadCredentials {
+		if isJSON {
+			return output.PrintJSON(devLogoutResult{Cleared: false})
+		}
+		fmt.Fprintln(os.Stderr, "No developer credentials stored.")
 		return nil
 	}
 	cfg.ClearDevAuth()
 	if err := config.Save(cfg); err != nil {
 		return err
+	}
+	if isJSON {
+		return output.PrintJSON(devLogoutResult{Cleared: true})
 	}
 	fmt.Fprintln(os.Stderr, "Developer JWT and refresh token cleared.")
 	return nil
@@ -361,12 +443,15 @@ func runDevRefreshFlow(ctx context.Context, cfg *config.Config) error {
 	}
 
 	if isJSON {
-		return output.PrintJSON(map[string]interface{}{
-			"alias":              cfg.DevAlias,
-			"dev_id":             cfg.DevID,
-			"tier":               cfg.DevTier,
-			"jwt_expires_at":     cfg.DevJWTExpiresAt,
-			"refresh_expires_at": cfg.DevRefreshTokenExpiresAt,
+		// Refresh did not re-sign, so KeyHash is intentionally absent from
+		// the envelope (the existing key hash on disk is unchanged; agents
+		// that need it should read `dev status --output json`).
+		return output.PrintJSON(devSessionResult{
+			Alias:                 cfg.DevAlias,
+			DevID:                 cfg.DevID,
+			Tier:                  cfg.DevTier,
+			JWTExpiresAt:          cfg.DevJWTExpiresAt,
+			RefreshTokenExpiresAt: cfg.DevRefreshTokenExpiresAt,
 		})
 	}
 	fmt.Fprintf(os.Stderr, "Developer JWT rotated (alias: %s).\n", cfg.DevAlias)
@@ -388,20 +473,25 @@ func runDevRefreshFlow(ctx context.Context, cfg *config.Config) error {
 // `*Expired` and `*RemainingSeconds` mirror the userStatusResult convention so
 // scripts can branch deterministically on JSON without parsing timestamps.
 type devStatusResult struct {
-	APIKeySet                      bool   `json:"api_key_set"`
-	BaseURL                        string `json:"base_url"`
-	DevAuthenticated               bool   `json:"dev_authenticated"`
-	DevAlias                       string `json:"dev_alias,omitempty"`
-	DevID                          string `json:"dev_id,omitempty"`
-	DevTier                        string `json:"dev_tier,omitempty"`
-	DevKeyHash                     string `json:"dev_key_hash,omitempty"`
-	JWTExpiresAt                   string `json:"jwt_expires_at,omitempty"`
-	JWTExpired                     *bool  `json:"jwt_expired,omitempty"`
-	JWTRemainingSeconds            int64  `json:"jwt_remaining_seconds,omitempty"`
-	RefreshTokenStored             bool   `json:"refresh_token_stored"`
-	RefreshTokenExpiresAt          string `json:"refresh_token_expires_at,omitempty"`
-	RefreshTokenExpired            *bool  `json:"refresh_token_expired,omitempty"`
-	RefreshTokenRemainingSeconds   int64  `json:"refresh_token_remaining_seconds,omitempty"`
+	APIKeySet             bool   `json:"api_key_set"`
+	BaseURL               string `json:"base_url"`
+	DevAuthenticated      bool   `json:"dev_authenticated"`
+	DevAlias              string `json:"dev_alias,omitempty"`
+	DevID                 string `json:"dev_id,omitempty"`
+	DevTier               string `json:"dev_tier,omitempty"`
+	DevKeyHash            string `json:"dev_key_hash,omitempty"`
+	JWTExpiresAt          string `json:"jwt_expires_at,omitempty"`
+	JWTExpired            *bool  `json:"jwt_expired,omitempty"`
+	// JWTRemainingSeconds intentionally has NO omitempty: zero is a valid
+	// signal (sub-second remaining — agents need to refresh immediately).
+	// Suppressing zero would conflate "almost expired" with "no signal".
+	// Branch on JWTExpired (*bool present iff parseable) to disambiguate
+	// "not parseable" from "fully expired". Same for RefreshTokenRemainingSeconds.
+	JWTRemainingSeconds          int64  `json:"jwt_remaining_seconds"`
+	RefreshTokenStored           bool   `json:"refresh_token_stored"`
+	RefreshTokenExpiresAt        string `json:"refresh_token_expires_at,omitempty"`
+	RefreshTokenExpired          *bool  `json:"refresh_token_expired,omitempty"`
+	RefreshTokenRemainingSeconds int64  `json:"refresh_token_remaining_seconds"`
 }
 
 func runDevStatus(cmd *cobra.Command, args []string) error {
@@ -479,22 +569,31 @@ func runDevStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// timeUntil parses an RFC3339 timestamp and returns (expired, remaining, ok).
-// ok=false means the timestamp was empty or unparseable — callers should
-// treat the field as absent rather than expired/valid.
-func timeUntil(rfc3339 string) (expired bool, remaining time.Duration, ok bool) {
+// parseExpiry is the shared RFC3339 parse + expiry-comparison primitive
+// behind timeUntil and printExpiryLine. Returns the parsed timestamp (zero
+// when ok=false) plus a (remaining, expired, ok) tuple. ok=false means the
+// input was empty or unparseable — callers should treat the value as absent
+// rather than expired/valid.
+func parseExpiry(rfc3339 string) (expiresAt time.Time, remaining time.Duration, expired, ok bool) {
 	if rfc3339 == "" {
-		return false, 0, false
+		return time.Time{}, 0, false, false
 	}
 	expiresAt, err := time.Parse(time.RFC3339, rfc3339)
 	if err != nil {
-		return false, 0, false
+		return time.Time{}, 0, false, false
 	}
 	now := time.Now()
 	if now.After(expiresAt) {
-		return true, 0, true
+		return expiresAt, 0, true, true
 	}
-	return false, expiresAt.Sub(now), true
+	return expiresAt, expiresAt.Sub(now), false, true
+}
+
+// timeUntil returns the (expired, remaining, ok) projection of parseExpiry —
+// the JSON envelope path doesn't need the parsed timestamp for display.
+func timeUntil(rfc3339 string) (expired bool, remaining time.Duration, ok bool) {
+	_, remaining, expired, ok = parseExpiry(rfc3339)
+	return
 }
 
 // printExpiryLine prints "<label>: valid until <time> (<remaining>)" or
@@ -506,13 +605,12 @@ func printExpiryLine(label, rfc3339, expiredHint string) {
 		fmt.Printf("%s: active (no expiry info)\n", label)
 		return
 	}
-	expiresAt, err := time.Parse(time.RFC3339, rfc3339)
-	if err != nil {
+	expiresAt, remaining, expired, ok := parseExpiry(rfc3339)
+	if !ok {
 		fmt.Printf("%s expires: %s\n", label, rfc3339)
 		return
 	}
-	now := time.Now()
-	if now.After(expiresAt) {
+	if expired {
 		fmt.Printf("%s: EXPIRED (at %s)\n", label, expiresAt.Local().Format(time.RFC1123))
 		if expiredHint != "" {
 			fmt.Printf("  → %s\n", expiredHint)
@@ -522,5 +620,5 @@ func printExpiryLine(label, rfc3339, expiredHint string) {
 	fmt.Printf("%s: valid until %s (%s remaining)\n",
 		label,
 		expiresAt.Local().Format(time.RFC1123),
-		formatDuration(expiresAt.Sub(now)))
+		formatDuration(remaining))
 }
