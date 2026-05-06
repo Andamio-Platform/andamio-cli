@@ -82,10 +82,16 @@ func (c *Client) Get(ctx context.Context, path string, result interface{}) error
 	return json.NewDecoder(resp.Body).Decode(result)
 }
 
-// setHeaders adds common headers to a request.
-//
-// TODO(#80 PR-B): wire `cfg.DevJWT` into Authorization for /v2/keys and
-// other developer-portal endpoints — see #84 item 3 for design tradeoffs.
+// setHeaders adds common headers to a request. The credential surface
+// here is single-slot by design: at most one of `X-API-Key` / `Authorization:
+// Bearer` rides on a given request. Developer-JWT routing (for /v2/keys
+// and other dev-portal endpoints) is handled by `cmd/andamio/dev_keys.go`'s
+// `devKeysClient` — it clones the cfg with `APIKey` cleared and `DevJWT`
+// promoted into `UserJWT` so this function emits exactly one credential
+// regardless of which slots are populated on disk. Past pain at
+// `docs/solutions/integration-issues/cli-apikey-auth-isolation-and-content-404-ux.md`
+// — never add a third branch here without weighing the dual-credential
+// failure modes the gateway middleware checks for.
 func (c *Client) setHeaders(req *http.Request) {
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)

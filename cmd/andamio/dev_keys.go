@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"net/url"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -13,6 +16,16 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
 )
+
+// devKeyIDPattern matches the canonical UUID format the gateway emits for
+// developer key ids. Validation is structural (not strict per RFC 4122) —
+// any 8-4-4-4-12 hex sequence is accepted; deeper checks are gateway-side.
+// The point of validating client-side is to catch typos and shell-expansion
+// accidents — a stray `?` truncates the path, a `..` segment is forwarded
+// literally (verified via httptest), and an empty `$ID` builds the list
+// path with DELETE — before they hit the wire as confusing 4xx errors or,
+// worse, target a different resource than the user named.
+var devKeyIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // PR-B (#80 second slice) — wraps andamio-api's `/v2/keys` developer-portal
 // surface (added in #410, separate from the legacy `/apikey/developer/key/*`
@@ -119,6 +132,15 @@ func devKeysClient(cfg *config.Config) (*client.Client, error) {
 		}
 	}
 	devCfg := *cfg
+	// `devCfg := *cfg` is a shallow copy — `SubmitHeaders` is the only map
+	// field on Config and would otherwise share the underlying map pointer
+	// with the source. Today client.New does not read submit headers and
+	// devKeysClient does not mutate them, so the shared pointer is safe.
+	// But the auth-isolation contract this helper exists to enforce should
+	// be defended structurally, not by current-implementation invariants.
+	// Any future field added to Config that holds a reference type needs
+	// the same explicit handling.
+	devCfg.SubmitHeaders = maps.Clone(cfg.SubmitHeaders)
 	devCfg.APIKey = ""
 	devCfg.UserJWT = cfg.DevJWT
 	return client.New(&devCfg), nil
@@ -191,6 +213,18 @@ func runDevKeysListFlow(ctx context.Context, cfg *config.Config) error {
 type devKeysCreateRequest struct {
 	Name        string `json:"name"`
 	Environment string `json:"environment"`
+}
+
+// devKeysDeleteResult is the typed `dev keys delete --output json` envelope.
+// `id` echoes the deleted resource so cleanup pipelines can correlate
+// against their own state; `deleted: true` is the success signal (404s
+// surface as a returned error rather than `deleted: false`). Mirrors
+// `devLogoutResult` — both commands have a single-bool success contract
+// that benefits from a typed envelope so a future copy-edit cannot rename
+// or drop a key without a compile error.
+type devKeysDeleteResult struct {
+	ID      string `json:"id"`
+	Deleted bool   `json:"deleted"`
 }
 
 // devKeysCreateResponse mirrors keys_viewmodels.CreateKeyResponse. The Key
@@ -270,12 +304,19 @@ func runDevKeysDelete(cmd *cobra.Command, args []string) error {
 // runDevKeysDeleteFlow is the testable core of `dev keys delete`. See
 // runDevKeysListFlow for the split rationale.
 func runDevKeysDeleteFlow(ctx context.Context, cfg *config.Config, id string) error {
+	if !devKeyIDPattern.MatchString(id) {
+		return fmt.Errorf("invalid developer key id %q: must be a UUID returned by 'andamio dev keys list'", id)
+	}
 	c, err := devKeysClient(cfg)
 	if err != nil {
 		return err
 	}
 
-	if err := c.Delete(ctx, fmt.Sprintf(devKeysDeletePathFmt, id)); err != nil {
+	// url.PathEscape is defense-in-depth — the UUID regex above already
+	// rules out reserved characters, but encoding before formatting means a
+	// future relaxation of the regex (or a different id format) cannot
+	// reintroduce the URL-injection class.
+	if err := c.Delete(ctx, fmt.Sprintf(devKeysDeletePathFmt, url.PathEscape(id))); err != nil {
 		// 404 from this endpoint covers both "not found" and "owned by
 		// another developer" — gateway treats them identically by design.
 		// Surface that fact so users don't waste time debugging an id
@@ -288,10 +329,7 @@ func runDevKeysDeleteFlow(ctx context.Context, cfg *config.Config, id string) er
 	}
 
 	if output.GetFormat() == output.FormatJSON {
-		return output.PrintJSON(map[string]interface{}{
-			"id":      id,
-			"deleted": true,
-		})
+		return output.PrintJSON(devKeysDeleteResult{ID: id, Deleted: true})
 	}
 	fmt.Fprintf(os.Stderr, "Developer key %s revoked.\n", id)
 	return nil

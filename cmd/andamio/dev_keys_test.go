@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -23,8 +24,6 @@ import (
 // (method, body, Authorization header) so the no-X-API-Key contract is
 // enforced structurally — not just observed transitively.
 type devKeysGatewayStub struct {
-	t *testing.T
-
 	listRespStatus int
 	listRespBody   []byte
 	gotListRequest bool
@@ -103,7 +102,6 @@ func (s *devKeysGatewayStub) writeOrDefault(w http.ResponseWriter, status int, b
 // are tripwires: any test that sees them on the wire fails.
 func devKeysTestEnv(t *testing.T, stub *devKeysGatewayStub) *config.Config {
 	t.Helper()
-	stub.t = t
 	srv := httptest.NewServer(stub.serve())
 	t.Cleanup(srv.Close)
 
@@ -215,6 +213,53 @@ func TestRunDevKeysList_NoDevAuth_ErrorsWithLoginHint(t *testing.T) {
 	}
 }
 
+// TestRunDevKeysCreate_NoDevAuth_ErrorsWithLoginHint pins that the auth-error
+// remediation message ("andamio dev login ...") rides through `create` —
+// list has the same gate but a different code path could regress
+// independently. Mirror for delete below; both rely on the shared
+// devKeysClient primitive but the per-command contract should be testable.
+func TestRunDevKeysCreate_NoDevAuth_ErrorsWithLoginHint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &config.Config{}
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("seed empty: %v", err)
+	}
+
+	err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet")
+	if err == nil {
+		t.Fatal("expected AuthError when dev slot is empty")
+	}
+	var authErr *apierr.AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected *apierr.AuthError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "andamio dev login") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "andamio dev login")
+	}
+}
+
+func TestRunDevKeysDelete_NoDevAuth_ErrorsWithLoginHint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &config.Config{}
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("seed empty: %v", err)
+	}
+
+	// Use a valid UUID so we know we're hitting the auth-error path, not
+	// the new client-side id validation gate.
+	err := runDevKeysDeleteFlow(context.Background(), cfg, "11111111-1111-1111-1111-111111111111")
+	if err == nil {
+		t.Fatal("expected AuthError when dev slot is empty")
+	}
+	var authErr *apierr.AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected *apierr.AuthError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "andamio dev login") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "andamio dev login")
+	}
+}
+
 // -----------------------------------------------------------------------------
 // dev keys create
 // -----------------------------------------------------------------------------
@@ -225,7 +270,7 @@ func TestRunDevKeysCreate_HappyPath_RawKeyOnStdoutWarningOnStderr(t *testing.T) 
 	}
 	cfg := devKeysTestEnv(t, stub)
 
-	captured := captureStdout(t, func() {
+	stdout, stderr := captureBoth(t, func() {
 		if err := runDevKeysCreateFlow(context.Background(), cfg, "preprod-bot", "preprod"); err != nil {
 			t.Fatalf("create: %v", err)
 		}
@@ -245,13 +290,26 @@ func TestRunDevKeysCreate_HappyPath_RawKeyOnStdoutWarningOnStderr(t *testing.T) 
 	}
 
 	// Stdout MUST contain the raw key (so it can be piped/captured).
-	if !strings.Contains(captured, "ak_test_RAWVALUE") {
-		t.Errorf("stdout missing raw key; captured: %q", captured)
+	if !strings.Contains(stdout, "ak_test_RAWVALUE") {
+		t.Errorf("stdout missing raw key; captured: %q", stdout)
 	}
 	// Stdout MUST NOT contain the metadata noise — that goes to stderr,
 	// so a `dev keys create … | pbcopy` workflow gets the key alone.
-	if strings.Contains(captured, "WARNING") || strings.Contains(captured, "id: k-new") {
-		t.Errorf("stdout polluted with metadata (must go to stderr); captured: %q", captured)
+	if strings.Contains(stdout, "WARNING") || strings.Contains(stdout, "id: k-new") {
+		t.Errorf("stdout polluted with metadata (must go to stderr); captured: %q", stdout)
+	}
+	// Stderr MUST contain the metadata + WARNING so a human running the
+	// command sees what just happened.
+	if !strings.Contains(stderr, "WARNING") || !strings.Contains(stderr, "k-new") {
+		t.Errorf("stderr missing metadata + WARNING; captured: %q", stderr)
+	}
+	// Stderr MUST NOT contain the raw key. PR-A established this tripwire
+	// pattern for the dev-login JSON envelopes; the same protection
+	// applies here even though the key is intentionally on stdout —
+	// any future refactor that adds a debug log of the response struct
+	// (or echoes resp.Key in the warning text) must fail this assertion.
+	if strings.Contains(stderr, "ak_test_RAWVALUE") {
+		t.Errorf("raw key leaked to stderr — must appear only on stdout. Stderr: %q", stderr)
 	}
 }
 
@@ -331,16 +389,51 @@ func TestRunDevKeysDelete_HappyPath_204(t *testing.T) {
 	}
 	cfg := devKeysTestEnv(t, stub)
 
-	if err := runDevKeysDeleteFlow(context.Background(), cfg, "key-uuid-1"); err != nil {
+	const validID = "11111111-2222-3333-4444-555555555555"
+	if err := runDevKeysDeleteFlow(context.Background(), cfg, validID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if !stub.gotDeleteRequest {
 		t.Fatal("delete endpoint not called")
 	}
-	if got := stub.capturedDeleteID; got != "key-uuid-1" {
-		t.Errorf("captured id = %q, want key-uuid-1", got)
+	if got := stub.capturedDeleteID; got != validID {
+		t.Errorf("captured id = %q, want %q", got, validID)
 	}
 	assertOnlyDevJWTOnTheWire(t, stub)
+}
+
+// TestRunDevKeysDelete_RejectsMalformedID pins the client-side UUID gate.
+// The tests below cover three concrete shell-expansion accidents that motivated
+// the validation: (1) empty id from `$ID` unset, (2) URL-injection via `?` that
+// truncates the path silently and targets a different resource than the user
+// named, (3) path-traversal via `..` that gets forwarded literally to the
+// gateway. Each case must be rejected client-side BEFORE any HTTP request.
+func TestRunDevKeysDelete_RejectsMalformedID(t *testing.T) {
+	cases := []struct{ name, id string }{
+		{"empty", ""},
+		{"url_injection_questionmark", "11111111-2222-3333-4444-555555555555?evil=1"},
+		{"path_traversal", "../../../auth/login"},
+		{"non_uuid", "not-a-uuid"},
+		{"trailing_slash", "11111111-2222-3333-4444-555555555555/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &devKeysGatewayStub{
+				deleteRespStatus: http.StatusNoContent,
+			}
+			cfg := devKeysTestEnv(t, stub)
+			err := runDevKeysDeleteFlow(context.Background(), cfg, tc.id)
+			if err == nil {
+				t.Fatalf("expected validation error for id %q", tc.id)
+			}
+			if !strings.Contains(err.Error(), "invalid developer key id") {
+				t.Errorf("err = %q, want substring %q", err.Error(), "invalid developer key id")
+			}
+			if stub.gotDeleteRequest {
+				t.Errorf("delete endpoint was called for malformed id %q — must reject client-side before any HTTP request", tc.id)
+			}
+		})
+	}
 }
 
 func TestRunDevKeysDelete_NotFound_DocumentsAmbiguity(t *testing.T) {
@@ -355,11 +448,12 @@ func TestRunDevKeysDelete_NotFound_DocumentsAmbiguity(t *testing.T) {
 	}
 	cfg := devKeysTestEnv(t, stub)
 
-	err := runDevKeysDeleteFlow(context.Background(), cfg, "missing-id")
+	const missingID = "99999999-8888-7777-6666-555555555555"
+	err := runDevKeysDeleteFlow(context.Background(), cfg, missingID)
 	if err == nil {
 		t.Fatal("expected error on 404")
 	}
-	for _, want := range []string{"missing-id", "not owned"} {
+	for _, want := range []string{missingID, "not owned"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %q, want substring %q", err.Error(), want)
 		}
@@ -372,10 +466,11 @@ func TestRunDevKeysDelete_JSONEnvelope(t *testing.T) {
 	}
 	cfg := devKeysTestEnv(t, stub)
 
+	const validID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	captured := captureStdout(t, func() {
 		_ = output.SetFormat("json")
 		t.Cleanup(func() { _ = output.SetFormat("text") })
-		if err := runDevKeysDeleteFlow(context.Background(), cfg, "k-1"); err != nil {
+		if err := runDevKeysDeleteFlow(context.Background(), cfg, validID); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 	})
@@ -384,8 +479,8 @@ func TestRunDevKeysDelete_JSONEnvelope(t *testing.T) {
 	if err := json.Unmarshal([]byte(captured), &got); err != nil {
 		t.Fatalf("decode: %v\nbytes: %s", err, captured)
 	}
-	if got["id"] != "k-1" {
-		t.Errorf("envelope.id = %v, want k-1", got["id"])
+	if got["id"] != validID {
+		t.Errorf("envelope.id = %v, want %v", got["id"], validID)
 	}
 	if v, _ := got["deleted"].(bool); !v {
 		t.Errorf("envelope.deleted = %v, want true", got["deleted"])
@@ -435,4 +530,56 @@ func TestDevKeysClient_StripsAPIKeyAndPromotesDevJWT(t *testing.T) {
 	if cfg.APIKey != "should-be-stripped" || cfg.UserJWT != "wallet-jwt-should-not-promote" {
 		t.Errorf("devKeysClient mutated source cfg: APIKey=%q UserJWT=%q (want unchanged)", cfg.APIKey, cfg.UserJWT)
 	}
+}
+
+// captureBoth redirects os.Stdout AND os.Stderr through pipes, runs fn, and
+// returns the captured bytes from each as strings. Used by tests that need
+// to verify the stdout-vs-stderr split contract — `dev keys create` is the
+// motivating case (raw key on stdout, metadata + WARNING on stderr, with
+// the inverse tripwire that the raw key MUST NOT appear on stderr).
+//
+// Implementation: two pipes, two reader goroutines, both restored via
+// t.Cleanup so a panic mid-fn does not strand the redirection across tests.
+// Equivalent in shape to dev_test.go's captureStdout helper, just doubled.
+func captureBoth(t *testing.T, fn func()) (stdout, stderr string) {
+	t.Helper()
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe stdout: %v", err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe stderr: %v", err)
+	}
+	oldStdout, oldStderr := os.Stdout, os.Stderr
+	os.Stdout = stdoutW
+	os.Stderr = stderrW
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+	})
+
+	stdoutDone := make(chan []byte, 1)
+	stderrDone := make(chan []byte, 1)
+	read := func(r *os.File, done chan<- []byte) {
+		var buf [4096]byte
+		out := []byte{}
+		for {
+			n, err := r.Read(buf[:])
+			if n > 0 {
+				out = append(out, buf[:n]...)
+			}
+			if err != nil {
+				break
+			}
+		}
+		done <- out
+	}
+	go read(stdoutR, stdoutDone)
+	go read(stderrR, stderrDone)
+
+	fn()
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+	return string(<-stdoutDone), string(<-stderrDone)
 }
