@@ -749,6 +749,11 @@ func TestRunDevLogout_JSONEnvelope(t *testing.T) {
 	}
 
 	// Second call: no credentials remain — cleared should be false.
+	// This exercises the early-return path (line ~370 in dev.go) which is
+	// structurally distinct from the populated-slot path. Verify the key is
+	// PRESENT-with-value-false, not just falsy from absence — `got["cleared"].(bool)`
+	// returns false either way and would silently pass if the early-return
+	// regressed to skip JSON emission entirely.
 	captured2 := captureStdout(t, func() {
 		_ = output.SetFormat("json")
 		t.Cleanup(func() { _ = output.SetFormat("text") })
@@ -760,8 +765,12 @@ func TestRunDevLogout_JSONEnvelope(t *testing.T) {
 	if err := json.Unmarshal([]byte(captured2), &got2); err != nil {
 		t.Fatalf("decode 2: %v\nbytes: %s", err, captured2)
 	}
-	if v, _ := got2["cleared"].(bool); v {
-		t.Errorf("cleared = %v on second call (no credentials); want false (idempotency contract)", got2["cleared"])
+	v, present := got2["cleared"]
+	if !present {
+		t.Fatalf("cleared key missing from second-call envelope — early-return path likely did not emit JSON. Captured: %q", captured2)
+	}
+	if v != false {
+		t.Errorf("cleared = %v on second call (no credentials); want false (idempotency contract)", v)
 	}
 }
 
@@ -881,6 +890,21 @@ func TestRunDevStatus_JSON_Unauthenticated(t *testing.T) {
 	for _, key := range []string{"dev_alias", "dev_id", "dev_tier", "jwt_expires_at", "refresh_token_expires_at"} {
 		if _, present := got[key]; present {
 			t.Errorf("unauthenticated envelope contains %q; expected omitempty", key)
+		}
+	}
+	// `*_remaining_seconds` is the always-present-with-zero contract — round 2
+	// dropped omitempty deliberately (see devStatusResult docstring + CHANGELOG)
+	// so sub-second windows surface as 0 instead of being dropped. This pins
+	// the contract: a future "cleanup" pass that re-adds omitempty must fail
+	// these assertions, not silently drift the JSON envelope.
+	for _, key := range []string{"jwt_remaining_seconds", "refresh_token_remaining_seconds"} {
+		v, present := got[key]
+		if !present {
+			t.Errorf("unauthenticated envelope is missing %q; round-2 contract is always-present-with-zero, not omitempty", key)
+			continue
+		}
+		if v != float64(0) {
+			t.Errorf("unauthenticated envelope[%q] = %v, want 0", key, v)
 		}
 	}
 }

@@ -199,7 +199,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `dev login --skey <path> --alias <name> --address <bech32>` | `/v2/auth/developer/login/session` + `/v2/auth/developer/login/complete` | api-key | Headless CIP-30 signature-verified developer login. Mints a 60-min RS256 developer JWT + 30-day rotation refresh token. Required for `/v2/keys` and other developer-portal endpoints. |
 | `dev refresh` | `/v2/auth/developer/token/refresh` | dev-jwt-rotation (refresh token) | Rotate the developer JWT using the stored refresh token. Single-use rotation server-side; both tokens update atomically. 401 → re-run `dev login`. |
 | `dev logout` | local | none | Clear entire dev slot (JWT, refresh token, alias, ID, tier, key hash). Does not affect user JWT. |
-| `dev status` | local | none | Show developer auth status — JWT expiry, refresh-token expiry, tier. JSON envelope surfaces `jwt_expires_at` / `refresh_token_expires_at` / `*_expired` / `*_remaining_seconds` for scriptable branching. |
+| `dev status` | local | none | Show developer auth status — JWT expiry, refresh-token expiry, tier. JSON envelope surfaces `jwt_expires_at` / `refresh_token_expires_at` / `*_expired` / `*_remaining_seconds` for scriptable branching. `*_remaining_seconds` is always present (no `omitempty`): zero means "sub-second remaining" (refresh now); branch on `*_expired` to disambiguate "fully expired" from "not parseable". Branch on `dev_authenticated` first. |
 
 ### spec — OpenAPI spec
 | Command | Endpoint | Auth | Description |

@@ -83,7 +83,13 @@ var devLogoutCmd = &cobra.Command{
 wallet/user JWT — 'andamio user logout' clears that slot independently.
 
 After logout, 'dev refresh' will fail; re-run 'dev login' to mint a new
-session.`,
+session.
+
+Caveat: if ANDAMIO_DEV_REFRESH_TOKEN (or ANDAMIO_DEV_JWT) is exported in
+your environment, logout clears the on-disk slot but the next CLI
+invocation re-injects the env value via Load(). For ephemeral CI/CD
+runs that need true logout, unset the env var(s) before relying on
+logout, or use a tmpfs HOME and discard the directory on exit.`,
 	Args: cobra.NoArgs,
 	RunE: runDevLogout,
 }
@@ -159,7 +165,9 @@ func runDevLogin(cmd *cobra.Command, args []string) error {
 //
 // CRITICAL: this struct must NEVER carry the JWT or refresh-token bodies.
 // Tokens belong on disk (~/.andamio/config.json at 0600), not on stdout.
-// `TestRunDev*_JSONOutputDoesNotLeakTokens` enforces this.
+// `TestRunDevHeadlessLogin_JSONOutputShape` and
+// `TestRunDevRefreshFlow_JSONOutputShape` enforce this — both decode
+// captured stdout and assert the literal token bodies are absent.
 type devSessionResult struct {
 	Alias                 string `json:"alias"`
 	DevID                 string `json:"dev_id"`
