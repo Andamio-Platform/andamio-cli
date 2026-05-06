@@ -326,7 +326,7 @@ func TestRunDevKeysCreate_JSONOutput_KeyValuePresent(t *testing.T) {
 	}
 	cfg := devKeysTestEnv(t, stub)
 
-	captured := captureStdout(t, func() {
+	stdout, stderr := captureBoth(t, func() {
 		_ = output.SetFormat("json")
 		t.Cleanup(func() { _ = output.SetFormat("text") })
 		if err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet"); err != nil {
@@ -335,11 +335,25 @@ func TestRunDevKeysCreate_JSONOutput_KeyValuePresent(t *testing.T) {
 	})
 
 	var got map[string]interface{}
-	if err := json.Unmarshal([]byte(captured), &got); err != nil {
-		t.Fatalf("decode: %v\nbytes: %s", err, captured)
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("decode: %v\nbytes: %s", err, stdout)
 	}
 	if got["key"] != "ak_RAW" {
 		t.Errorf("envelope.key = %v, want ak_RAW", got["key"])
+	}
+
+	// JSON-mode WARNING contract: the one-time-use disclaimer rides on
+	// stderr in BOTH modes so a human running `--output json` interactively
+	// for a one-off still sees it. Scripts that don't want noise pipe
+	// `2>/dev/null`. Pattern: `gh auth token`. Pinned here so a future
+	// refactor that suppresses stderr in JSON mode fails the test.
+	if !strings.Contains(stderr, "WARNING") {
+		t.Errorf("JSON mode missing WARNING on stderr: %q (the one-time-use disclaimer must fire in both text and JSON modes)", stderr)
+	}
+	// Stderr must NOT contain the raw key — guard against a refactor
+	// that accidentally echoes resp.Key in the warning.
+	if strings.Contains(stderr, "ak_RAW") {
+		t.Errorf("raw key leaked to stderr in JSON mode: %q", stderr)
 	}
 }
 

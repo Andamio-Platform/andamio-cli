@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/url"
 	"os"
@@ -215,6 +216,21 @@ type devKeysCreateRequest struct {
 	Environment string `json:"environment"`
 }
 
+// devRawKey wraps a freshly minted API key string. The underlying value is
+// usable via direct print (string-aliased type — fmt.Println prints the
+// string verbatim, equality with "" works), but the LogValue() method makes
+// accidental log emission impossible: any slog handler that captures a
+// struct containing a devRawKey field renders it as "[redacted]" instead
+// of the underlying secret. Mirrors the gateway's keys_viewmodels.RawKey
+// type — defense-in-depth backstop in case a future refactor adds slog
+// instrumentation around the create flow without re-reviewing what's safe
+// to log. The compiler does not enforce no-string-cast, so a PR review
+// still verifies new code does not unwrap to log it.
+type devRawKey string
+
+// LogValue implements slog.LogValuer.
+func (k devRawKey) LogValue() slog.Value { return slog.StringValue("[redacted]") }
+
 // devKeysDeleteResult is the typed `dev keys delete --output json` envelope.
 // `id` echoes the deleted resource so cleanup pipelines can correlate
 // against their own state; `deleted: true` is the success signal (404s
@@ -229,13 +245,14 @@ type devKeysDeleteResult struct {
 
 // devKeysCreateResponse mirrors keys_viewmodels.CreateKeyResponse. The Key
 // field carries the raw API key — emitted to the user EXACTLY ONCE per
-// the gateway's contract. Never logged, never persisted; the user is
-// responsible for capturing it.
+// the gateway's contract. Never persisted; the user is responsible for
+// capturing it. Typed as devRawKey so a slog-based logger that captures
+// the response struct redacts automatically.
 type devKeysCreateResponse struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	Environment string    `json:"environment"`
-	Key         string    `json:"key"`
+	Key         devRawKey `json:"key"`
 	Last4       string    `json:"last4"`
 	CreatedAt   time.Time `json:"created_at"`
 }
@@ -277,18 +294,23 @@ func runDevKeysCreateFlow(ctx context.Context, cfg *config.Config, name, environ
 		return fmt.Errorf("create developer key failed: gateway returned no key value (the raw key is unrecoverable; this is a gateway bug)")
 	}
 
-	if output.GetFormat() == output.FormatJSON {
-		return output.PrintJSON(resp)
-	}
-
-	// Text mode: surface the raw key on stdout (so it can be piped/captured)
-	// and the warning on stderr (so it doesn't pollute the captured key).
-	// Pattern matches `gh auth token` etc.
+	// Metadata + WARNING ride on stderr in BOTH modes. JSON consumers that
+	// don't want the noise pipe `2>/dev/null`; humans running `--output
+	// json` interactively for a one-off still see the one-time-use warning,
+	// which is the single most important thing about this command. Pattern
+	// matches `gh auth token`.
 	fmt.Fprintf(os.Stderr, "Developer API key created (id: %s, environment: %s, name: %s).\n", resp.ID, resp.Environment, resp.Name)
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "WARNING: this is the only time the raw key value is returned. Store it immediately —")
 	fmt.Fprintln(os.Stderr, "subsequent 'dev keys list' calls return only the last4 hint, not the full key.")
 	fmt.Fprintln(os.Stderr, "")
+
+	if output.GetFormat() == output.FormatJSON {
+		return output.PrintJSON(resp)
+	}
+
+	// Text mode: raw key on stdout so `dev keys create … | pbcopy` captures
+	// the key alone. Stderr already carries the metadata.
 	fmt.Println(resp.Key)
 	return nil
 }
@@ -316,7 +338,7 @@ func runDevKeysDeleteFlow(ctx context.Context, cfg *config.Config, id string) er
 	// rules out reserved characters, but encoding before formatting means a
 	// future relaxation of the regex (or a different id format) cannot
 	// reintroduce the URL-injection class.
-	if err := c.Delete(ctx, fmt.Sprintf(devKeysDeletePathFmt, url.PathEscape(id))); err != nil {
+	if err := c.Delete(ctx, fmt.Sprintf(devKeysDeletePathFmt, url.PathEscape(id)), nil); err != nil {
 		// 404 from this endpoint covers both "not found" and "owned by
 		// another developer" — gateway treats them identically by design.
 		// Surface that fact so users don't waste time debugging an id

@@ -184,13 +184,11 @@ func (c *Client) Put(ctx context.Context, path string, body interface{}, result 
 	return nil
 }
 
-// Delete sends a DELETE request and returns nil on any 2xx (typically 204
-// No Content for resource-revoke endpoints like DELETE /v2/keys/{id}).
-// Does not decode a response body — DELETE conventions don't carry one and
-// the few endpoints that do should use a separate method to keep the
-// no-body contract structural rather than convention-driven. See Get for
-// ctx semantics.
-func (c *Client) Delete(ctx context.Context, path string) error {
+// Delete sends a DELETE request and returns nil on any 2xx. The result
+// param mirrors Post/Put: pass nil for endpoints that return 204 No Content
+// (the common case — DELETE /v2/keys/{id} is one), pass a struct pointer
+// for endpoints that return 200 with a body. See Get for ctx semantics.
+func (c *Client) Delete(ctx context.Context, path string, result interface{}) error {
 	url := c.baseURL + path
 
 	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
@@ -209,6 +207,9 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return statusError(resp.StatusCode, body)
+	}
+	if result != nil {
+		return json.NewDecoder(resp.Body).Decode(result)
 	}
 	return nil
 }
