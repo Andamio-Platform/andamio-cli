@@ -19,10 +19,11 @@ import (
 // dev keys list|create|delete — andamio-api /v2/keys (#410, PR-B/#80 second slice)
 // =============================================================================
 
-// devKeysGatewayStub stands in for the /v2/keys endpoint family. Each test
-// wires the response body + status and inspects captured request metadata
-// (method, body, Authorization header) so the no-X-API-Key contract is
-// enforced structurally — not just observed transitively.
+// devKeysGatewayStub stands in for the /api/v2/keys endpoint family. Each
+// test wires the response body + status and inspects captured request
+// metadata (method, body, Authorization header, X-API-Key header) so the
+// dual-credential contract is enforced structurally — not just observed
+// transitively.
 type devKeysGatewayStub struct {
 	listRespStatus int
 	listRespBody   []byte
@@ -39,12 +40,14 @@ type devKeysGatewayStub struct {
 	capturedDeleteID string
 
 	// capturedAuthHeader records the Authorization header from the last
-	// request. Used to assert the dev JWT (NOT the wallet JWT, NOT the
-	// api key) was forwarded.
+	// request. Used to assert the dev JWT (NOT the wallet JWT) was
+	// forwarded — the wallet/user JWT slot is overwritten by the dev JWT
+	// in the cfg clone.
 	capturedAuthHeader string
 	// capturedAPIKeyHeader records X-API-Key from the last request. Must
-	// always be empty on this endpoint family — dual-credential requests
-	// fail with the gateway's middleware.
+	// equal the configured api-key on this endpoint family — the gateway's
+	// V2AuthMiddleware requires it for app-level auth alongside the
+	// developer JWT.
 	capturedAPIKeyHeader string
 }
 
@@ -97,9 +100,10 @@ func (s *devKeysGatewayStub) writeOrDefault(w http.ResponseWriter, status int, b
 }
 
 // devKeysTestEnv wires the stub, points HOME at a tempdir, and seeds a
-// config with both a dev JWT (the credential `dev keys` SHOULD use) and a
-// wallet JWT + api key (credentials it MUST NOT also send). The latter two
-// are tripwires: any test that sees them on the wire fails.
+// config with the dev JWT (which must ride in `Authorization: Bearer`) and
+// the api-key (which must ride in `X-API-Key` alongside it). The wallet/
+// user JWT is a tripwire: it must NOT make it to the wire because the cfg
+// clone overwrites the UserJWT slot with the DevJWT.
 func devKeysTestEnv(t *testing.T, stub *devKeysGatewayStub) *config.Config {
 	t.Helper()
 	srv := httptest.NewServer(stub.serve())
@@ -109,7 +113,7 @@ func devKeysTestEnv(t *testing.T, stub *devKeysGatewayStub) *config.Config {
 
 	cfg := &config.Config{
 		BaseURL:   srv.URL,
-		APIKey:    "tripwire-api-key-MUST-NOT-LEAK",
+		APIKey:    "expected-api-key-on-wire",
 		UserJWT:   "tripwire-user-jwt-MUST-NOT-LEAK",
 		DevJWT:    "dev.jwt.bearer.value",
 		DevAlias:  "myalias",
@@ -126,13 +130,13 @@ func devKeysTestEnv(t *testing.T, stub *devKeysGatewayStub) *config.Config {
 // shared auth-header invariants (one assertion path used by all three commands)
 // -----------------------------------------------------------------------------
 
-func assertOnlyDevJWTOnTheWire(t *testing.T, stub *devKeysGatewayStub) {
+func assertDualCredentialAuthOnTheWire(t *testing.T, stub *devKeysGatewayStub) {
 	t.Helper()
 	if got, want := stub.capturedAuthHeader, "Bearer dev.jwt.bearer.value"; got != want {
 		t.Errorf("Authorization header = %q, want %q (dev JWT must ride here, not wallet JWT)", got, want)
 	}
-	if stub.capturedAPIKeyHeader != "" {
-		t.Errorf("X-API-Key header = %q, want empty (dual-credential requests are rejected by developerJWTAuth middleware)", stub.capturedAPIKeyHeader)
+	if got, want := stub.capturedAPIKeyHeader, "expected-api-key-on-wire"; got != want {
+		t.Errorf("X-API-Key header = %q, want %q (V2AuthMiddleware requires X-API-Key alongside the dev JWT — sending dev JWT alone returns 401)", got, want)
 	}
 }
 
@@ -155,7 +159,7 @@ func TestRunDevKeysList_HappyPath_DecodesAndPassesAuthHeaderCorrectly(t *testing
 	if !stub.gotListRequest {
 		t.Fatal("list endpoint not called")
 	}
-	assertOnlyDevJWTOnTheWire(t, stub)
+	assertDualCredentialAuthOnTheWire(t, stub)
 }
 
 func TestRunDevKeysList_JSONOutput_PassesGatewayShapeVerbatim(t *testing.T) {
@@ -279,7 +283,7 @@ func TestRunDevKeysCreate_HappyPath_RawKeyOnStdoutWarningOnStderr(t *testing.T) 
 	if !stub.gotCreateRequest {
 		t.Fatal("create endpoint not called")
 	}
-	assertOnlyDevJWTOnTheWire(t, stub)
+	assertDualCredentialAuthOnTheWire(t, stub)
 
 	// Body shape: name + environment forwarded verbatim.
 	if got := stub.capturedCreate["name"]; got != "preprod-bot" {
@@ -413,7 +417,7 @@ func TestRunDevKeysDelete_HappyPath_204(t *testing.T) {
 	if got := stub.capturedDeleteID; got != validID {
 		t.Errorf("captured id = %q, want %q", got, validID)
 	}
-	assertOnlyDevJWTOnTheWire(t, stub)
+	assertDualCredentialAuthOnTheWire(t, stub)
 }
 
 // TestRunDevKeysDelete_RejectsMalformedID pins the client-side UUID gate.
@@ -502,17 +506,17 @@ func TestRunDevKeysDelete_JSONEnvelope(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// devKeysClient — the auth-isolation primitive (the load-bearing security guard)
+// devKeysClient — the dual-credential primitive (the load-bearing security guard)
 // -----------------------------------------------------------------------------
 
-func TestDevKeysClient_StripsAPIKeyAndPromotesDevJWT(t *testing.T) {
+func TestDevKeysClient_PreservesAPIKeyAndPromotesDevJWT(t *testing.T) {
 	// Seed SubmitHeaders too so the deep-clone contract is observable via
 	// the source-not-mutated invariant below (the production code calls
 	// maps.Clone(cfg.SubmitHeaders) explicitly to break the shared-pointer
 	// hazard).
 	cfg := &config.Config{
-		APIKey:  "should-be-stripped",
-		UserJWT: "wallet-jwt-should-not-promote",
+		APIKey:  "api-key-must-ride",
+		UserJWT: "wallet-jwt-must-not-promote",
 		DevJWT:  "dev-jwt-should-be-bearer",
 		SubmitHeaders: map[string]string{
 			"project_id": "blockfrost-secret-MUST-NOT-LEAK",
@@ -529,10 +533,10 @@ func TestDevKeysClient_StripsAPIKeyAndPromotesDevJWT(t *testing.T) {
 	// access on the unexported client struct would couple to internals.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.Header.Get("Authorization"), "Bearer dev-jwt-should-be-bearer"; got != want {
-			t.Errorf("Authorization = %q, want %q", got, want)
+			t.Errorf("Authorization = %q, want %q (dev JWT must ride here; the cfg clone promotes DevJWT into the UserJWT slot)", got, want)
 		}
-		if got := r.Header.Get("X-API-Key"); got != "" {
-			t.Errorf("X-API-Key = %q, want empty (dual-credential requests are rejected)", got)
+		if got, want := r.Header.Get("X-API-Key"), "api-key-must-ride"; got != want {
+			t.Errorf("X-API-Key = %q, want %q (V2AuthMiddleware requires X-API-Key for app-level auth alongside the developer JWT)", got, want)
 		}
 		// Submit headers are Cardano-side concerns; they MUST NOT ride on
 		// dev-portal requests. The current Client doesn't read SubmitHeaders
@@ -540,7 +544,7 @@ func TestDevKeysClient_StripsAPIKeyAndPromotesDevJWT(t *testing.T) {
 		// refactor wires submit headers into request emission, this test
 		// catches it.
 		if got := r.Header.Get("project_id"); got != "" {
-			t.Errorf("project_id header = %q, want empty (Cardano-side header must not ride on /v2/keys)", got)
+			t.Errorf("project_id header = %q, want empty (Cardano-side header must not ride on /api/v2/keys)", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"keys":[]}`))
@@ -556,7 +560,7 @@ func TestDevKeysClient_StripsAPIKeyAndPromotesDevJWT(t *testing.T) {
 
 	// Critical: the original cfg must not be mutated by devKeysClient.
 	// Subsequent config.Save() should write the unchanged state back.
-	if cfg.APIKey != "should-be-stripped" || cfg.UserJWT != "wallet-jwt-should-not-promote" {
+	if cfg.APIKey != "api-key-must-ride" || cfg.UserJWT != "wallet-jwt-must-not-promote" {
 		t.Errorf("devKeysClient mutated source cfg: APIKey=%q UserJWT=%q (want unchanged)", cfg.APIKey, cfg.UserJWT)
 	}
 	// Source SubmitHeaders must remain intact AND retain its original

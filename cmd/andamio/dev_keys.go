@@ -33,18 +33,19 @@ import (
 // stays a documented hazard rather than a tested one.
 var devKeyIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// PR-B (#80 second slice) — wraps andamio-api's `/v2/keys` developer-portal
+// PR-B (#80 second slice) — wraps andamio-api's `/api/v2/keys` developer-portal
 // surface (added in #410, separate from the legacy `/apikey/developer/key/*`
-// POST-with-body routes). All three endpoints require the developer JWT
-// minted by `andamio dev login`; the gateway's `developerJWTAuth` middleware
-// rejects wallet/user JWTs and api-keys-only.
+// POST-with-body routes). The gateway's middleware stack on this surface is
+// **dual**: `V2AuthMiddleware` validates `X-API-Key` for app-level auth and
+// billing, and `developerJWTAuth` validates `Authorization: Bearer <devJWT>`
+// for developer identity. **Both** headers must be on the wire — sending
+// dev-JWT alone returns 401 because V2AuthMiddleware runs first.
 //
-// Routing approach: clone the loaded cfg, clear `APIKey`, promote `DevJWT`
-// into `UserJWT` so `internal/client.setHeaders` emits exactly one credential
-// (`Authorization: Bearer <devJWT>`). Mirrors `cmd/andamio/apikey.go`'s clone
-// pattern. Tracked design choice in #84 item 3 — kept consistent with the
-// existing clone helper rather than introducing a parallel `Client.SetDevJWT`
-// API surface that wouldn't pay for itself today.
+// Routing approach: clone the loaded cfg and promote `DevJWT` into the
+// `UserJWT` slot so `internal/client.setHeaders` emits the dev JWT in the
+// `Authorization` header (rather than the wallet JWT, if one is also stored).
+// `APIKey` is intentionally **preserved** so `X-API-Key` rides alongside.
+// The original cfg is not mutated.
 const (
 	devKeysListPath   = "/api/v2/keys"
 	devKeysCreatePath = "/api/v2/keys"
@@ -58,13 +59,15 @@ var devKeysCmd = &cobra.Command{
 	Short: "Manage developer API keys (mainnet + preprod)",
 	Long: `Developer API key management.
 
-Wraps the gateway's /v2/keys surface — list, create, and delete API keys
-across both mainnet and preprod environments. Authenticates with the
-developer JWT minted by 'andamio dev login'; api-key + wallet-JWT slots
-are not accepted by this endpoint family.
+Wraps the gateway's /api/v2/keys surface — list, create, and delete API
+keys across both mainnet and preprod environments. Requires both an
+X-API-Key (for app-level auth and billing) AND the developer JWT minted
+by 'andamio dev login' (for developer identity). The wallet/user JWT
+slot is not used by this endpoint family.
 
-Run 'andamio dev login --skey <path> --alias <name> --address <bech32>'
-first if you have not yet minted a developer JWT.`,
+Run 'andamio auth login --api-key <key>' AND 'andamio dev login --skey
+<path> --alias <name> --address <bech32>' first if you have not yet
+configured both credentials.`,
 	Args: cobra.NoArgs,
 }
 
@@ -119,18 +122,21 @@ func init() {
 	devKeysCreateCmd.MarkFlagRequired("environment")
 }
 
-// devKeysClient builds an HTTP client with auth headers scoped to the
-// developer JWT only. Clones the loaded cfg, clears `APIKey` so X-API-Key
-// is not also sent (the gateway's `developerJWTAuth` middleware rejects
-// dual-credential requests — past pain in
-// docs/solutions/integration-issues/cli-apikey-auth-isolation-and-content-404-ux.md),
-// and promotes `DevJWT` into the `UserJWT` slot so `setHeaders` emits
-// `Authorization: Bearer <devJWT>` via the existing path. The original cfg
-// is not mutated — callers that subsequently `Save()` write the unchanged
+// devKeysClient builds an HTTP client that emits both `X-API-Key` (for the
+// gateway's `V2AuthMiddleware` app-level auth) and `Authorization: Bearer
+// <devJWT>` (for `developerJWTAuth` developer identity). Both are required
+// on the `/api/v2/keys` surface — see the package-level comment above.
+//
+// Implementation: clone the loaded cfg, promote `DevJWT` into the `UserJWT`
+// slot so `setHeaders` emits the dev JWT (rather than the wallet/user JWT,
+// if one is also stored), and leave `APIKey` in place. The original cfg is
+// not mutated — callers that subsequently `Save()` write the unchanged
 // dev/user/api-key state back to disk.
 //
 // Returns a typed AuthError if the dev slot is empty, with an inline hint
-// pointing at `dev login`.
+// pointing at `dev login`. (An empty `APIKey` slot is not pre-checked here;
+// the gateway will return 401 with its own message, which the caller's
+// `*apierr.AuthError` mapping surfaces.)
 func devKeysClient(cfg *config.Config) (*client.Client, error) {
 	if !cfg.HasDevAuth() {
 		return nil, &apierr.AuthError{
@@ -142,12 +148,10 @@ func devKeysClient(cfg *config.Config) (*client.Client, error) {
 	// field on Config and would otherwise share the underlying map pointer
 	// with the source. Today client.New does not read submit headers and
 	// devKeysClient does not mutate them, so the shared pointer is safe.
-	// But the auth-isolation contract this helper exists to enforce should
-	// be defended structurally, not by current-implementation invariants.
-	// Any future field added to Config that holds a reference type needs
-	// the same explicit handling.
+	// But this helper's contract should be defended structurally, not by
+	// current-implementation invariants. Any future field added to Config
+	// that holds a reference type needs the same explicit handling.
 	devCfg.SubmitHeaders = maps.Clone(cfg.SubmitHeaders)
-	devCfg.APIKey = ""
 	devCfg.UserJWT = cfg.DevJWT
 	return client.New(&devCfg), nil
 }
