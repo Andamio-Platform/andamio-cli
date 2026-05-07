@@ -6,6 +6,9 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Fixed
+- `andamio dev keys list|create|delete` no longer return 401 against the live gateway. The 0.12.0 implementation cleared `APIKey` from the cloned cfg before sending requests to `/api/v2/keys`, mirroring the `cmd/andamio/apikey.go` "single-credential isolation" pattern. That pattern was incorrect for this surface: the gateway middleware stack on `/api/v2/keys` is **dual** — `V2AuthMiddleware` validates `X-API-Key` for app-level auth and billing, then `developerJWTAuth` validates the developer JWT. Sending dev-JWT alone fails at the first middleware. The clone now preserves `APIKey` and only promotes `DevJWT` into the `UserJWT` slot so both `X-API-Key` and `Authorization: Bearer <devJWT>` ride on the wire. The previous "tests pin no-X-API-Key" assertions in `cmd/andamio/dev_keys_test.go` are flipped to assert the dual-credential contract instead. Both `auth login --api-key <key>` AND `dev login` are now required preconditions for `dev keys` commands; the gateway returns its own 401 if `X-API-Key` is empty.
+
 ## [0.12.0] - 2026-05-06
 
 ### Security
