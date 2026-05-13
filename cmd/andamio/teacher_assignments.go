@@ -37,14 +37,16 @@ var teacherAssignmentsListCmd = &cobra.Command{
 	Short: "List pending assignment commitments for review",
 	Long: `List assignment commitments pending teacher review.
 
-Without --course, returns a lightweight summary across all courses. Status
-column will render "—" because the on-chain-only summary lacks the nested
-content.commitment_status field. Use --output json and filter on
-.data[].content.commitment_status to avoid parsing the placeholder.
+Without --course, returns a lightweight summary across all courses. The
+on-chain-only summary has no nested content.commitment_status field, so
+the Status column renders "—" in text mode and the field is absent from
+the JSON envelope. To get DB statuses, re-run with --course <id>.
 
 With --course, returns full merged history (on-chain + DB) for that course,
 with the Status column populated from content.commitment_status (raw API
-enum, displayed verbatim).
+enum, displayed verbatim). For scripting, use:
+  andamio teacher assignments list --course <id> --output json \
+    | jq '.data[].content.commitment_status'
 
 Known commitment_status values: AWAITING_SUBMISSION, SUBMITTED, ACCEPTED,
 REFUSED, CREDENTIAL_CLAIMED, LEFT, PENDING_TX_* (transient). The CLI does
