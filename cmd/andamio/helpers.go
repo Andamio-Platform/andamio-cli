@@ -90,6 +90,18 @@ func truncateUTF8(s string, maxRunes int) string {
 	return string(runes[:maxRunes-3]) + "..."
 }
 
+// padRunes right-pads s with spaces to width runes (not bytes). Go's fmt width
+// specifier counts bytes, so multi-byte content like "—" (3 bytes, 1 rune)
+// would underpad visible columns with %-Ns. Use this when a dynamic-width
+// column may contain non-ASCII content and the next column must stay aligned.
+func padRunes(s string, width int) string {
+	n := utf8.RuneCountInString(s)
+	if n >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-n)
+}
+
 // printList fetches a list endpoint and prints using PrintList
 func printList(ctx context.Context, path, emptyMsg, titleKey, idKey string, usePost bool) error {
 	cfg, err := config.Load()
@@ -480,4 +492,3 @@ func readEvidenceFlag(cmd *cobra.Command) (string, error) {
 	}
 	return evidence, nil
 }
-

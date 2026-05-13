@@ -6,6 +6,9 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Added
+- `andamio teacher assignments list` (text mode) now renders a `Status` column populated from `content.commitment_status` — the raw API enum, displayed verbatim with no aliasing. Operators can see at a glance whether each row is `AWAITING_SUBMISSION`, `SUBMITTED`, `ACCEPTED`, `REFUSED`, `CREDENTIAL_CLAIMED`, `LEFT`, or transient `PENDING_TX_*`. The column width is dynamic with a 20-rune floor so future enum additions are never truncated. Rows from the no-`--course` summary (which lacks the nested status field) render `"—"` as a placeholder rather than blanking the cell; re-run with `--course <id>` to get the DB status. JSON output already passed the gateway envelope through verbatim and is unchanged — a regression test now pins that contract so a future struct-decode refactor can't silently drop nested `commitment_status` or `on_chain_status`. Closes #93.
+
 ## [0.12.1] - 2026-05-07
 
 ### Fixed

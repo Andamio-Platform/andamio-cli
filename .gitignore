@@ -16,3 +16,6 @@ openapi.json
 
 # Export output
 compiled/
+
+# Compound-engineering review artifacts (per-run scratch)
+.context/
