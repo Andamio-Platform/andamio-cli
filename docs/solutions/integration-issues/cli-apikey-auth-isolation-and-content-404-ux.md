@@ -22,6 +22,18 @@ tags:
 
 # Fix apikey auth header conflict and course content 404 UX
 
+> **⚠️ SUPERSEDED (Issue #17 portion only) — 2026-05-19.** The Issue #17 fix
+> below (`getAPIKeyJSON` strips the JWT and sends *only* `X-API-Key`) was
+> correct for the gateway behavior at the time: `/v2/apikey/developer/*`
+> then *rejected* dev/wallet JWTs. The gateway has since moved that surface
+> behind `developerJWTAuth` — it is now a **dual-credential** surface
+> (`X-API-Key` **and** `Authorization: Bearer <devJWT>` both required),
+> identical to `/v2/keys`. The strip-the-JWT approach now *causes* the very
+> 401 it was written to prevent. `apikey usage`/`apikey profile` now route
+> through `devKeysClient`; see CHANGELOG `[Unreleased]` and
+> `cmd/andamio/apikey_test.go`. The Issue #18 (course content 404 UX)
+> portion of this document is unaffected and still current.
+
 ## Problem Statement
 
 ### Issue #17: apikey commands fail with wallet JWT

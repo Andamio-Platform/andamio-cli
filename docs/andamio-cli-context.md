@@ -178,8 +178,8 @@ andamio course modules "$COURSE_ID" --output json
 
 | Command | Auth | Description |
 |---------|------|-------------|
-| `apikey usage` | api-key | Key usage stats |
-| `apikey profile` | api-key | Key profile |
+| `apikey usage` | api-key + dev-jwt | Key usage stats (requires `auth login` AND `dev login`) |
+| `apikey profile` | api-key + dev-jwt | Key profile (requires `auth login` AND `dev login`) |
 
 ### spec — API discovery
 

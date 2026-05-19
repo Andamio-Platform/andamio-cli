@@ -190,8 +190,8 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 ### apikey — API key info
 | Command | Endpoint | Auth | Description |
 |---------|----------|------|-------------|
-| `apikey usage` | `/api/v2/apikey/developer/usage/get` | api-key | Key usage stats |
-| `apikey profile` | `/api/v2/apikey/developer/profile/get` | api-key | Key profile |
+| `apikey usage` | `/api/v2/apikey/developer/usage/get` | api-key + dev-jwt | Key usage stats. Dual-credential surface — requires both `auth login --api-key` and `dev login` |
+| `apikey profile` | `/api/v2/apikey/developer/profile/get` | api-key + dev-jwt | Key profile. Same dual-credential requirement as `apikey usage` |
 
 ### dev — Developer-portal authentication and operations
 | Command | Endpoint | Auth | Description |
