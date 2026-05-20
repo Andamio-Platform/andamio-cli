@@ -39,7 +39,7 @@ Two auth methods coexist:
 - Config stored at `~/.andamio/config.json` (permissions 0600)
 - Environment variable `ANDAMIO_JWT` overrides stored JWT (useful for CI/CD)
 - Both headers are sent simultaneously when both credentials exist
-- Some endpoints require specific auth (e.g., `apikey` commands require API key only)
+- Some endpoints require dual credentials (e.g., `apikey` commands require both `auth login --api-key` and `dev login`)
 
 ## Output Formats
 

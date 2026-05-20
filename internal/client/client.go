@@ -82,16 +82,25 @@ func (c *Client) Get(ctx context.Context, path string, result interface{}) error
 	return json.NewDecoder(resp.Body).Decode(result)
 }
 
-// setHeaders adds common headers to a request. The credential surface
-// here is single-slot by design: at most one of `X-API-Key` / `Authorization:
-// Bearer` rides on a given request. Developer-JWT routing (for /v2/keys
-// and other dev-portal endpoints) is handled by `cmd/andamio/dev_keys.go`'s
-// `devKeysClient` — it clones the cfg with `APIKey` cleared and `DevJWT`
-// promoted into `UserJWT` so this function emits exactly one credential
-// regardless of which slots are populated on disk. Past pain at
+// setHeaders adds common headers to a request. This function emits whatever
+// credentials are populated on the client: `X-API-Key` when `apiKey` is set,
+// `Authorization: Bearer` when `userJWT` is set — both together if both are
+// set. Which credentials end up on the client is the caller's decision, made
+// when constructing the cfg passed to `client.New`.
+//
+// Dual-credential dev-portal surfaces (`/v2/keys`, `/api/v2/apikey/developer/*`,
+// and other developer-portal endpoints) require BOTH `X-API-Key` (gateway
+// `V2AuthMiddleware`) AND `Authorization: Bearer <devJWT>` (`developerJWTAuth`).
+// Routing for these is handled by `cmd/andamio/dev_keys.go`'s `devKeysClient`,
+// which clones the cfg, **preserves** `APIKey`, and promotes `DevJWT` into the
+// `UserJWT` slot so both headers ride on the request (the wallet/user JWT is
+// overwritten, not appended). `cmd/andamio/apikey.go` is a second consumer of
+// that helper. Background:
 // `docs/solutions/integration-issues/cli-apikey-auth-isolation-and-content-404-ux.md`
-// — never add a third branch here without weighing the dual-credential
-// failure modes the gateway middleware checks for.
+// (Issue #17 portion superseded — the gateway flipped from rejecting to
+// requiring the dev JWT on this surface). Before changing how credentials are
+// selected for a dev-portal surface, weigh the dual-credential failure modes
+// the gateway middleware checks for.
 func (c *Client) setHeaders(req *http.Request) {
 	if c.apiKey != "" {
 		req.Header.Set("X-API-Key", c.apiKey)

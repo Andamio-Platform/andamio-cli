@@ -95,6 +95,14 @@ func TestRunAPIKeyJSON_SendsDualCredential(t *testing.T) {
 			if got, want := stub.capturedAPIKeyHeader, "expected-api-key-on-wire"; got != want {
 				t.Errorf("X-API-Key = %q, want %q (V2AuthMiddleware requires it alongside the dev JWT)", got, want)
 			}
+			// Tripwire: the wallet/user JWT seeded in apikeyTestEnv must be
+			// overwritten by the dev JWT in devKeysClient's cfg clone, never
+			// appended. Without this negative assertion a header-append
+			// regression (emitting both the dev and wallet JWT) would pass
+			// the positive checks above unnoticed.
+			if strings.Contains(stub.capturedAuthHeader, "tripwire-user-jwt-MUST-NOT-LEAK") {
+				t.Errorf("Authorization header leaked the wallet/user JWT: %q", stub.capturedAuthHeader)
+			}
 		})
 	}
 }
@@ -140,5 +148,43 @@ func TestRunAPIKeyJSON_NoDevAuth_ErrorsWithLoginHint(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "andamio dev login") {
 		t.Errorf("err = %q, want substring %q", err.Error(), "andamio dev login")
+	}
+}
+
+// TestRunAPIKeyJSON_NoAPIKey_ErrorsWithAuthLoginHint pins the symmetric
+// remediation for the inverse misconfiguration: dev JWT is present but the
+// API key slot is empty. The old getAPIKeyJSON helper carried this hint
+// explicitly; the first ce-review pass on the dual-credential refactor
+// flagged its removal as a UX regression (an operator who ran `dev login`
+// before `auth login` previously got "Run 'andamio auth login --api-key
+// <key>'" but landed on a raw gateway 401 after the refactor). The
+// pre-check in runAPIKeyJSON restores it; this test pins both that an
+// AuthError is returned AND that the hint mentions `auth login --api-key`
+// — not the dev-login hint, which would be misleading here.
+func TestRunAPIKeyJSON_NoAPIKey_ErrorsWithAuthLoginHint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := &config.Config{
+		DevJWT:   "dev.jwt.bearer.value",
+		DevAlias: "myalias",
+		DevID:    "dev-1",
+		DevTier:  "pioneer",
+	}
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	err := runAPIKeyJSON(context.Background(), cfg, "/api/v2/apikey/developer/usage/get")
+	if err == nil {
+		t.Fatal("expected AuthError when APIKey slot is empty")
+	}
+	var authErr *apierr.AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected *apierr.AuthError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "auth login --api-key") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "auth login --api-key")
+	}
+	if strings.Contains(err.Error(), "dev login") {
+		t.Errorf("err = %q, must NOT mention dev login (misleading when the missing slot is the API key)", err.Error())
 	}
 }

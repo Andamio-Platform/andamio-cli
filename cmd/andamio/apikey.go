@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
@@ -19,7 +20,8 @@ var apikeyUsageCmd = &cobra.Command{
 	Short: "Get API key usage stats",
 	Long: `Get developer API key usage stats.
 
-Requires developer authentication. Run:
+Requires BOTH an API key and developer authentication. Run:
+  andamio auth login --api-key <key>
   andamio dev login --skey <path> --alias <name> --address <bech32>`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
@@ -35,7 +37,8 @@ var apikeyProfileCmd = &cobra.Command{
 	Short: "Get API key profile",
 	Long: `Get developer API key profile.
 
-Requires developer authentication. Run:
+Requires BOTH an API key and developer authentication. Run:
+  andamio auth login --api-key <key>
   andamio dev login --skey <path> --alias <name> --address <bech32>`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
@@ -69,6 +72,17 @@ func init() {
 // that requirement; routing through `devKeysClient` realigns the CLI and
 // surfaces a `dev login` hint when the dev slot is empty.
 func runAPIKeyJSON(ctx context.Context, cfg *config.Config, path string) error {
+	// Pre-check the API key locally so an operator who ran `dev login` but
+	// not `auth login --api-key` gets an actionable CLI hint instead of a
+	// raw gateway 401 from V2AuthMiddleware. Mirrors the older getAPIKeyJSON
+	// guard this command used to carry. Scoped here rather than inside the
+	// shared devKeysClient so `dev keys` semantics (which surface the API-key
+	// requirement via its own gateway 401) remain unchanged.
+	if cfg.APIKey == "" {
+		return &apierr.AuthError{
+			Message: "apikey commands require an API key. Run 'andamio auth login --api-key <key>'",
+		}
+	}
 	c, err := devKeysClient(cfg)
 	if err != nil {
 		return err

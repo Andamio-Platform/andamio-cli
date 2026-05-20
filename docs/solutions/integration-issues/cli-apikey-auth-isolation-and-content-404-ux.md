@@ -56,7 +56,17 @@ Additionally, `course slts` returned raw JSON without showing which SLTs have as
 
 ## Solution
 
-### Fix #17: Config-copy-before-mutation pattern
+> **Current implementation (2026-05-20).** The `getAPIKeyJSON` code and the
+> `cmd/andamio/apikey.go` row in the Files Modified table at the end of this
+> document describe the **superseded** Fix #17 implementation. The current
+> code lives in:
+> - `cmd/andamio/apikey.go` — `runAPIKeyJSON(ctx, cfg, path)` pre-checks `APIKey == ""` (returns the same `auth login --api-key` hint as the original Fix #17), then delegates to the shared `devKeysClient` so both `X-API-Key` and `Authorization: Bearer <devJWT>` ride on the wire (the dual-credential gateway requirement).
+> - `cmd/andamio/dev_keys.go` — `devKeysClient(cfg)` — the shared routing helper, used by both `dev keys *` and `apikey usage`/`profile`.
+> - `cmd/andamio/apikey_test.go` — regression tests pin the dual-credential contract on the wire, the wallet-JWT-no-leak tripwire, and BOTH actionable-hint paths (missing API key → `auth login --api-key`; missing dev JWT → `dev login`).
+>
+> Issue #18 (course content 404 UX) below is unaffected and still current.
+
+### Fix #17: Config-copy-before-mutation pattern (superseded — see banner)
 
 Created `getAPIKeyJSON()` helper that copies the config struct, clears the JWT on the copy, and creates a client that only sends `X-API-Key`:
 
