@@ -14,6 +14,7 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
+	"github.com/spf13/cobra"
 )
 
 // =============================================================================
@@ -1047,5 +1048,157 @@ func TestConfig_ClearDevAuth_WipesAllSlotFieldsIncludingRefresh(t *testing.T) {
 	}
 	if cfg.UserJWT != "user.jwt" || cfg.UserAlias != "user-alias" {
 		t.Errorf("ClearDevAuth touched user-side fields; UserJWT=%q UserAlias=%q (want untouched)", cfg.UserJWT, cfg.UserAlias)
+	}
+}
+
+// =============================================================================
+// dev login dispatcher — branching between browser flow and headless --skey flow
+// =============================================================================
+//
+// Pins the runDevLogin dispatcher's branch matrix. Tests construct fresh
+// cobra commands locally rather than mutating the global devLoginCmd, so
+// flag state doesn't leak across tests. The dispatcher contract:
+//
+//   - none of the three flags Changed() → browser branch
+//   - all three flags Changed() → headless branch (existing path)
+//   - any subset Changed() → partial-flag error
+//
+// `Changed()` is the discriminator, NOT empty-string equality on
+// GetString(). A user running `--skey ""` (e.g., from an unset shell
+// variable) sets the flag value to empty but Changed() returns true,
+// which must correctly route to the headless branch (where LoadSigningKey
+// then fails) rather than mistakenly triggering the browser flow.
+
+// newDevLoginTestCmd constructs a fresh cobra command with the same flag
+// shape as the real devLoginCmd, so each test runs against isolated flag
+// state. Returns a command whose RunE is the production runDevLogin.
+func newDevLoginTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "login", RunE: runDevLogin, Args: cobra.NoArgs}
+	cmd.Flags().String("skey", "", "Path to .skey file (required for headless mode)")
+	cmd.Flags().String("alias", "", "Developer access-token alias (required for headless mode)")
+	cmd.Flags().String("address", "", "Bech32 wallet address bound to the access-token alias (required for headless mode)")
+	return cmd
+}
+
+func TestRunDevLogin_NoFlags_RoutesToBrowserStub(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd := newDevLoginTestCmd()
+	err := cmd.RunE(cmd, []string{})
+	if err == nil {
+		t.Fatal("expected stub error from browser branch in this commit (Unit 2 replaces with real impl)")
+	}
+	if !strings.Contains(err.Error(), "not yet implemented") {
+		t.Errorf("err = %q, want substring %q (verifies dispatch landed in browser branch)", err.Error(), "not yet implemented")
+	}
+}
+
+func TestRunDevLogin_AllThreeFlagsProvided_RoutesToHeadlessAndFailsOnSkey(t *testing.T) {
+	// All three flags Changed() must route to runDevHeadlessLogin. We can't
+	// run the full headless flow without a real .skey file and a stubbed
+	// gateway, so this test asserts the dispatch lands in the headless
+	// branch by observing that the error is from LoadSigningKey, not from
+	// the partial-flag default branch.
+	t.Setenv("HOME", t.TempDir())
+	cmd := newDevLoginTestCmd()
+	if err := cmd.Flags().Set("skey", "/nonexistent/path.skey"); err != nil {
+		t.Fatalf("set skey: %v", err)
+	}
+	if err := cmd.Flags().Set("alias", "myalias"); err != nil {
+		t.Fatalf("set alias: %v", err)
+	}
+	if err := cmd.Flags().Set("address", "addr_test1..."); err != nil {
+		t.Fatalf("set address: %v", err)
+	}
+
+	err := cmd.RunE(cmd, []string{})
+	if err == nil {
+		t.Fatal("expected LoadSigningKey error from headless branch")
+	}
+	if !strings.Contains(err.Error(), "failed to load signing key") {
+		t.Errorf("err = %q, want substring %q (verifies dispatch landed in headless branch)", err.Error(), "failed to load signing key")
+	}
+	if strings.Contains(err.Error(), "missing:") {
+		t.Errorf("err = %q, must NOT contain partial-flag message (would mean we mis-routed)", err.Error())
+	}
+}
+
+func TestRunDevLogin_PartialFlags_ReturnsErrorNamingBothModes(t *testing.T) {
+	// Every subset of {skey, alias, address} that isn't empty or full must
+	// route to the partial-flag default branch and name the missing flags.
+	cases := []struct {
+		name string
+		set  []string
+	}{
+		{"skey only", []string{"skey"}},
+		{"alias only", []string{"alias"}},
+		{"address only", []string{"address"}},
+		{"skey+alias", []string{"skey", "alias"}},
+		{"skey+address", []string{"skey", "address"}},
+		{"alias+address", []string{"alias", "address"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			cmd := newDevLoginTestCmd()
+			for _, flag := range tc.set {
+				if err := cmd.Flags().Set(flag, "placeholder"); err != nil {
+					t.Fatalf("set %s: %v", flag, err)
+				}
+			}
+			err := cmd.RunE(cmd, []string{})
+			if err == nil {
+				t.Fatal("expected partial-flag error")
+			}
+			if !strings.Contains(err.Error(), "missing:") {
+				t.Errorf("err = %q, want substring %q", err.Error(), "missing:")
+			}
+			if !strings.Contains(err.Error(), "browser mode") || !strings.Contains(err.Error(), "headless mode") {
+				t.Errorf("err = %q, want both 'browser mode' and 'headless mode' substrings (operator should be able to fix forward either way)", err.Error())
+			}
+			// Spot-check: each missing flag is named in the error.
+			provided := map[string]bool{}
+			for _, f := range tc.set {
+				provided[f] = true
+			}
+			for _, flag := range []string{"skey", "alias", "address"} {
+				if !provided[flag] && !strings.Contains(err.Error(), "--"+flag) {
+					t.Errorf("err = %q, want substring %q (missing flag should be named)", err.Error(), "--"+flag)
+				}
+			}
+		})
+	}
+}
+
+// TestRunDevLogin_SkeyExplicitEmpty_RoutesToHeadless is the load-bearing
+// regression for the `cmd.Flags().Changed()` discriminator. A user running
+// `andamio dev login --skey ""` (e.g., from `--skey "$SKEY_PATH"` with
+// SKEY_PATH unset) sets the flag value to empty but `Changed("skey")`
+// returns true. If the dispatcher used empty-string equality
+// (skey == "" && alias == "" && addr == "") it would mistakenly route
+// this to the browser branch. With Changed() it correctly routes to
+// headless, where LoadSigningKey fails with the existing "missing skey"
+// behavior — surfacing the real problem to the operator (empty shell
+// variable) rather than silently opening a browser they didn't ask for.
+func TestRunDevLogin_SkeyExplicitEmpty_RoutesToHeadless(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cmd := newDevLoginTestCmd()
+	// Set --skey to explicit empty value. --alias and --address are NOT
+	// set, so this is technically partial — but the important assertion
+	// is that --skey "" is treated as "provided" (Changed=true), routing
+	// the dispatch via the partial-flag branch (which names --alias and
+	// --address as missing), NOT via the browser branch.
+	if err := cmd.Flags().Set("skey", ""); err != nil {
+		t.Fatalf("set skey to empty: %v", err)
+	}
+
+	err := cmd.RunE(cmd, []string{})
+	if err == nil {
+		t.Fatal("expected partial-flag error (--skey '' counts as provided)")
+	}
+	if strings.Contains(err.Error(), "not yet implemented") {
+		t.Errorf("err = %q, must NOT route to browser branch — --skey '' is provided, not absent. This is the empty-shell-variable regression guard.", err.Error())
+	}
+	if !strings.Contains(err.Error(), "--alias") || !strings.Contains(err.Error(), "--address") {
+		t.Errorf("err = %q, want partial-flag error naming missing --alias and --address", err.Error())
 	}
 }

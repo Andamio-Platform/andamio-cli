@@ -130,29 +130,58 @@ func init() {
 	devCmd.AddCommand(devRefreshCmd)
 	devCmd.AddCommand(devStatusCmd)
 
-	devLoginCmd.Flags().String("skey", "", "Path to .skey file (required)")
-	devLoginCmd.Flags().String("alias", "", "Developer access-token alias (required)")
-	devLoginCmd.Flags().String("address", "", "Bech32 wallet address bound to the access-token alias (required)")
-	devLoginCmd.MarkFlagRequired("skey")
-	devLoginCmd.MarkFlagRequired("alias")
-	devLoginCmd.MarkFlagRequired("address")
+	devLoginCmd.Flags().String("skey", "", "Path to .skey file (required for headless mode)")
+	devLoginCmd.Flags().String("alias", "", "Developer access-token alias (required for headless mode)")
+	devLoginCmd.Flags().String("address", "", "Bech32 wallet address bound to the access-token alias (required for headless mode)")
 }
 
+// runDevLogin dispatches between the browser-wallet flow (no flags) and the
+// headless .skey flow (all three of --skey/--alias/--address). The
+// discriminator is `cmd.Flags().Changed(...)`, NOT empty-string equality:
+// `--skey ""` from an unset shell variable sets the value to empty but
+// Changed() still returns true, which correctly routes to headless mode
+// (where LoadSigningKey then fails with the existing "missing skey" error
+// rather than mistakenly triggering the browser flow). See plan
+// docs/plans/2026-05-22-001-feat-browser-based-dev-login-plan.md.
 func runDevLogin(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	skeyPath, _ := cmd.Flags().GetString("skey")
-	alias, _ := cmd.Flags().GetString("alias")
-	address, _ := cmd.Flags().GetString("address")
+	skeyProvided := cmd.Flags().Changed("skey")
+	aliasProvided := cmd.Flags().Changed("alias")
+	addrProvided := cmd.Flags().Changed("address")
 
-	privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
-	if err != nil {
-		return fmt.Errorf("failed to load signing key: %w", err)
+	switch {
+	case !skeyProvided && !aliasProvided && !addrProvided:
+		// Unit 2 replaces this stub with runDevLoginBrowser.
+		return fmt.Errorf("browser-flow dev login not yet implemented in this commit — use --skey/--alias/--address for now")
+	case skeyProvided && aliasProvided && addrProvided:
+		skeyPath, _ := cmd.Flags().GetString("skey")
+		alias, _ := cmd.Flags().GetString("alias")
+		address, _ := cmd.Flags().GetString("address")
+
+		privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
+		if err != nil {
+			return fmt.Errorf("failed to load signing key: %w", err)
+		}
+		return runDevHeadlessLogin(cmd.Context(), cfg, privKey, pubKey, skeyPath, alias, address)
+	default:
+		// Partial-flag invocation. Name both modes so the operator can fix
+		// forward in either direction without re-reading the help text.
+		missing := []string{}
+		if !skeyProvided {
+			missing = append(missing, "--skey")
+		}
+		if !aliasProvided {
+			missing = append(missing, "--alias")
+		}
+		if !addrProvided {
+			missing = append(missing, "--address")
+		}
+		return fmt.Errorf("dev login requires either no flags (browser mode) or all three of --skey/--alias/--address (headless mode); missing: %v", missing)
 	}
-	return runDevHeadlessLogin(cmd.Context(), cfg, privKey, pubKey, skeyPath, alias, address)
 }
 
 // devSessionResult is the typed `--output json` envelope shape for both
