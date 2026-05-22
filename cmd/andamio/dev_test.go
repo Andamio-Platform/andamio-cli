@@ -973,6 +973,43 @@ func TestRunDevStatus_JSON_AuthenticatedSurfacesBothClocksAndTier(t *testing.T) 
 	}
 }
 
+// captureStderr is the parallel of captureStdout for os.Stderr. Required
+// to assert the token-leak guard on the stderr path — fmt.Fprintf calls
+// against os.Stderr in runDevLoginBrowser (progress messages, manual-open
+// fallback) MUST NOT carry token bodies. Without this helper there was no
+// way to verify stderr discipline; the plan's R11 ("tokens never on stdout
+// in any mode") generalizes to "tokens never on any captured stream."
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = old })
+
+	done := make(chan []byte, 1)
+	go func() {
+		var buf [4096]byte
+		out := []byte{}
+		for {
+			n, err := r.Read(buf[:])
+			if n > 0 {
+				out = append(out, buf[:n]...)
+			}
+			if err != nil {
+				break
+			}
+		}
+		done <- out
+	}()
+
+	fn()
+	_ = w.Close()
+	return string(<-done)
+}
+
 // captureStdout redirects os.Stdout, runs fn, and returns the captured bytes
 // as a string. A pipe is used so writes from output.PrintJSON (which calls
 // fmt.Println on os.Stdout) land in the buffer rather than the test runner's
@@ -1373,34 +1410,34 @@ func TestRunDevLoginBrowser_JSONOutputShape_NoTokenLeak(t *testing.T) {
 }
 
 func TestRunDevLoginBrowser_BrowserOpenFailure_PrintsURLAndContinues(t *testing.T) {
-	// openURL returns an error; runDevLoginBrowser must NOT abort —
-	// it should print the URL to stderr and keep listening, then succeed
-	// when a callback arrives via an alternate path.
+	// openURL returns an error; runDevLoginBrowser must NOT abort — it
+	// should print the URL to stderr and keep listening, then succeed
+	// when a callback arrives.
+	//
+	// Implementation note: deliver the callback synchronously inside the
+	// closure. The resultChan is capacity-1 buffered, and the handler's
+	// send is now non-blocking (sendResult), so http.Get returns as soon
+	// as the handler writes its response — no risk of openURL blocking
+	// the main flow before the select reads. Earlier versions of this
+	// test used a goroutine for the http.Get call, but calling t.Errorf
+	// from a non-test goroutine is undefined behavior and was flagged
+	// during ce-review.
 	cfg := devBrowserTestEnv(t, config.Config{
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
 	})
 	overrideDevLoginTimeout(t, 2*time.Second)
 
-	// First simulate browser-open failure, then deliver a callback in the
-	// same closure so the listener gets a result before timeout.
 	overrideOpenURL(t, func(authURL string) error {
-		// Schedule a callback to fire concurrently with the "browser open
-		// failed" return. The runDevLoginBrowser select reads from
-		// resultChan after openURL returns.
-		go func() {
-			if err := successCallback(t, validCallbackParams())(authURL); err != nil {
-				t.Errorf("simulated callback after browser-open failure: %v", err)
-			}
-		}()
+		if err := successCallback(t, validCallbackParams())(authURL); err != nil {
+			return fmt.Errorf("simulated-callback after browser-open failure: %w", err)
+		}
 		return fmt.Errorf("simulated browser launch failure")
 	})
 
 	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
 		t.Fatalf("runDevLoginBrowser should recover from browser-open failure: %v", err)
 	}
-
-	// Verify the flow still succeeded — config was written.
 	loaded, _ := config.Load()
 	if loaded.DevJWT == "" {
 		t.Errorf("expected dev JWT persisted after browser-open recovery")
@@ -1502,19 +1539,34 @@ func TestRunDevLoginBrowser_AliasEmpty_RejectsAndNoPersistence(t *testing.T) {
 	}
 }
 
-func TestRunDevLoginBrowser_StateMismatch_RejectsAndNoPersistence(t *testing.T) {
+func TestRunDevLoginBrowser_StateMismatch_SilentlyIgnoredKeepsListening(t *testing.T) {
+	// Security fix (SEC-001): a callback with mismatched state must NOT
+	// terminate the flow — it's treated as an unauthenticated request and
+	// silently dropped. The listener keeps waiting for a legitimate
+	// callback. Closes the DoS path where a local process knowing the
+	// loopback port could spoof `?error=anything` (or any other param)
+	// without knowing the state token and terminate the flow remotely.
+	//
+	// Observable contract: the spoofed callback receives HTTP 400 +
+	// "Security validation failed." and is dropped on the floor. The main
+	// flow waits until the test's short timeout fires.
 	cfg := devBrowserTestEnv(t, config.Config{
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
 	})
-	overrideDevLoginTimeout(t, 2*time.Second)
-	// Custom closure that sends a wrong state token in the callback.
+	overrideDevLoginTimeout(t, 150*time.Millisecond)
+
+	var spoofedStatus int
 	overrideOpenURL(t, func(authURL string) error {
 		u, _ := url.Parse(authURL)
 		redirectURI := u.Query().Get("redirect_uri")
 		callback, _ := url.Parse(redirectURI)
 		cbq := callback.Query()
+		// Wrong state — including a "gateway error" attempt that should
+		// also be silently dropped (state validation precedes ?error
+		// processing per SEC-001).
 		cbq.Set("state", "wrong-state-not-the-one-the-cli-sent")
+		cbq.Set("error", "attempted-DoS-via-error-param")
 		for k, vs := range validCallbackParams() {
 			for _, v := range vs {
 				cbq.Set(k, v)
@@ -1525,16 +1577,20 @@ func TestRunDevLoginBrowser_StateMismatch_RejectsAndNoPersistence(t *testing.T) 
 		if err != nil {
 			return err
 		}
+		spoofedStatus = resp.StatusCode
 		_ = resp.Body.Close()
 		return nil
 	})
 
 	err := runDevLoginBrowser(context.Background(), cfg)
 	if err == nil {
-		t.Fatal("expected error on state mismatch")
+		t.Fatal("expected timeout error (spoofed callback should not have completed the flow)")
 	}
-	if !strings.Contains(err.Error(), "state") {
-		t.Errorf("err = %q, want substring %q", err.Error(), "state")
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("err = %q, want substring %q (state mismatch must NOT short-circuit the flow — listener should keep waiting until timeout)", err.Error(), "timed out")
+	}
+	if spoofedStatus != http.StatusBadRequest {
+		t.Errorf("spoofed callback got HTTP %d, want %d", spoofedStatus, http.StatusBadRequest)
 	}
 	loaded, _ := config.Load()
 	if loaded.DevJWT != "" {
@@ -1768,6 +1824,134 @@ func TestRunDevLoginBrowser_ConcurrentSlotSafety(t *testing.T) {
 	}
 	if loaded.UserAlias != "concurrent-user-alias" {
 		t.Errorf("UserAlias = %q, want the concurrent value", loaded.UserAlias)
+	}
+}
+
+// TestRunDevLoginBrowser_TwoSimultaneousCallbacks_NoDeadlock pins the
+// ADV-001 fix: previously the handler used blocking sends on a capacity-1
+// resultChan, and server.Shutdown used context.Background(). Two valid
+// callbacks arriving near-simultaneously could both pass state validation,
+// the first would fill the channel, the second would block forever, and
+// server.Shutdown would wait forever for the blocked handler — hanging
+// the CLI. Fix: non-blocking sendResult + shutdownServer with a 2s
+// timeout. Test sends two valid GETs concurrently and asserts the flow
+// completes within the test budget.
+func TestRunDevLoginBrowser_TwoSimultaneousCallbacks_NoDeadlock(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 3*time.Second)
+
+	overrideOpenURL(t, func(authURL string) error {
+		u, _ := url.Parse(authURL)
+		redirectURI := u.Query().Get("redirect_uri")
+		state := u.Query().Get("state")
+		fire := func() {
+			callback, _ := url.Parse(redirectURI)
+			cbq := callback.Query()
+			cbq.Set("state", state)
+			for k, vs := range validCallbackParams() {
+				for _, v := range vs {
+					cbq.Set(k, v)
+				}
+			}
+			callback.RawQuery = cbq.Encode()
+			resp, err := http.Get(callback.String())
+			if err == nil {
+				_ = resp.Body.Close()
+			}
+		}
+		// Fire two simultaneously. The deadlock pre-fix manifested as the
+		// second goroutine blocking on the blocking-send to a full channel,
+		// then server.Shutdown blocking forever waiting for that handler.
+		go fire()
+		go fire()
+		// Give both a moment to land before openURL returns. The handler's
+		// non-blocking send ensures the second is dropped silently.
+		time.Sleep(50 * time.Millisecond)
+		return nil
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runDevLoginBrowser(context.Background(), cfg)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runDevLoginBrowser: %v", err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("runDevLoginBrowser deadlocked under two simultaneous valid callbacks — ADV-001 regression")
+	}
+
+	loaded, _ := config.Load()
+	if loaded.DevJWT == "" {
+		t.Errorf("expected dev JWT persisted")
+	}
+}
+
+// TestRunDevLoginBrowser_StderrTokenLeakGuard pins the plan's R11 across
+// the stderr path. captureStdout was the only stream captured by prior
+// tests, leaving stderr (where progress messages and the manual-open
+// fallback URL print) unguarded. Token bodies in the callback MUST NOT
+// reach stderr in any mode — not in the success print, not in the
+// progress messages, not in the manual-open fallback URL.
+func TestRunDevLoginBrowser_StderrTokenLeakGuard(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideOpenURL(t, successCallback(t, validCallbackParams()))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	captured := captureStderr(t, func() {
+		if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+			t.Fatalf("runDevLoginBrowser: %v", err)
+		}
+	})
+
+	if strings.Contains(captured, "SECRET.SHOULD-NOT-LEAK") {
+		t.Errorf("token body leaked to stderr — captured contained SECRET.SHOULD-NOT-LEAK marker:\n%s", captured)
+	}
+}
+
+// TestRunDevLoginBrowser_StateTokenNotInStderr_OnHappyPath pins the
+// SEC-002 security fix: the full authURL (which carries the CSRF state
+// token in its query string) MUST NOT be preemptively printed to stderr.
+// CI environments routinely capture stderr to persistent logs, and a
+// preemptive print would leak the state token there — sufficient for a
+// local attacker with read access to those logs to craft a callback
+// during the 5-minute window that injects attacker-controlled tokens
+// into the user's config slot. The fallback URL print is allowed ONLY
+// when openURL actually fails (the operator chose the interactive
+// recovery path); this test pins the happy-path stderr clean.
+func TestRunDevLoginBrowser_StateTokenNotInStderr_OnHappyPath(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideOpenURL(t, successCallback(t, validCallbackParams()))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	captured := captureStderr(t, func() {
+		if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+			t.Fatalf("runDevLoginBrowser: %v", err)
+		}
+	})
+
+	// State tokens are base64url-encoded 32 random bytes — high-entropy
+	// strings that won't naturally appear elsewhere. If stderr carries
+	// any "?state=" substring, the preemptive-print regression is back.
+	if strings.Contains(captured, "?state=") || strings.Contains(captured, "&state=") {
+		t.Errorf("state token leaked to stderr on happy path — full authURL must NOT be preemptively printed. captured:\n%s", captured)
+	}
+	// The "Opening browser..." prose IS expected on stderr — confirm we
+	// didn't accidentally route everything to stdout.
+	if !strings.Contains(captured, "Opening browser") {
+		t.Errorf("expected 'Opening browser' progress message on stderr; got:\n%s", captured)
 	}
 }
 

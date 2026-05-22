@@ -18,6 +18,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// shutdownServer gracefully stops the browser-flow HTTP server with a
+// bounded timeout. Using a 2-second deadline prevents Shutdown from blocking
+// indefinitely on a stuck handler — Shutdown's contract is to wait for all
+// active handlers to return, and a handler that's blocked trying to send to
+// a full resultChan (despite the non-blocking select pattern) would otherwise
+// hang the CLI on what should be a clean exit. The deadline is generous
+// enough that a healthy in-flight handler completes well within it.
+func shutdownServer(s *http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = s.Shutdown(ctx)
+}
+
 // devLoginBrowserTimeout bounds the browser-flow listener. Package-level so
 // tests can override it to a short duration; production uses the 5-minute
 // default that matches the gateway's session window. The timeout context is
@@ -439,14 +452,25 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	// Pre-flight 2: already authenticated. In text mode print to stderr
-	// (gated); in JSON mode emit empty stdout + nil. Scripts that need to
-	// distinguish freshly-authenticated from already-authenticated should
-	// call `andamio dev status --output json` after this command — do NOT
-	// synthesize a new JSON envelope just for this no-op success path.
-	if cfg.HasDevAuth() {
+	// Pre-flight 2: already authenticated. Re-load fresh state from disk
+	// to close the stale-cfg race window — the cfg passed by the dispatcher
+	// was loaded earlier and a concurrent `dev logout` in another shell
+	// could have cleared the slot in the meantime. Without this fresh load,
+	// HasDevAuth() reports a stale `true` and the flow no-ops on what is
+	// actually an empty slot, leaving the user 401'ing with no remediation
+	// signal. Re-load is one file read — negligible cost for correctness.
+	// In text mode print to stderr (gated); in JSON mode emit empty stdout
+	// + nil. Scripts that need to distinguish freshly-authenticated from
+	// already-authenticated should call `andamio dev status --output json`
+	// after — do NOT synthesize a new JSON envelope just for this no-op
+	// success path.
+	preflightCfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to reload config for pre-flight check: %w", err)
+	}
+	if preflightCfg.HasDevAuth() {
 		if !isJSON {
-			fmt.Fprintf(os.Stderr, "Already authenticated as developer: %s\n", cfg.DevAlias)
+			fmt.Fprintf(os.Stderr, "Already authenticated as developer: %s\n", preflightCfg.DevAlias)
 			fmt.Fprintln(os.Stderr, "Run 'andamio dev logout' first to re-authenticate.")
 		}
 		return nil
@@ -479,26 +503,42 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 			return
 		}
 
-		result := devAuthCallbackResult{}
 		q := r.URL.Query()
 
-		// Upstream error: short-circuit. Echo the gateway's message so the
-		// caller has a real diagnostic.
-		if errParam := q.Get("error"); errParam != "" {
-			result.Error = errParam
-			resultChan <- result
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, "Authentication failed. You can close this window.")
+		// CSRF state validation FIRST — any request without a matching state
+		// token is treated as spoofed. We do NOT echo it into resultChan and
+		// we do NOT short-circuit the flow; the listener keeps waiting for a
+		// legitimate callback. Closes the unauthenticated-DoS path where a
+		// local process knowing the loopback port could send `?error=foo`
+		// (no state required) and terminate the flow remotely. State check
+		// must precede `?error` processing because the gateway's error
+		// path also echoes our state token.
+		if returnedState := q.Get("state"); returnedState != state {
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, "Security validation failed.")
 			return
 		}
 
-		// CSRF state validation — exact-string match. Mismatch → 400 plain
-		// text body, error result, no persistence downstream.
-		if returnedState := q.Get("state"); returnedState != state {
-			result.Error = "invalid state parameter"
-			resultChan <- result
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprint(w, "Security validation failed.")
+		result := devAuthCallbackResult{}
+
+		// All sends on resultChan use non-blocking select. The channel is
+		// capacity-1; a slow handler racing a faster one (or two concurrent
+		// valid GETs) must NOT deadlock here. If the channel is already
+		// full, the first result wins and subsequent results are dropped
+		// silently — the main goroutine will Shutdown the server shortly.
+		sendResult := func(r devAuthCallbackResult) {
+			select {
+			case resultChan <- r:
+			default:
+			}
+		}
+
+		// Upstream error: now safely gated behind state validation.
+		if errParam := q.Get("error"); errParam != "" {
+			result.Error = errParam
+			sendResult(result)
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "Authentication failed. You can close this window.")
 			return
 		}
 
@@ -530,13 +570,13 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 		}
 		if len(missing) > 0 {
 			result.Error = fmt.Sprintf("missing required callback fields: %v", missing)
-			resultChan <- result
+			sendResult(result)
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprintf(w, "Authentication failed: missing fields: %v", missing)
 			return
 		}
 
-		resultChan <- result
+		sendResult(result)
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "Authentication successful. You can close this window.")
 	})
@@ -550,12 +590,25 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 
 	if !isJSON {
 		fmt.Fprintln(os.Stderr, "Opening browser for developer authentication...")
-		fmt.Fprintf(os.Stderr, "If browser doesn't open, visit: %s\n", authURL)
 	}
 
 	// openURL failure is non-fatal — the URL is printed for manual opening
 	// and the listener keeps waiting. Stderr only; never on stdout.
+	//
+	// Security note: the full authURL embeds the CSRF state token in the
+	// query string. We print it ONLY when openURL fails (the operator
+	// actually needs the manual-open fallback), NOT preemptively — CI
+	// environments routinely capture stderr to persistent logs, and a
+	// preemptive print would leak the state token there. A local attacker
+	// with the state token + loopback port can craft a callback that
+	// injects attacker-controlled tokens into the user's config slot
+	// (confused-deputy / token-injection). On the openURL-failure path we
+	// accept that exposure as the cost of the manual-open UX — the
+	// operator chose to run interactively and the alternative is no
+	// recovery path at all.
+	browserOpened := true
 	if err := openURL(authURL); err != nil {
+		browserOpened = false
 		if !isJSON {
 			fmt.Fprintf(os.Stderr, "Failed to open browser automatically: %v\n", err)
 			fmt.Fprintf(os.Stderr, "Please open this URL manually: %s\n", authURL)
@@ -563,7 +616,11 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 	}
 
 	if !isJSON {
-		fmt.Fprintln(os.Stderr, "Waiting for authentication...")
+		if browserOpened {
+			fmt.Fprintln(os.Stderr, "Waiting for authentication...")
+		} else {
+			fmt.Fprintln(os.Stderr, "Waiting for authentication (after manual open)...")
+		}
 	}
 
 	// 5-min timeout via context.Background() — fires on the actual deadline
@@ -578,11 +635,11 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 	case result = <-resultChan:
 		// got result
 	case <-timeoutCtx.Done():
-		_ = server.Shutdown(context.Background())
+		shutdownServer(server)
 		return fmt.Errorf("developer authentication timed out after %s", devLoginBrowserTimeout)
 	}
 
-	_ = server.Shutdown(context.Background())
+	shutdownServer(server)
 
 	if result.Error != "" {
 		return fmt.Errorf("developer authentication failed: %s", result.Error)
