@@ -5,6 +5,8 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"time"
 
@@ -15,6 +17,34 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
 )
+
+// devLoginBrowserTimeout bounds the browser-flow listener. Package-level so
+// tests can override it to a short duration; production uses the 5-minute
+// default that matches the gateway's session window. The timeout context is
+// constructed from `context.Background()` (not the cobra command context) so
+// it fires on the actual deadline rather than on cobra signal handling —
+// matches the user-login pattern. Trade-off: SIGINT during the wait will not
+// gracefully shut down the listener; the OS releases the ephemeral port on
+// process exit. Documented in the dev login Long help and the plan.
+var devLoginBrowserTimeout = 5 * time.Minute
+
+// devAuthCallbackResult holds the parsed (and sanitized) query params from
+// the /auth/dev-cli browser callback. Distinct from the user-login flow's
+// 4-field authCallbackResult because the dev surface returns a JWT pair
+// (60-min JWT + 30-day rotation refresh token) plus tier and key-hash
+// metadata. NEVER reuse authCallbackResult for the dev flow — the shape
+// is wrong and key fields would silently drop.
+type devAuthCallbackResult struct {
+	DevJWT                   string
+	DevJWTExpiresAt          string
+	DevRefreshToken          string
+	DevRefreshTokenExpiresAt string
+	Alias                    string
+	DevID                    string
+	Tier                     string
+	KeyHash                  string
+	Error                    string
+}
 
 // Gateway endpoint paths for the CIP-30-verified developer login flow shipped
 // in andamio-api #410. The pair (session → complete) mirrors the existing
@@ -63,15 +93,32 @@ Environment:
 
 var devLoginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authenticate as a developer via wallet signing (headless CIP-8)",
-	Long: `Mint a developer JWT by signing a gateway nonce with your wallet.
+	Short: "Authenticate as a developer (browser wallet, or headless CIP-8 with --skey)",
+	Long: `Mint a developer JWT by signing a gateway nonce with your wallet. The
+resulting JWT + 30-day refresh token are bound to your developer account
+and required for /v2/keys, /v2/apikey/developer/*, and other developer-portal
+endpoints.
 
-Mirrors the headless 'user login --skey' flow but binds the resulting JWT
-to your developer account. The developer JWT is required for /v2/keys and
-other developer-portal endpoints.
+Two modes:
 
-Examples:
-  andamio dev login --skey ./payment.skey --alias myalias --address $(cat wallet.addr)`,
+  Browser mode (default — no flags):
+    andamio dev login
+    Opens your browser to the andamio.io dev-portal sign-in page. Connect
+    your wallet (Eternl/Lace/Nami/etc.), sign the nonce in-browser, and the
+    CLI receives the JWT pair via an ephemeral localhost callback. Same flow
+    you used to claim your API key at app.andamio.io.
+
+  Headless mode (--skey/--alias/--address — all three required):
+    andamio dev login --skey ./payment.skey --alias myalias --address $(cat wallet.addr)
+    Signs the nonce locally with a .skey file on disk. Suitable for CI/CD,
+    devkit, and ops automation that has access to raw signing keys.
+
+Both modes require an API key (run 'andamio auth login --api-key <key>' first
+— dev-portal endpoints are dual-credential surfaces requiring both
+X-API-Key and the developer JWT).
+
+Browser mode waits up to 5 minutes for the callback. Ctrl-C aborts; the OS
+releases the ephemeral listener port on process exit.`,
 	Args: cobra.NoArgs,
 	RunE: runDevLogin,
 }
@@ -155,8 +202,7 @@ func runDevLogin(cmd *cobra.Command, args []string) error {
 
 	switch {
 	case !skeyProvided && !aliasProvided && !addrProvided:
-		// Unit 2 replaces this stub with runDevLoginBrowser.
-		return fmt.Errorf("browser-flow dev login not yet implemented in this commit — use --skey/--alias/--address for now")
+		return runDevLoginBrowser(cmd.Context(), cfg)
 	case skeyProvided && aliasProvided && addrProvided:
 		skeyPath, _ := cmd.Flags().GetString("skey")
 		alias, _ := cmd.Flags().GetString("alias")
@@ -351,6 +397,253 @@ func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed2551
 	fmt.Fprintln(os.Stderr)
 	if cfg.DevID != "" {
 		fmt.Fprintf(os.Stderr, "Developer ID: %s\n", cfg.DevID)
+	}
+	fmt.Fprintln(os.Stderr, "\nDeveloper JWT (60 min) + refresh token (30 days) stored.")
+	fmt.Fprintln(os.Stderr, "Run 'andamio dev refresh' before the JWT expires to rotate without re-signing.")
+	return nil
+}
+
+// runDevLoginBrowser implements the no-args browser-wallet flow for the
+// developer JWT slot. Mirrors the user-login browser flow's structure
+// (listener on ephemeral loopback port, CSRF state, GET-only callback,
+// 5-minute timeout) but binds the result to the dev slot and accepts the
+// dev-portal callback contract: dev_jwt + dev_jwt_expires_at +
+// dev_refresh_token + dev_refresh_token_expires_at + alias + dev_id + tier
+// + key_hash (optional). Wire format and field-list contract spelled out
+// in the plan's decision matrix and pinned by the App-side companion at
+// andamio-app-v2#700.
+//
+// Diverges from runUserLogin in three deliberate places:
+//
+//  1. Pre-flight API-key guard (dual-credential dev-portal surfaces require
+//     X-API-Key alongside the dev JWT — see the cli-dev-portal-dual-credential
+//     -pattern solution doc; without an API key the new dev JWT is useless).
+//  2. HasDevAuth early-return message goes to STDERR gated on !isJSON
+//     (user-login's stdout print at user.go:125-128 violates the --output
+//     json contract — don't repeat it).
+//  3. Read-modify-save persistence: re-Load() immediately before the dev-slot
+//     write so a concurrent shell's user-slot mutation isn't clobbered by
+//     this flow's stale in-memory cfg.
+//
+// Plan: docs/plans/2026-05-22-001-feat-browser-based-dev-login-plan.md.
+func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
+	isJSON := output.GetFormat() == output.FormatJSON
+
+	// Pre-flight 1: API key required (dual-credential dev-portal contract).
+	// Without an API key the gateway's V2AuthMiddleware will 401 every
+	// subsequent dev-portal call regardless of whether the dev JWT is fresh.
+	// Surface this as an actionable AuthError BEFORE opening the browser.
+	if cfg.APIKey == "" {
+		return &apierr.AuthError{
+			Message: "dev login requires an API key. Run 'andamio auth login --api-key <key>' first",
+		}
+	}
+
+	// Pre-flight 2: already authenticated. In text mode print to stderr
+	// (gated); in JSON mode emit empty stdout + nil. Scripts that need to
+	// distinguish freshly-authenticated from already-authenticated should
+	// call `andamio dev status --output json` after this command — do NOT
+	// synthesize a new JSON envelope just for this no-op success path.
+	if cfg.HasDevAuth() {
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "Already authenticated as developer: %s\n", cfg.DevAlias)
+			fmt.Fprintln(os.Stderr, "Run 'andamio dev logout' first to re-authenticate.")
+		}
+		return nil
+	}
+
+	state, err := generateState()
+	if err != nil {
+		return fmt.Errorf("failed to generate state: %w", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return fmt.Errorf("failed to start local server: %w", err)
+	}
+	defer listener.Close()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+
+	// Buffered channel so the callback handler's send never blocks if the
+	// timeout fires first and nobody is reading.
+	resultChan := make(chan devAuthCallbackResult, 1)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		// GET only. Wrong method → 405, listener keeps waiting for a
+		// subsequent valid GET. Mirrors the user-login callback hardening.
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		result := devAuthCallbackResult{}
+		q := r.URL.Query()
+
+		// Upstream error: short-circuit. Echo the gateway's message so the
+		// caller has a real diagnostic.
+		if errParam := q.Get("error"); errParam != "" {
+			result.Error = errParam
+			resultChan <- result
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "Authentication failed. You can close this window.")
+			return
+		}
+
+		// CSRF state validation — exact-string match. Mismatch → 400 plain
+		// text body, error result, no persistence downstream.
+		if returnedState := q.Get("state"); returnedState != state {
+			result.Error = "invalid state parameter"
+			resultChan <- result
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, "Security validation failed.")
+			return
+		}
+
+		// Parse + sanitize all callback fields. sanitizeCallbackValue drops
+		// JS-style "undefined"/"null" literals and pure whitespace so they
+		// don't land in config as real strings.
+		result.DevJWT = sanitizeCallbackValue(q.Get("dev_jwt"))
+		result.DevJWTExpiresAt = sanitizeCallbackValue(q.Get("dev_jwt_expires_at"))
+		result.DevRefreshToken = sanitizeCallbackValue(q.Get("dev_refresh_token"))
+		result.DevRefreshTokenExpiresAt = sanitizeCallbackValue(q.Get("dev_refresh_token_expires_at"))
+		result.Alias = sanitizeCallbackValue(q.Get("alias"))
+		result.DevID = sanitizeCallbackValue(q.Get("dev_id"))
+		result.Tier = sanitizeCallbackValue(q.Get("tier"))
+		result.KeyHash = sanitizeCallbackValue(q.Get("key_hash"))
+
+		// Validate required fields. The user-login pattern only checks JWT;
+		// dev surface adds two mandatory fields (refresh_token, alias) so a
+		// missing one silently breaks subsequent `dev refresh` or produces
+		// a blank alias in `dev status`. Reject loudly here instead.
+		var missing []string
+		if result.DevJWT == "" {
+			missing = append(missing, "dev_jwt")
+		}
+		if result.DevRefreshToken == "" {
+			missing = append(missing, "dev_refresh_token")
+		}
+		if result.Alias == "" {
+			missing = append(missing, "alias")
+		}
+		if len(missing) > 0 {
+			result.Error = fmt.Sprintf("missing required callback fields: %v", missing)
+			resultChan <- result
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "Authentication failed: missing fields: %v", missing)
+			return
+		}
+
+		resultChan <- result
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "Authentication successful. You can close this window.")
+	})
+
+	server := &http.Server{Handler: mux}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+
+	authURL := buildAuthURL(cfg.BaseURL, "/auth/dev-cli", redirectURI, state)
+
+	if !isJSON {
+		fmt.Fprintln(os.Stderr, "Opening browser for developer authentication...")
+		fmt.Fprintf(os.Stderr, "If browser doesn't open, visit: %s\n", authURL)
+	}
+
+	// openURL failure is non-fatal — the URL is printed for manual opening
+	// and the listener keeps waiting. Stderr only; never on stdout.
+	if err := openURL(authURL); err != nil {
+		if !isJSON {
+			fmt.Fprintf(os.Stderr, "Failed to open browser automatically: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Please open this URL manually: %s\n", authURL)
+		}
+	}
+
+	if !isJSON {
+		fmt.Fprintln(os.Stderr, "Waiting for authentication...")
+	}
+
+	// 5-min timeout via context.Background() — fires on the actual deadline
+	// regardless of cobra context. SIGINT during the wait exits the process
+	// without graceful Shutdown; the OS releases the ephemeral port.
+	// Documented trade-off; see plan Risks section.
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), devLoginBrowserTimeout)
+	defer cancel()
+
+	var result devAuthCallbackResult
+	select {
+	case result = <-resultChan:
+		// got result
+	case <-timeoutCtx.Done():
+		_ = server.Shutdown(context.Background())
+		return fmt.Errorf("developer authentication timed out after %s", devLoginBrowserTimeout)
+	}
+
+	_ = server.Shutdown(context.Background())
+
+	if result.Error != "" {
+		return fmt.Errorf("developer authentication failed: %s", result.Error)
+	}
+
+	// Read-modify-save: re-Load to capture any concurrent slot writes that
+	// landed during the listener wait. Apply only the dev-slot fields via
+	// persistDevSession, then save. Narrows the race window from ~5 minutes
+	// to ~milliseconds (atomic rename in config.Save handles byte-level
+	// interleaving; this read-modify-save handles stale slot data). The
+	// race isn't fully eliminated — a write that lands inside the
+	// millisecond window between Load and Save is still lost. Acceptable
+	// for the realistic operator threat model.
+	freshCfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to reload config: %w", err)
+	}
+
+	// Build a synthetic secureLoginResponse from the flat callback fields.
+	// JWT and RefreshToken are anonymous nested structs in
+	// secureLoginResponse — composite literal syntax does NOT compose
+	// across the boundary, so field-assignment is required.
+	var resp secureLoginResponse
+	resp.UserID = result.DevID
+	resp.Alias = result.Alias
+	resp.Tier = result.Tier
+	resp.JWT.Token = result.DevJWT
+	resp.JWT.ExpiresAt = result.DevJWTExpiresAt
+	resp.RefreshToken.Token = result.DevRefreshToken
+	resp.RefreshToken.ExpiresAt = result.DevRefreshTokenExpiresAt
+
+	// fallbackAlias = "" because browser mode has no flag alias. The
+	// callback validation above already rejects an empty alias, so this
+	// fallback path should never fire — but pass "" explicitly so a future
+	// drift in persistDevSession's signature doesn't silently change behavior.
+	persistDevSession(freshCfg, &resp, result.KeyHash, "")
+
+	if err := config.Save(freshCfg); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	// Success output. JSON envelope carries only non-secret metadata —
+	// NEVER the token bodies. Pinned by token-leak guards in dev_test.go.
+	if isJSON {
+		return output.PrintJSON(devSessionResult{
+			Alias:                 freshCfg.DevAlias,
+			DevID:                 freshCfg.DevID,
+			Tier:                  freshCfg.DevTier,
+			KeyHash:               freshCfg.DevKeyHash,
+			JWTExpiresAt:          freshCfg.DevJWTExpiresAt,
+			RefreshTokenExpiresAt: freshCfg.DevRefreshTokenExpiresAt,
+		})
+	}
+
+	fmt.Fprintf(os.Stderr, "\nAuthenticated as developer: %s", freshCfg.DevAlias)
+	if freshCfg.DevTier != "" {
+		fmt.Fprintf(os.Stderr, " (tier: %s)", freshCfg.DevTier)
+	}
+	fmt.Fprintln(os.Stderr)
+	if freshCfg.DevID != "" {
+		fmt.Fprintf(os.Stderr, "Developer ID: %s\n", freshCfg.DevID)
 	}
 	fmt.Fprintln(os.Stderr, "\nDeveloper JWT (60 min) + refresh token (30 days) stored.")
 	fmt.Fprintln(os.Stderr, "Run 'andamio dev refresh' before the JWT expires to rotate without re-signing.")

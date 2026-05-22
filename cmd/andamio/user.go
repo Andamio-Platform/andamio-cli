@@ -207,7 +207,7 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 	}()
 
 	// Build auth URL - the app's CLI auth page
-	authURL := buildAuthURL(cfg.BaseURL, redirectURI, state)
+	authURL := buildAuthURL(cfg.BaseURL, "/auth/cli", redirectURI, state)
 
 	fmt.Println("Opening browser for authentication...")
 	fmt.Printf("If browser doesn't open, visit: %s\n\n", authURL)
@@ -619,8 +619,22 @@ func getInt(m map[string]interface{}, key string) int {
 	return 0
 }
 
-// buildAuthURL constructs the authentication URL for the app's CLI auth page
-func buildAuthURL(baseURL, redirectURI, state string) string {
+// openURL is the package-level indirection for browser.OpenURL so tests can
+// override it. Declared at package scope in user.go (where pkg/browser is
+// already imported) so a future PR that adds tests to the user-login browser
+// flow can swap its existing `browser.OpenURL(authURL)` call site to
+// `openURL(authURL)` without a new declaration. Today, only the dev-login
+// browser flow uses this variable; user.go's browser-open call is unchanged
+// (strict scope per docs/plans/2026-05-22-001-feat-browser-based-dev-login-plan.md).
+// Package-level Go variables are exempt from the unused-variable check, so
+// this compiles cleanly even though user.go itself does not reference it.
+var openURL = browser.OpenURL
+
+// buildAuthURL constructs the authentication URL for the app's CLI auth page.
+// The `path` argument selects between auth surfaces — `/auth/cli` for the
+// user-JWT browser flow, `/auth/dev-cli` for the developer-JWT browser flow.
+// Both surfaces share the same `redirect_uri` + `state` query-param contract.
+func buildAuthURL(baseURL, path, redirectURI, state string) string {
 	// Convert API base URL to app URL
 	// e.g., https://preprod.api.andamio.io -> https://preprod.app.andamio.io
 	appURL := strings.Replace(baseURL, ".api.", ".app.", 1)
@@ -630,7 +644,7 @@ func buildAuthURL(baseURL, redirectURI, state string) string {
 	params.Set("redirect_uri", redirectURI)
 	params.Set("state", state)
 
-	return fmt.Sprintf("%s/auth/cli?%s", appURL, params.Encode())
+	return fmt.Sprintf("%s%s?%s", appURL, path, params.Encode())
 }
 
 // sanitizeCallbackValue drops JavaScript-style "undefined" / "null" literals

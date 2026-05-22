@@ -5,11 +5,14 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -1080,15 +1083,24 @@ func newDevLoginTestCmd() *cobra.Command {
 	return cmd
 }
 
-func TestRunDevLogin_NoFlags_RoutesToBrowserStub(t *testing.T) {
+func TestRunDevLogin_NoFlags_RoutesToBrowser(t *testing.T) {
+	// Dispatch test: no flags → browser branch. With Unit 2 landed, the
+	// browser branch's first observable behavior is the API-key pre-flight
+	// guard (empty APIKey → AuthError mentioning 'auth login --api-key').
+	// HOME is set to a tempdir so config.Load returns a fresh empty Config
+	// — no API key, no dev creds.
 	t.Setenv("HOME", t.TempDir())
 	cmd := newDevLoginTestCmd()
 	err := cmd.RunE(cmd, []string{})
 	if err == nil {
-		t.Fatal("expected stub error from browser branch in this commit (Unit 2 replaces with real impl)")
+		t.Fatal("expected pre-flight AuthError from browser branch (no API key)")
 	}
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Errorf("err = %q, want substring %q (verifies dispatch landed in browser branch)", err.Error(), "not yet implemented")
+	if !strings.Contains(err.Error(), "auth login --api-key") {
+		t.Errorf("err = %q, want substring %q (verifies dispatch landed in browser branch's API-key pre-flight)", err.Error(), "auth login --api-key")
+	}
+	var authErr *apierr.AuthError
+	if !errors.As(err, &authErr) {
+		t.Errorf("expected *apierr.AuthError (exit code 3), got %T: %v", err, err)
 	}
 }
 
@@ -1166,6 +1178,634 @@ func TestRunDevLogin_PartialFlags_ReturnsErrorNamingBothModes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// =============================================================================
+// dev login (browser) — runDevLoginBrowser end-to-end coverage (#100, Unit 2)
+// =============================================================================
+//
+// Pins the dual-credential wire contract, both AuthError pre-flight branches,
+// every callback validation guard (state, missing fields, sanitized
+// "undefined"), the timeout path, the read-modify-save persistence pattern,
+// and the token-leak guard on stdout AND stderr. The user-login browser
+// flow is untested in this repo today; do NOT mirror that pattern for the
+// dev surface.
+//
+// `openURL` (package-level var in user.go) is overridden per test to
+// simulate what the andamio-app-v2 /auth/dev-cli page would do — parse the
+// redirect_uri + state out of the auth URL, then GET the local callback
+// with synthetic success/failure params. `devLoginBrowserTimeout` is
+// overridden to a short duration so timeout tests don't take 5 minutes.
+
+// devBrowserTestEnv seeds the config with an API key (required to pass the
+// browser flow's pre-flight) and any caller-supplied dev-slot or user-slot
+// fields. Returns the loaded cfg pointer for direct mutation in tests.
+// Sets HOME to a tempdir so config.Load/Save targets isolated state.
+func devBrowserTestEnv(t *testing.T, base config.Config) *config.Config {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	cfg := base
+	if err := config.Save(&cfg); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	return &cfg
+}
+
+// overrideOpenURL installs a per-test closure for the browser-opener
+// indirection. Restored via t.Cleanup. The closure receives the full auth
+// URL the CLI constructed (containing redirect_uri + state in the query
+// string) and decides what to do — typically: parse out the redirect_uri,
+// issue a GET to it with synthetic callback params.
+func overrideOpenURL(t *testing.T, fn func(authURL string) error) {
+	t.Helper()
+	original := openURL
+	openURL = fn
+	t.Cleanup(func() { openURL = original })
+}
+
+// overrideDevLoginTimeout shortens the browser-flow timeout for tests.
+// Always restored via t.Cleanup.
+func overrideDevLoginTimeout(t *testing.T, d time.Duration) {
+	t.Helper()
+	original := devLoginBrowserTimeout
+	devLoginBrowserTimeout = d
+	t.Cleanup(func() { devLoginBrowserTimeout = original })
+}
+
+// successCallback returns an openURL closure that simulates a valid
+// /auth/dev-cli callback. The closure parses redirect_uri + state from
+// the auth URL and GETs the callback with the supplied query params,
+// always echoing back the state token unchanged.
+func successCallback(t *testing.T, params url.Values) func(string) error {
+	t.Helper()
+	return func(authURL string) error {
+		u, err := url.Parse(authURL)
+		if err != nil {
+			return fmt.Errorf("parse authURL: %w", err)
+		}
+		q := u.Query()
+		redirectURI := q.Get("redirect_uri")
+		state := q.Get("state")
+		callback, err := url.Parse(redirectURI)
+		if err != nil {
+			return fmt.Errorf("parse redirect_uri: %w", err)
+		}
+		cbq := callback.Query()
+		cbq.Set("state", state) // echo state by default
+		for k, vs := range params {
+			for _, v := range vs {
+				cbq.Set(k, v)
+			}
+		}
+		callback.RawQuery = cbq.Encode()
+		resp, err := http.Get(callback.String())
+		if err != nil {
+			return fmt.Errorf("GET callback: %w", err)
+		}
+		_ = resp.Body.Close()
+		return nil
+	}
+}
+
+// validCallbackParams returns a baseline set of dev-flow callback fields
+// suitable for happy-path tests. Tokens are marked with SECRET.SHOULD-NOT-LEAK
+// so the token-leak guards across tests can spot stdout/stderr leakage
+// regardless of which call path emits them.
+func validCallbackParams() url.Values {
+	return url.Values{
+		"dev_jwt":                      {"SECRET.SHOULD-NOT-LEAK.jwt"},
+		"dev_jwt_expires_at":           {"2099-01-01T01:00:00Z"},
+		"dev_refresh_token":            {"SECRET.SHOULD-NOT-LEAK.refresh"},
+		"dev_refresh_token_expires_at": {"2099-02-01T00:00:00Z"},
+		"alias":                        {"myalias"},
+		"dev_id":                       {"dev-uuid-1"},
+		"tier":                         {"pioneer"},
+		"key_hash":                     {"deadbeef"},
+	}
+}
+
+func TestRunDevLoginBrowser_HappyPath_PersistsAllSlots(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideOpenURL(t, successCallback(t, validCallbackParams()))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevLoginBrowser: %v", err)
+	}
+
+	// Verify persistence by re-loading from disk — round-trip proves
+	// config.Save actually wrote the dev slot, not just an in-memory update.
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	wantFields := map[string]struct{ got, want string }{
+		"DevJWT":                   {loaded.DevJWT, "SECRET.SHOULD-NOT-LEAK.jwt"},
+		"DevJWTExpiresAt":          {loaded.DevJWTExpiresAt, "2099-01-01T01:00:00Z"},
+		"DevRefreshToken":          {loaded.DevRefreshToken, "SECRET.SHOULD-NOT-LEAK.refresh"},
+		"DevRefreshTokenExpiresAt": {loaded.DevRefreshTokenExpiresAt, "2099-02-01T00:00:00Z"},
+		"DevAlias":                 {loaded.DevAlias, "myalias"},
+		"DevID":                    {loaded.DevID, "dev-uuid-1"},
+		"DevTier":                  {loaded.DevTier, "pioneer"},
+		"DevKeyHash":               {loaded.DevKeyHash, "deadbeef"},
+	}
+	for name, v := range wantFields {
+		if v.got != v.want {
+			t.Errorf("%s = %q, want %q", name, v.got, v.want)
+		}
+	}
+	// API key preserved by read-modify-save.
+	if loaded.APIKey != "test-api-key" {
+		t.Errorf("APIKey clobbered: got %q, want %q", loaded.APIKey, "test-api-key")
+	}
+}
+
+func TestRunDevLoginBrowser_JSONOutputShape_NoTokenLeak(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideOpenURL(t, successCallback(t, validCallbackParams()))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	_ = output.SetFormat("json")
+	t.Cleanup(func() { _ = output.SetFormat("text") })
+
+	captured := captureStdout(t, func() {
+		if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+			t.Fatalf("runDevLoginBrowser: %v", err)
+		}
+	})
+
+	// Token-leak guard: tokens MUST NOT appear on stdout.
+	if strings.Contains(captured, "SECRET.SHOULD-NOT-LEAK") {
+		t.Fatalf("token body leaked to stdout: %s", captured)
+	}
+
+	// JSON envelope shape — only non-secret metadata.
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(captured), &got); err != nil {
+		t.Fatalf("decode envelope: %v\nbytes: %s", err, captured)
+	}
+	wantFields := map[string]interface{}{
+		"alias":                    "myalias",
+		"dev_id":                   "dev-uuid-1",
+		"tier":                     "pioneer",
+		"key_hash":                 "deadbeef",
+		"jwt_expires_at":           "2099-01-01T01:00:00Z",
+		"refresh_token_expires_at": "2099-02-01T00:00:00Z",
+	}
+	for name, want := range wantFields {
+		if got[name] != want {
+			t.Errorf("envelope.%s = %v, want %v", name, got[name], want)
+		}
+	}
+	// Envelope must NOT contain any field whose value is the actual token.
+	for k, v := range got {
+		if s, ok := v.(string); ok && strings.Contains(s, "SECRET.SHOULD-NOT-LEAK") {
+			t.Errorf("envelope.%s contains a token-shaped value (%q) — JSON envelope must never carry token bodies", k, s)
+		}
+	}
+}
+
+func TestRunDevLoginBrowser_BrowserOpenFailure_PrintsURLAndContinues(t *testing.T) {
+	// openURL returns an error; runDevLoginBrowser must NOT abort —
+	// it should print the URL to stderr and keep listening, then succeed
+	// when a callback arrives via an alternate path.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	// First simulate browser-open failure, then deliver a callback in the
+	// same closure so the listener gets a result before timeout.
+	overrideOpenURL(t, func(authURL string) error {
+		// Schedule a callback to fire concurrently with the "browser open
+		// failed" return. The runDevLoginBrowser select reads from
+		// resultChan after openURL returns.
+		go func() {
+			if err := successCallback(t, validCallbackParams())(authURL); err != nil {
+				t.Errorf("simulated callback after browser-open failure: %v", err)
+			}
+		}()
+		return fmt.Errorf("simulated browser launch failure")
+	})
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevLoginBrowser should recover from browser-open failure: %v", err)
+	}
+
+	// Verify the flow still succeeded — config was written.
+	loaded, _ := config.Load()
+	if loaded.DevJWT == "" {
+		t.Errorf("expected dev JWT persisted after browser-open recovery")
+	}
+}
+
+func TestRunDevLoginBrowser_KeyHashAbsent_PersistsEmpty(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	params := validCallbackParams()
+	params.Del("key_hash")
+	overrideOpenURL(t, successCallback(t, params))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevLoginBrowser: %v", err)
+	}
+	loaded, _ := config.Load()
+	if loaded.DevKeyHash != "" {
+		t.Errorf("DevKeyHash = %q, want empty when callback omits key_hash", loaded.DevKeyHash)
+	}
+	if loaded.DevJWT == "" {
+		t.Errorf("expected other fields to persist even when key_hash is absent")
+	}
+}
+
+func TestRunDevLoginBrowser_DevJWTUndefined_RejectsAndNoPersistence(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	params := validCallbackParams()
+	params.Set("dev_jwt", "undefined") // sanitizeCallbackValue should drop this
+	overrideOpenURL(t, successCallback(t, params))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	err := runDevLoginBrowser(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected error when dev_jwt sanitizes to empty")
+	}
+	if !strings.Contains(err.Error(), "dev_jwt") {
+		t.Errorf("err = %q, want substring naming the missing field", err.Error())
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT != "" {
+		t.Errorf("DevJWT persisted despite validation failure: %q", loaded.DevJWT)
+	}
+}
+
+func TestRunDevLoginBrowser_RefreshTokenEmpty_RejectsAndNoPersistence(t *testing.T) {
+	// The user-login pattern only validates the JWT, not the refresh
+	// token. The dev surface needs BOTH validated — silently persisting
+	// an empty refresh token breaks `dev refresh` later with a confusing
+	// error. This test is the regression guard.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	params := validCallbackParams()
+	params.Set("dev_refresh_token", "null") // sanitize → empty
+	overrideOpenURL(t, successCallback(t, params))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	err := runDevLoginBrowser(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected error when dev_refresh_token sanitizes to empty")
+	}
+	if !strings.Contains(err.Error(), "dev_refresh_token") {
+		t.Errorf("err = %q, want substring naming dev_refresh_token specifically", err.Error())
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT != "" || loaded.DevRefreshToken != "" {
+		t.Errorf("partial persistence detected: DevJWT=%q DevRefreshToken=%q", loaded.DevJWT, loaded.DevRefreshToken)
+	}
+}
+
+func TestRunDevLoginBrowser_AliasEmpty_RejectsAndNoPersistence(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	params := validCallbackParams()
+	params.Del("alias")
+	overrideOpenURL(t, successCallback(t, params))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	err := runDevLoginBrowser(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected error when alias is empty")
+	}
+	if !strings.Contains(err.Error(), "alias") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "alias")
+	}
+	loaded, _ := config.Load()
+	if loaded.DevAlias != "" {
+		t.Errorf("DevAlias persisted despite validation failure: %q", loaded.DevAlias)
+	}
+}
+
+func TestRunDevLoginBrowser_StateMismatch_RejectsAndNoPersistence(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 2*time.Second)
+	// Custom closure that sends a wrong state token in the callback.
+	overrideOpenURL(t, func(authURL string) error {
+		u, _ := url.Parse(authURL)
+		redirectURI := u.Query().Get("redirect_uri")
+		callback, _ := url.Parse(redirectURI)
+		cbq := callback.Query()
+		cbq.Set("state", "wrong-state-not-the-one-the-cli-sent")
+		for k, vs := range validCallbackParams() {
+			for _, v := range vs {
+				cbq.Set(k, v)
+			}
+		}
+		callback.RawQuery = cbq.Encode()
+		resp, err := http.Get(callback.String())
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		return nil
+	})
+
+	err := runDevLoginBrowser(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected error on state mismatch")
+	}
+	if !strings.Contains(err.Error(), "state") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "state")
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT != "" {
+		t.Errorf("DevJWT persisted despite state mismatch: %q", loaded.DevJWT)
+	}
+}
+
+func TestRunDevLoginBrowser_POSTMethod_405_KeepsListening(t *testing.T) {
+	// A wrong-method callback must return 405 and keep the listener
+	// running. A subsequent valid GET completes the flow.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 2*time.Second)
+	overrideOpenURL(t, func(authURL string) error {
+		u, _ := url.Parse(authURL)
+		redirectURI := u.Query().Get("redirect_uri")
+		state := u.Query().Get("state")
+
+		// First: POST → expect 405, listener keeps waiting.
+		postResp, err := http.Post(redirectURI, "application/x-www-form-urlencoded", strings.NewReader(""))
+		if err != nil {
+			return fmt.Errorf("POST: %w", err)
+		}
+		_ = postResp.Body.Close()
+		if postResp.StatusCode != http.StatusMethodNotAllowed {
+			return fmt.Errorf("expected 405 on POST, got %d", postResp.StatusCode)
+		}
+
+		// Then: valid GET completes the flow.
+		callback, _ := url.Parse(redirectURI)
+		cbq := callback.Query()
+		cbq.Set("state", state)
+		for k, vs := range validCallbackParams() {
+			for _, v := range vs {
+				cbq.Set(k, v)
+			}
+		}
+		callback.RawQuery = cbq.Encode()
+		getResp, err := http.Get(callback.String())
+		if err != nil {
+			return err
+		}
+		_ = getResp.Body.Close()
+		return nil
+	})
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevLoginBrowser should recover from wrong-method callback: %v", err)
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT == "" {
+		t.Errorf("expected DevJWT persisted after recovery from 405")
+	}
+}
+
+func TestRunDevLoginBrowser_GatewayErrorParam_Bubbles(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 2*time.Second)
+	overrideOpenURL(t, successCallback(t, url.Values{
+		"error": {"wallet signature rejected by user"},
+	}))
+
+	err := runDevLoginBrowser(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected error when callback carries an error param")
+	}
+	if !strings.Contains(err.Error(), "wallet signature rejected") {
+		t.Errorf("err = %q, want gateway error message verbatim", err.Error())
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT != "" {
+		t.Errorf("DevJWT persisted despite gateway-error callback: %q", loaded.DevJWT)
+	}
+}
+
+func TestRunDevLoginBrowser_Timeout_NoPersistence(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 100*time.Millisecond)
+	// No-op openURL: nothing ever GETs the callback, listener times out.
+	overrideOpenURL(t, func(authURL string) error { return nil })
+
+	err := runDevLoginBrowser(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "timed out")
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT != "" {
+		t.Errorf("DevJWT persisted despite timeout: %q", loaded.DevJWT)
+	}
+}
+
+func TestRunDevLoginBrowser_NoAPIKey_PreFlightAuthError(t *testing.T) {
+	// Without an API key, runDevLoginBrowser must short-circuit BEFORE
+	// opening the browser. Override openURL to fail loudly if called.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		// APIKey deliberately omitted.
+	})
+	overrideOpenURL(t, func(authURL string) error {
+		t.Errorf("openURL must NOT be called when APIKey is empty (pre-flight failed to gate)")
+		return nil
+	})
+
+	err := runDevLoginBrowser(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected AuthError when APIKey is empty")
+	}
+	var authErr *apierr.AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected *apierr.AuthError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "auth login --api-key") {
+		t.Errorf("err = %q, want hint mentioning 'auth login --api-key'", err.Error())
+	}
+}
+
+func TestRunDevLoginBrowser_AlreadyAuthed_PreFlightReturnsNil(t *testing.T) {
+	// HasDevAuth() pre-flight: existing dev JWT → return nil, no browser.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL:  "https://preprod.api.andamio.io",
+		APIKey:   "test-api-key",
+		DevJWT:   "existing.dev.jwt",
+		DevAlias: "existing-alias",
+	})
+	overrideOpenURL(t, func(authURL string) error {
+		t.Errorf("openURL must NOT be called when dev slot is already populated")
+		return nil
+	})
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("expected nil return on already-authed path, got %v", err)
+	}
+	// Config slot must NOT be touched.
+	loaded, _ := config.Load()
+	if loaded.DevJWT != "existing.dev.jwt" {
+		t.Errorf("existing DevJWT was clobbered: %q", loaded.DevJWT)
+	}
+	if loaded.DevAlias != "existing-alias" {
+		t.Errorf("existing DevAlias was clobbered: %q", loaded.DevAlias)
+	}
+}
+
+func TestRunDevLoginBrowser_AlreadyAuthed_JSONMode_EmptyStdout(t *testing.T) {
+	// In --output json mode, the early-return path emits nothing on
+	// stdout (and exits 0). Scripts that need to distinguish
+	// freshly-authed from already-authed should call `dev status
+	// --output json` after — do NOT synthesize a JSON envelope for this
+	// no-op success.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL:  "https://preprod.api.andamio.io",
+		APIKey:   "test-api-key",
+		DevJWT:   "existing.dev.jwt",
+		DevAlias: "existing-alias",
+	})
+	overrideOpenURL(t, func(authURL string) error {
+		t.Errorf("openURL must NOT be called")
+		return nil
+	})
+
+	_ = output.SetFormat("json")
+	t.Cleanup(func() { _ = output.SetFormat("text") })
+
+	captured := captureStdout(t, func() {
+		if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+	})
+	if strings.TrimSpace(captured) != "" {
+		t.Errorf("--output json early-return must emit empty stdout; got %q", captured)
+	}
+}
+
+// TestRunDevLoginBrowser_ConcurrentSlotSafety simulates a concurrent shell
+// writing to the user slot between the start of the browser flow and the
+// callback. Disk-state form (mutate the file mid-flow) rather than a live
+// concurrency simulation — production behavior depends on whether the
+// read-modify-save pattern picks up the concurrent write, and a
+// deterministic file mutation pins exactly that property.
+func TestRunDevLoginBrowser_ConcurrentSlotSafety(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+		// Initial user slot — represents "user JWT existed before browser flow."
+		UserJWT:   "initial.user.jwt",
+		UserAlias: "initial-user-alias",
+	})
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	// Custom closure: mutate config.json directly to simulate a concurrent
+	// `user login` updating the UserJWT BEFORE the callback fires. Then
+	// trigger the success callback as usual.
+	overrideOpenURL(t, func(authURL string) error {
+		// Directly overwrite the config file with a "concurrent" user-slot
+		// update. The dev flow's read-modify-save must pick this up rather
+		// than clobber it with the stale in-memory value.
+		concurrent := &config.Config{
+			BaseURL:   "https://preprod.api.andamio.io",
+			APIKey:    "test-api-key",
+			UserJWT:   "CONCURRENTLY-WRITTEN-user.jwt",
+			UserAlias: "concurrent-user-alias",
+		}
+		if err := config.Save(concurrent); err != nil {
+			return fmt.Errorf("simulate concurrent save: %w", err)
+		}
+		return successCallback(t, validCallbackParams())(authURL)
+	})
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevLoginBrowser: %v", err)
+	}
+
+	loaded, _ := config.Load()
+	// Dev slot landed.
+	if loaded.DevJWT != "SECRET.SHOULD-NOT-LEAK.jwt" {
+		t.Errorf("DevJWT = %q, want the callback's value", loaded.DevJWT)
+	}
+	// User slot reflects the CONCURRENT write, NOT the original in-memory snapshot.
+	if loaded.UserJWT != "CONCURRENTLY-WRITTEN-user.jwt" {
+		t.Errorf("UserJWT = %q, want the concurrent value (read-modify-save failed: stale data clobbered concurrent write)", loaded.UserJWT)
+	}
+	if loaded.UserAlias != "concurrent-user-alias" {
+		t.Errorf("UserAlias = %q, want the concurrent value", loaded.UserAlias)
+	}
+}
+
+func TestRunDevLoginBrowser_IntegrationWithAPIKey_DualCredentialsOnWire(t *testing.T) {
+	// After browser-flow login succeeds and persists dev creds, a subsequent
+	// runAPIKeyJSON call must send BOTH X-API-Key AND Authorization: Bearer
+	// <dev_jwt> on the wire. Pins the integration between browser-flow
+	// persistence and devKeysClient routing.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "the-api-key-on-wire",
+	})
+	params := validCallbackParams()
+	// Replace SECRET marker with a distinct token we can match on the wire.
+	params.Set("dev_jwt", "the-dev-jwt-on-wire")
+	overrideOpenURL(t, successCallback(t, params))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevLoginBrowser: %v", err)
+	}
+
+	// Reload to pick up persistence, then stand up an apikey stub and call
+	// runAPIKeyJSON. Both headers must ride on the request.
+	loaded, _ := config.Load()
+	stub := &apikeyGatewayStub{respBody: []byte(`{"ok":true}`)}
+	srv := httptest.NewServer(stub.serve())
+	t.Cleanup(srv.Close)
+	loaded.BaseURL = srv.URL
+
+	if err := runAPIKeyJSON(context.Background(), loaded, "/api/v2/apikey/developer/usage/get"); err != nil {
+		t.Fatalf("runAPIKeyJSON: %v", err)
+	}
+	if got, want := stub.capturedAuthHeader, "Bearer the-dev-jwt-on-wire"; got != want {
+		t.Errorf("Authorization = %q, want %q (dev JWT from browser flow must ride here)", got, want)
+	}
+	if got, want := stub.capturedAPIKeyHeader, "the-api-key-on-wire"; got != want {
+		t.Errorf("X-API-Key = %q, want %q (V2AuthMiddleware requires it)", got, want)
 	}
 }
 
