@@ -5,6 +5,11 @@ status: active
 date: 2026-05-22
 deepened: 2026-05-22
 origin: https://github.com/Andamio-Platform/andamio-cli/issues/100
+post_merge_corrections:
+  - date: 2026-05-25
+    pr: 113
+    plan: docs/plans/2026-05-25-002-fix-dev-login-callback-post-json-contract-plan.md
+    summary: "Callback wire format switched from GET+query to POST+JSON to match andamio-app-v2#699. See Post-Merge Correction section at the end of this file."
 ---
 
 # feat: browser-based `dev login` (no args) — mirror user login for the developer JWT slot
@@ -366,3 +371,11 @@ Test expectation: none — documentation-only unit; no behavioral change.
   - `docs/solutions/security-issues/cli-security-hardening-input-validation.md`
   - `docs/solutions/architecture/cli-composability-audit-and-fix.md`
   - `docs/solutions/logic-errors/fix-three-cli-issues-hex-encoding-lesson-merge-headless-login.md`
+
+## Post-Merge Correction (2026-05-25)
+
+**Key Technical Decision in this plan that did not survive contact with reality:** the choice of GET + query params for the callback wire format (see "Key Technical Decisions" → "Callback transport: GET with query params, not POST/JSON"). The argument in this plan was consistency with the existing user-login pattern. Plausible, but it ignored a security argument that the app team independently raised on their side: a 30-day rotation refresh token in the browser's URL history is a privacy concern. The app shipped POST + JSON in [andamio-app-v2#699](https://github.com/Andamio-Platform/andamio-app-v2/pull/699) on 2026-05-23; this CLI shipped GET + query on 2026-05-25 (PR #101). End-to-end against preprod returned `callback_failed` because the CLI listener returned 405 to the app's POST.
+
+The follow-up fix (PR #113, [`docs/plans/2026-05-25-002-fix-dev-login-callback-post-json-contract-plan.md`](./2026-05-25-002-fix-dev-login-callback-post-json-contract-plan.md)) adopts the app's POST + JSON contract and adds the `OPTIONS` preflight + CORS + Private Network Access headers Chrome requires. The user-login flow is unchanged (it stays GET-redirect — its payload doesn't carry a 30-day refresh token, so the URL-history argument is weaker).
+
+**Process learning:** [andamio-app-v2#700](https://github.com/Andamio-Platform/andamio-app-v2/issues/700) was filed to pin the wire-format contract across both repos, but it never gated either merge. The ce-review on #101 dispatched 10 reviewer agents and none caught the mismatch — each reviewed only the CLI side. Cross-repo contract changes need a verification step that spans both repos before merge; this is a useful target for a future skill or workflow improvement.
