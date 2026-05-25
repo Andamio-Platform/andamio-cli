@@ -6,6 +6,12 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Added
+- `andamio dev login` (no args) now supports a **browser-wallet** flow that mirrors the existing `andamio user login` browser-wallet path. The CLI starts an ephemeral local HTTP listener, opens the system browser to `{appURL}/auth/dev-cli?redirect_uri=…&state=…`, and waits for the andamio-app-v2 dev-portal page to post back a 60-min developer JWT + 30-day rotation refresh token + alias + tier via a GET callback. Same flow developers already use to claim their API keys at app.andamio.io — closes the longstanding gap that left browser-wallet developers unable to complete `dev login` at all (their `.skey` lives inside the Eternl/Lace/Nami extension by design and isn't exportable). Requires `andamio auth login --api-key <key>` first; the dev-portal surface is dual-credential and the gateway returns 401 without `X-API-Key`. A `cfg.APIKey == ""` pre-flight guard fires before the browser opens with an actionable `auth login --api-key` hint. 5-minute callback timeout matches the gateway's session window. The existing `andamio dev login --skey <path> --alias <name> --address <bech32>` headless mode is unchanged and remains the right path for CI/CD, ops automation, and devkit. Closes #100. App-side companions: `Andamio-Platform/andamio-app-v2#698` (the `/auth/dev-cli` page) and `Andamio-Platform/andamio-app-v2#700` (the wire-format contract).
+
+### Changed
+- `andamio dev login` no longer marks `--skey`, `--alias`, and `--address` as required at the cobra layer. The new no-flags invocation is now valid (it triggers the browser flow above). The dispatcher discriminator is `cmd.Flags().Changed()` — not empty-string equality — so `andamio dev login --skey ""` (from an unset shell variable) correctly routes to the headless branch where `LoadSigningKey` surfaces the real "empty skey" problem to the operator, rather than silently opening a browser the script didn't ask for. Partial-flag invocations (any subset of the three flags set) now return an application-level error naming the specific missing flag(s) AND both modes, so the operator can fix forward in either direction. **Backward-compatibility note for automation:** scripts that previously relied on cobra's exit-1 flag-validation error to short-circuit when `--skey`/`--alias`/`--address` were unset must now pass all three flags explicitly (headless mode) OR omit all three (browser mode); the in-between state is the new partial-flag error.
+
 ## [0.13.0] - 2026-05-22
 
 ### Added
