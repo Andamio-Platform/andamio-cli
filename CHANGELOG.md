@@ -6,6 +6,8 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-05-25
+
 ### Fixed
 - `andamio dev login` post-login summary message (both browser and headless flows) no longer hardcodes "Developer JWT (60 min) + refresh token (30 days) stored." The displayed durations are now computed at print time from the gateway-returned `dev_jwt_expires_at` and `dev_refresh_token_expires_at` timestamps that were already being persisted to config, so the message tells the operator the actual lifetime of the credentials they just received rather than the lifetime the v2.3 contract documents. Discovered against current preprod, where the deployed gateway is minting ~6-day JWTs (tracked separately in `Andamio-Platform/andamio-api#509`) while the CLI was still printing "60 min" — `andamio dev status` already parsed the gateway truth, so the two messages contradicted each other after the same login. The hardcoded strings remain as **fallback values** when the timestamp field is missing, unparseable, or already in the past — the previous wording continues to surface only in those degraded paths. No envelope or contract change; the `--output json` shape is identical and continues to surface the raw `*_expires_at` strings unchanged. Closes #115.
 
