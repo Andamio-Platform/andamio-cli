@@ -899,6 +899,51 @@ func TestTimeUntil_FutureReturnsRemaining(t *testing.T) {
 	}
 }
 
+func TestFormatStoredLifetime_EmptyFallsBack(t *testing.T) {
+	got := formatStoredLifetime("", "60 min")
+	if got != "60 min" {
+		t.Errorf("formatStoredLifetime(\"\") = %q; want fallback \"60 min\"", got)
+	}
+}
+
+func TestFormatStoredLifetime_UnparseableFallsBack(t *testing.T) {
+	got := formatStoredLifetime("not-a-timestamp", "30 days")
+	if got != "30 days" {
+		t.Errorf("formatStoredLifetime(garbage) = %q; want fallback \"30 days\"", got)
+	}
+}
+
+func TestFormatStoredLifetime_ExpiredFallsBack(t *testing.T) {
+	// Expired tokens shouldn't be advertised with a misleading "0 seconds"
+	// remaining — fall back to the documented-intent string instead.
+	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+	got := formatStoredLifetime(past, "60 min")
+	if got != "60 min" {
+		t.Errorf("formatStoredLifetime(past) = %q; want fallback \"60 min\"", got)
+	}
+}
+
+func TestFormatStoredLifetime_FutureMinutesBucket(t *testing.T) {
+	future := time.Now().Add(45 * time.Minute).UTC().Format(time.RFC3339)
+	got := formatStoredLifetime(future, "fallback")
+	if !strings.Contains(got, "minutes") {
+		t.Errorf("formatStoredLifetime(+45m) = %q; want a minutes-bucket result", got)
+	}
+}
+
+func TestFormatStoredLifetime_FutureDaysBucket(t *testing.T) {
+	// Mirrors the observed gateway behavior that exposed the bug —
+	// a multi-day JWT must surface in days, not the hardcoded "60 min".
+	future := time.Now().Add(5 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	got := formatStoredLifetime(future, "60 min")
+	if !strings.Contains(got, "days") {
+		t.Errorf("formatStoredLifetime(+5d) = %q; want a days-bucket result", got)
+	}
+	if got == "60 min" {
+		t.Errorf("formatStoredLifetime(+5d) returned the fallback — regression of the original bug")
+	}
+}
+
 func TestRunDevStatus_JSON_Unauthenticated(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.Save(&config.Config{}); err != nil {
