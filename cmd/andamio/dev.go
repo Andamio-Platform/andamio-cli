@@ -507,7 +507,9 @@ func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed2551
 	if cfg.DevID != "" {
 		fmt.Fprintf(os.Stderr, "Developer ID: %s\n", cfg.DevID)
 	}
-	fmt.Fprintln(os.Stderr, "\nDeveloper JWT (60 min) + refresh token (30 days) stored.")
+	fmt.Fprintf(os.Stderr, "\nDeveloper JWT (%s) + refresh token (%s) stored.\n",
+		formatStoredLifetime(cfg.DevJWTExpiresAt, "60 min"),
+		formatStoredLifetime(cfg.DevRefreshTokenExpiresAt, "30 days"))
 	fmt.Fprintln(os.Stderr, "Run 'andamio dev refresh' before the JWT expires to rotate without re-signing.")
 	return nil
 }
@@ -904,7 +906,9 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 	if freshCfg.DevID != "" {
 		fmt.Fprintf(os.Stderr, "Developer ID: %s\n", freshCfg.DevID)
 	}
-	fmt.Fprintln(os.Stderr, "\nDeveloper JWT (60 min) + refresh token (30 days) stored.")
+	fmt.Fprintf(os.Stderr, "\nDeveloper JWT (%s) + refresh token (%s) stored.\n",
+		formatStoredLifetime(freshCfg.DevJWTExpiresAt, "60 min"),
+		formatStoredLifetime(freshCfg.DevRefreshTokenExpiresAt, "30 days"))
 	fmt.Fprintln(os.Stderr, "Run 'andamio dev refresh' before the JWT expires to rotate without re-signing.")
 	return nil
 }
@@ -1183,6 +1187,20 @@ func parseExpiry(rfc3339 string) (expiresAt time.Time, remaining time.Duration, 
 func timeUntil(rfc3339 string) (expired bool, remaining time.Duration, ok bool) {
 	_, remaining, expired, ok = parseExpiry(rfc3339)
 	return
+}
+
+// formatStoredLifetime turns a gateway-issued expiry timestamp into the
+// human-readable "X minutes" / "X hours" / "X days" remaining-time form, so
+// post-login messages reflect the actual JWT/refresh lifetime instead of a
+// hardcoded number that drifts when the gateway-side TTL changes. Falls back
+// to the supplied string when the timestamp is missing, unparseable, or
+// already expired (the message would mislead either way).
+func formatStoredLifetime(rfc3339, fallback string) string {
+	_, remaining, expired, ok := parseExpiry(rfc3339)
+	if !ok || expired {
+		return fallback
+	}
+	return formatDuration(remaining)
 }
 
 // printExpiryLine prints "<label>: valid until <time> (<remaining>)" or
