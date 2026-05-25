@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
@@ -1303,11 +1304,22 @@ func overrideDevLoginTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { devLoginBrowserTimeout = original })
 }
 
-// successCallback returns an openURL closure that simulates a valid
-// /auth/dev-cli callback. The closure parses redirect_uri + state from
-// the auth URL and GETs the callback with the supplied query params,
-// always echoing back the state token unchanged.
-func successCallback(t *testing.T, params url.Values) func(string) error {
+// testAppOrigin is the Origin header value tests inject when simulating
+// a callback from the preprod app. Matches what deriveAppOrigin returns
+// for the standard test BaseURL "https://preprod.api.andamio.io".
+const testAppOrigin = "https://preprod.app.andamio.io"
+
+// successPostCallback returns an openURL closure that simulates a valid
+// /auth/dev-cli callback against the new POST+JSON contract
+// (andamio-app-v2#699). The closure parses redirect_uri + state from the
+// auth URL, then POSTs the supplied payload (with state echoed
+// automatically) as application/json with the given Origin header.
+//
+// Tests almost always pass `testAppOrigin` for `origin`; the
+// disallowed-origin test passes a foreign origin to exercise the 403
+// path. Pass an empty `origin` to send no Origin header at all (curl
+// semantics — the listener allows this, see dev.go callback comment).
+func successPostCallback(t *testing.T, payload map[string]any, origin string) func(string) error {
 	t.Helper()
 	return func(authURL string) error {
 		u, err := url.Parse(authURL)
@@ -1317,41 +1329,56 @@ func successCallback(t *testing.T, params url.Values) func(string) error {
 		q := u.Query()
 		redirectURI := q.Get("redirect_uri")
 		state := q.Get("state")
-		callback, err := url.Parse(redirectURI)
-		if err != nil {
-			return fmt.Errorf("parse redirect_uri: %w", err)
+
+		body := make(map[string]any, len(payload)+1)
+		for k, v := range payload {
+			body[k] = v
 		}
-		cbq := callback.Query()
-		cbq.Set("state", state) // echo state by default
-		for k, vs := range params {
-			for _, v := range vs {
-				cbq.Set(k, v)
-			}
-		}
-		callback.RawQuery = cbq.Encode()
-		resp, err := http.Get(callback.String())
+		body["state"] = state // echo state by default
+
+		encoded, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("GET callback: %w", err)
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		req, err := http.NewRequest(http.MethodPost, redirectURI, bytes.NewReader(encoded))
+		if err != nil {
+			return fmt.Errorf("build POST: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("POST callback: %w", err)
 		}
 		_ = resp.Body.Close()
 		return nil
 	}
 }
 
-// validCallbackParams returns a baseline set of dev-flow callback fields
-// suitable for happy-path tests. Tokens are marked with SECRET.SHOULD-NOT-LEAK
-// so the token-leak guards across tests can spot stdout/stderr leakage
-// regardless of which call path emits them.
-func validCallbackParams() url.Values {
-	return url.Values{
-		"dev_jwt":                      {"SECRET.SHOULD-NOT-LEAK.jwt"},
-		"dev_jwt_expires_at":           {"2099-01-01T01:00:00Z"},
-		"dev_refresh_token":            {"SECRET.SHOULD-NOT-LEAK.refresh"},
-		"dev_refresh_token_expires_at": {"2099-02-01T00:00:00Z"},
-		"alias":                        {"myalias"},
-		"dev_id":                       {"dev-uuid-1"},
-		"tier":                         {"pioneer"},
-		"key_hash":                     {"deadbeef"},
+// validCallbackPayload returns a baseline set of dev-flow callback fields
+// matching the new POST+JSON wire contract from andamio-app-v2#699
+// (DevCliSuccessPayload). The `state` field is added automatically by
+// successPostCallback from the listener's authURL — DO NOT include it
+// here, or the test won't exercise the same state-echo path the real app
+// uses.
+//
+// Tokens are marked with SECRET.SHOULD-NOT-LEAK so the token-leak guards
+// across tests can spot stdout/stderr leakage regardless of which call
+// path emits them.
+//
+// Returns a mutable map (not a typed struct) so individual tests can
+// trivially mutate (`p["dev_jwt"] = "undefined"`) or delete (`delete(p,
+// "address")`) fields to exercise each validation guard.
+func validCallbackPayload() map[string]any {
+	return map[string]any{
+		"dev_jwt":                      "SECRET.SHOULD-NOT-LEAK.jwt",
+		"dev_jwt_expires_at":           "2099-01-01T01:00:00Z",
+		"dev_refresh_token":            "SECRET.SHOULD-NOT-LEAK.refresh",
+		"dev_refresh_token_expires_at": "2099-02-01T00:00:00Z",
+		"alias":                        "myalias",
+		"address":                      "addr_test1qpreprod_dummy_wallet_address",
 	}
 }
 
@@ -1360,7 +1387,7 @@ func TestRunDevLoginBrowser_HappyPath_PersistsAllSlots(t *testing.T) {
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
 	})
-	overrideOpenURL(t, successCallback(t, validCallbackParams()))
+	overrideOpenURL(t, successPostCallback(t, validCallbackPayload(), testAppOrigin))
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
@@ -1373,20 +1400,32 @@ func TestRunDevLoginBrowser_HappyPath_PersistsAllSlots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
+	// Fields the new POST+JSON wire contract (andamio-app-v2#699) carries
+	// to the listener. DevID, DevTier, and DevKeyHash are NOT in the
+	// payload and are expected to be empty in the persisted config.
 	wantFields := map[string]struct{ got, want string }{
 		"DevJWT":                   {loaded.DevJWT, "SECRET.SHOULD-NOT-LEAK.jwt"},
 		"DevJWTExpiresAt":          {loaded.DevJWTExpiresAt, "2099-01-01T01:00:00Z"},
 		"DevRefreshToken":          {loaded.DevRefreshToken, "SECRET.SHOULD-NOT-LEAK.refresh"},
 		"DevRefreshTokenExpiresAt": {loaded.DevRefreshTokenExpiresAt, "2099-02-01T00:00:00Z"},
 		"DevAlias":                 {loaded.DevAlias, "myalias"},
-		"DevID":                    {loaded.DevID, "dev-uuid-1"},
-		"DevTier":                  {loaded.DevTier, "pioneer"},
-		"DevKeyHash":               {loaded.DevKeyHash, "deadbeef"},
 	}
 	for name, v := range wantFields {
 		if v.got != v.want {
 			t.Errorf("%s = %q, want %q", name, v.got, v.want)
 		}
+	}
+	// Browser flow does not populate these — assert explicitly so a future
+	// regression that starts persisting them (e.g., by reading from a
+	// stale gateway response) fails loud.
+	if loaded.DevID != "" {
+		t.Errorf("DevID = %q, want empty (not in POST+JSON wire payload)", loaded.DevID)
+	}
+	if loaded.DevTier != "" {
+		t.Errorf("DevTier = %q, want empty (not in POST+JSON wire payload)", loaded.DevTier)
+	}
+	if loaded.DevKeyHash != "" {
+		t.Errorf("DevKeyHash = %q, want empty (browser flow does not compute a signing-key hash)", loaded.DevKeyHash)
 	}
 	// API key preserved by read-modify-save.
 	if loaded.APIKey != "test-api-key" {
@@ -1399,7 +1438,7 @@ func TestRunDevLoginBrowser_JSONOutputShape_NoTokenLeak(t *testing.T) {
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
 	})
-	overrideOpenURL(t, successCallback(t, validCallbackParams()))
+	overrideOpenURL(t, successPostCallback(t, validCallbackPayload(), testAppOrigin))
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	_ = output.SetFormat("json")
@@ -1436,22 +1475,28 @@ func TestRunDevLoginBrowser_JSONOutputShape_NoTokenLeak(t *testing.T) {
 		t.Errorf("--output json must emit empty stderr (R9); got %q", stderrCaptured)
 	}
 
-	// JSON envelope shape — only non-secret metadata.
+	// JSON envelope shape — only non-secret metadata. Browser-flow
+	// envelope contains the four fields the POST+JSON wire payload
+	// populates plus the alias. dev_id, tier, key_hash are `omitempty`
+	// in devSessionResult and the browser flow leaves them empty, so
+	// they must NOT appear at all (not even as empty strings).
 	var got map[string]interface{}
 	if err := json.Unmarshal([]byte(captured), &got); err != nil {
 		t.Fatalf("decode envelope: %v\nbytes: %s", err, captured)
 	}
 	wantFields := map[string]interface{}{
 		"alias":                    "myalias",
-		"dev_id":                   "dev-uuid-1",
-		"tier":                     "pioneer",
-		"key_hash":                 "deadbeef",
 		"jwt_expires_at":           "2099-01-01T01:00:00Z",
 		"refresh_token_expires_at": "2099-02-01T00:00:00Z",
 	}
 	for name, want := range wantFields {
 		if got[name] != want {
 			t.Errorf("envelope.%s = %v, want %v", name, got[name], want)
+		}
+	}
+	for _, missingKey := range []string{"dev_id", "tier", "key_hash"} {
+		if _, present := got[missingKey]; present {
+			t.Errorf("envelope must NOT contain %q (browser flow does not receive it on the wire; field is omitempty)", missingKey)
 		}
 	}
 	// Envelope must NOT contain any field whose value is the actual token.
@@ -1482,7 +1527,7 @@ func TestRunDevLoginBrowser_BrowserOpenFailure_PrintsURLAndContinues(t *testing.
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	overrideOpenURL(t, func(authURL string) error {
-		if err := successCallback(t, validCallbackParams())(authURL); err != nil {
+		if err := successPostCallback(t, validCallbackPayload(), testAppOrigin)(authURL); err != nil {
 			return fmt.Errorf("simulated-callback after browser-open failure: %w", err)
 		}
 		return fmt.Errorf("simulated browser launch failure")
@@ -1497,52 +1542,30 @@ func TestRunDevLoginBrowser_BrowserOpenFailure_PrintsURLAndContinues(t *testing.
 	}
 }
 
-func TestRunDevLoginBrowser_KeyHashAbsent_PersistsEmpty(t *testing.T) {
-	cfg := devBrowserTestEnv(t, config.Config{
-		BaseURL: "https://preprod.api.andamio.io",
-		APIKey:  "test-api-key",
-	})
-	params := validCallbackParams()
-	params.Del("key_hash")
-	overrideOpenURL(t, successCallback(t, params))
-	overrideDevLoginTimeout(t, 2*time.Second)
-
-	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
-		t.Fatalf("runDevLoginBrowser: %v", err)
-	}
-	loaded, _ := config.Load()
-	if loaded.DevKeyHash != "" {
-		t.Errorf("DevKeyHash = %q, want empty when callback omits key_hash", loaded.DevKeyHash)
-	}
-	if loaded.DevJWT == "" {
-		t.Errorf("expected other fields to persist even when key_hash is absent")
-	}
-}
-
-// TestRunDevLoginBrowser_StaleKeyHashFromPriorHeadlessClearedOnBrowserLogin
-// pins the ClearDevAuth invariant in the browser flow. Without
-// freshCfg.ClearDevAuth() before persistDevSession, a DevKeyHash left over
-// from a prior headless login would silently survive into a browser-flow
-// session for a different account — the browser callback's key_hash is
-// optional, and persistDevSession only writes KeyHash when the new value
-// is non-empty. Mirrors runDevHeadlessLogin's ClearDevAuth call at
-// dev.go:390. This test fails (DevKeyHash sticks) before the fix and
-// passes after.
-func TestRunDevLoginBrowser_StaleKeyHashFromPriorHeadlessClearedOnBrowserLogin(t *testing.T) {
+// TestRunDevLoginBrowser_StaleHeadlessFieldsClearedOnBrowserLogin pins the
+// ClearDevAuth invariant in the browser flow. The new wire payload
+// (andamio-app-v2#699 DevCliSuccessPayload) does NOT carry dev_id, tier,
+// or key_hash — those fields exist only after a headless login that
+// computed them from the gateway response. Without freshCfg.ClearDevAuth()
+// before persistDevSession, those fields from a prior headless login would
+// silently survive into a browser-flow session for a different account.
+// This test seeds all three, runs browser login, asserts all three are
+// cleared.
+func TestRunDevLoginBrowser_StaleHeadlessFieldsClearedOnBrowserLogin(t *testing.T) {
 	cfg := devBrowserTestEnv(t, config.Config{
 		BaseURL:    "https://preprod.api.andamio.io",
 		APIKey:     "test-api-key",
 		DevKeyHash: "stale-hash-from-prior-headless-login",
+		DevID:      "stale-dev-uuid-from-headless",
+		DevTier:    "stale-pioneer",
 	})
-	// Persist the stale hash to disk so freshCfg.Load() picks it up
+	// Persist the stale fields to disk so freshCfg.Load() picks them up
 	// inside runDevLoginBrowser.
 	if err := config.Save(cfg); err != nil {
 		t.Fatalf("seed config.Save: %v", err)
 	}
 
-	params := validCallbackParams()
-	params.Del("key_hash") // browser callback often won't carry one
-	overrideOpenURL(t, successCallback(t, params))
+	overrideOpenURL(t, successPostCallback(t, validCallbackPayload(), testAppOrigin))
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
@@ -1550,7 +1573,13 @@ func TestRunDevLoginBrowser_StaleKeyHashFromPriorHeadlessClearedOnBrowserLogin(t
 	}
 	loaded, _ := config.Load()
 	if loaded.DevKeyHash != "" {
-		t.Errorf("stale DevKeyHash from prior headless login leaked into browser session: got %q, want empty", loaded.DevKeyHash)
+		t.Errorf("stale DevKeyHash leaked into browser session: got %q, want empty", loaded.DevKeyHash)
+	}
+	if loaded.DevID != "" {
+		t.Errorf("stale DevID leaked into browser session: got %q, want empty", loaded.DevID)
+	}
+	if loaded.DevTier != "" {
+		t.Errorf("stale DevTier leaked into browser session: got %q, want empty", loaded.DevTier)
 	}
 	if loaded.DevJWT == "" {
 		t.Errorf("expected new dev JWT to persist after browser login")
@@ -1562,9 +1591,9 @@ func TestRunDevLoginBrowser_DevJWTUndefined_RejectsAndNoPersistence(t *testing.T
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
 	})
-	params := validCallbackParams()
-	params.Set("dev_jwt", "undefined") // sanitizeCallbackValue should drop this
-	overrideOpenURL(t, successCallback(t, params))
+	payload := validCallbackPayload()
+	payload["dev_jwt"] = "undefined" // sanitizeCallbackValue should drop this
+	overrideOpenURL(t, successPostCallback(t, payload, testAppOrigin))
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	err := runDevLoginBrowser(context.Background(), cfg)
@@ -1589,9 +1618,9 @@ func TestRunDevLoginBrowser_RefreshTokenEmpty_RejectsAndNoPersistence(t *testing
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
 	})
-	params := validCallbackParams()
-	params.Set("dev_refresh_token", "null") // sanitize → empty
-	overrideOpenURL(t, successCallback(t, params))
+	payload := validCallbackPayload()
+	payload["dev_refresh_token"] = "null" // sanitize → empty
+	overrideOpenURL(t, successPostCallback(t, payload, testAppOrigin))
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	err := runDevLoginBrowser(context.Background(), cfg)
@@ -1612,9 +1641,9 @@ func TestRunDevLoginBrowser_AliasEmpty_RejectsAndNoPersistence(t *testing.T) {
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
 	})
-	params := validCallbackParams()
-	params.Del("alias")
-	overrideOpenURL(t, successCallback(t, params))
+	payload := validCallbackPayload()
+	delete(payload, "alias")
+	overrideOpenURL(t, successPostCallback(t, payload, testAppOrigin))
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	err := runDevLoginBrowser(context.Background(), cfg)
@@ -1627,6 +1656,34 @@ func TestRunDevLoginBrowser_AliasEmpty_RejectsAndNoPersistence(t *testing.T) {
 	loaded, _ := config.Load()
 	if loaded.DevAlias != "" {
 		t.Errorf("DevAlias persisted despite validation failure: %q", loaded.DevAlias)
+	}
+}
+
+func TestRunDevLoginBrowser_AddressEmpty_RejectsAndNoPersistence(t *testing.T) {
+	// `address` is a new required field added by the POST+JSON contract
+	// (andamio-app-v2#699). The CLI does NOT persist the address — it has
+	// no consuming path — but validating it catches contract drift if the
+	// app ever drops it from the payload. Same fail-loud principle as the
+	// other required-field guards.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	payload := validCallbackPayload()
+	delete(payload, "address")
+	overrideOpenURL(t, successPostCallback(t, payload, testAppOrigin))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	err := runDevLoginBrowser(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected error when address is empty")
+	}
+	if !strings.Contains(err.Error(), "address") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "address")
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT != "" {
+		t.Errorf("partial persistence detected after address-validation failure: DevJWT=%q", loaded.DevJWT)
 	}
 }
 
@@ -1651,20 +1708,23 @@ func TestRunDevLoginBrowser_StateMismatch_SilentlyIgnoredKeepsListening(t *testi
 	overrideOpenURL(t, func(authURL string) error {
 		u, _ := url.Parse(authURL)
 		redirectURI := u.Query().Get("redirect_uri")
-		callback, _ := url.Parse(redirectURI)
-		cbq := callback.Query()
+
 		// Wrong state — including a "gateway error" attempt that should
-		// also be silently dropped (state validation precedes ?error
-		// processing per SEC-001).
-		cbq.Set("state", "wrong-state-not-the-one-the-cli-sent")
-		cbq.Set("error", "attempted-DoS-via-error-param")
-		for k, vs := range validCallbackParams() {
-			for _, v := range vs {
-				cbq.Set(k, v)
-			}
+		// also be silently dropped (state validation precedes error
+		// processing per SEC-001). POST + JSON body with a state value
+		// that doesn't match what the CLI generated.
+		body := map[string]any{
+			"state": "wrong-state-not-the-one-the-cli-sent",
+			"error": "attempted-DoS-via-error-param",
 		}
-		callback.RawQuery = cbq.Encode()
-		resp, err := http.Get(callback.String())
+		for k, v := range validCallbackPayload() {
+			body[k] = v
+		}
+		encoded, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPost, redirectURI, bytes.NewReader(encoded))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", testAppOrigin)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return err
 		}
@@ -1689,9 +1749,12 @@ func TestRunDevLoginBrowser_StateMismatch_SilentlyIgnoredKeepsListening(t *testi
 	}
 }
 
-func TestRunDevLoginBrowser_POSTMethod_405_KeepsListening(t *testing.T) {
+func TestRunDevLoginBrowser_GETMethod_405_KeepsListening(t *testing.T) {
 	// A wrong-method callback must return 405 and keep the listener
-	// running. A subsequent valid GET completes the flow.
+	// running. A subsequent valid POST completes the flow. The contract
+	// moved from GET+query to POST+JSON (andamio-app-v2#699); GET is now
+	// the wrong method and must be rejected to prevent the old wire format
+	// from silently succeeding against a new listener.
 	cfg := devBrowserTestEnv(t, config.Config{
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
@@ -1700,34 +1763,19 @@ func TestRunDevLoginBrowser_POSTMethod_405_KeepsListening(t *testing.T) {
 	overrideOpenURL(t, func(authURL string) error {
 		u, _ := url.Parse(authURL)
 		redirectURI := u.Query().Get("redirect_uri")
-		state := u.Query().Get("state")
 
-		// First: POST → expect 405, listener keeps waiting.
-		postResp, err := http.Post(redirectURI, "application/x-www-form-urlencoded", strings.NewReader(""))
+		// First: GET → expect 405, listener keeps waiting.
+		getResp, err := http.Get(redirectURI + "?state=anything&dev_jwt=x")
 		if err != nil {
-			return fmt.Errorf("POST: %w", err)
-		}
-		_ = postResp.Body.Close()
-		if postResp.StatusCode != http.StatusMethodNotAllowed {
-			return fmt.Errorf("expected 405 on POST, got %d", postResp.StatusCode)
-		}
-
-		// Then: valid GET completes the flow.
-		callback, _ := url.Parse(redirectURI)
-		cbq := callback.Query()
-		cbq.Set("state", state)
-		for k, vs := range validCallbackParams() {
-			for _, v := range vs {
-				cbq.Set(k, v)
-			}
-		}
-		callback.RawQuery = cbq.Encode()
-		getResp, err := http.Get(callback.String())
-		if err != nil {
-			return err
+			return fmt.Errorf("GET: %w", err)
 		}
 		_ = getResp.Body.Close()
-		return nil
+		if getResp.StatusCode != http.StatusMethodNotAllowed {
+			return fmt.Errorf("expected 405 on GET, got %d", getResp.StatusCode)
+		}
+
+		// Then: valid POST completes the flow.
+		return successPostCallback(t, validCallbackPayload(), testAppOrigin)(authURL)
 	})
 
 	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
@@ -1745,9 +1793,13 @@ func TestRunDevLoginBrowser_GatewayErrorParam_Bubbles(t *testing.T) {
 		APIKey:  "test-api-key",
 	})
 	overrideDevLoginTimeout(t, 2*time.Second)
-	overrideOpenURL(t, successCallback(t, url.Values{
-		"error": {"wallet signature rejected by user"},
-	}))
+	// Error payload shape per andamio-app-v2's DevCliErrorPayload: only
+	// `error` and `state` (state is added by successPostCallback). The
+	// CLI short-circuits on payload.Error != "" before required-field
+	// validation, so the other DevCliSuccessPayload fields aren't needed.
+	overrideOpenURL(t, successPostCallback(t, map[string]any{
+		"error": "wallet signature rejected by user",
+	}, testAppOrigin))
 
 	err := runDevLoginBrowser(context.Background(), cfg)
 	if err == nil {
@@ -1907,7 +1959,7 @@ func TestRunDevLoginBrowser_ConcurrentSlotSafety(t *testing.T) {
 		if err := config.Save(concurrent); err != nil {
 			return fmt.Errorf("simulate concurrent save: %w", err)
 		}
-		return successCallback(t, validCallbackParams())(authURL)
+		return successPostCallback(t, validCallbackPayload(), testAppOrigin)(authURL)
 	})
 
 	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
@@ -1949,16 +2001,16 @@ func TestRunDevLoginBrowser_TwoSimultaneousCallbacks_NoDeadlock(t *testing.T) {
 		redirectURI := u.Query().Get("redirect_uri")
 		state := u.Query().Get("state")
 		fire := func() {
-			callback, _ := url.Parse(redirectURI)
-			cbq := callback.Query()
-			cbq.Set("state", state)
-			for k, vs := range validCallbackParams() {
-				for _, v := range vs {
-					cbq.Set(k, v)
-				}
+			body := make(map[string]any, len(validCallbackPayload())+1)
+			for k, v := range validCallbackPayload() {
+				body[k] = v
 			}
-			callback.RawQuery = cbq.Encode()
-			resp, err := http.Get(callback.String())
+			body["state"] = state
+			encoded, _ := json.Marshal(body)
+			req, _ := http.NewRequest(http.MethodPost, redirectURI, bytes.NewReader(encoded))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Origin", testAppOrigin)
+			resp, err := http.DefaultClient.Do(req)
 			if err == nil {
 				_ = resp.Body.Close()
 			}
@@ -2005,7 +2057,7 @@ func TestRunDevLoginBrowser_StderrTokenLeakGuard(t *testing.T) {
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
 	})
-	overrideOpenURL(t, successCallback(t, validCallbackParams()))
+	overrideOpenURL(t, successPostCallback(t, validCallbackPayload(), testAppOrigin))
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	captured := captureStderr(t, func() {
@@ -2034,7 +2086,7 @@ func TestRunDevLoginBrowser_StateTokenNotInStderr_OnHappyPath(t *testing.T) {
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "test-api-key",
 	})
-	overrideOpenURL(t, successCallback(t, validCallbackParams()))
+	overrideOpenURL(t, successPostCallback(t, validCallbackPayload(), testAppOrigin))
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	captured := captureStderr(t, func() {
@@ -2065,10 +2117,10 @@ func TestRunDevLoginBrowser_IntegrationWithAPIKey_DualCredentialsOnWire(t *testi
 		BaseURL: "https://preprod.api.andamio.io",
 		APIKey:  "the-api-key-on-wire",
 	})
-	params := validCallbackParams()
+	payload := validCallbackPayload()
 	// Replace SECRET marker with a distinct token we can match on the wire.
-	params.Set("dev_jwt", "the-dev-jwt-on-wire")
-	overrideOpenURL(t, successCallback(t, params))
+	payload["dev_jwt"] = "the-dev-jwt-on-wire"
+	overrideOpenURL(t, successPostCallback(t, payload, testAppOrigin))
 	overrideDevLoginTimeout(t, 2*time.Second)
 
 	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
@@ -2091,6 +2143,315 @@ func TestRunDevLoginBrowser_IntegrationWithAPIKey_DualCredentialsOnWire(t *testi
 	}
 	if got, want := stub.capturedAPIKeyHeader, "the-api-key-on-wire"; got != want {
 		t.Errorf("X-API-Key = %q, want %q (V2AuthMiddleware requires it)", got, want)
+	}
+}
+
+// =============================================================================
+// Browser callback: POST+JSON contract (andamio-app-v2#699)
+// =============================================================================
+
+// browserCallbackFromAuthURL returns a per-test helper that issues raw
+// HTTP requests against the CLI listener's /callback endpoint. Used by
+// the CORS/preflight/contract tests that exercise behaviors below the
+// successPostCallback abstraction (wrong method, wrong content-type,
+// malformed body, etc.). Returns the openURL override the test plugs
+// into the flow; the caller controls the HTTP exchange inside its
+// closure and decides what to assert.
+type rawCallbackHTTPResult struct {
+	preflightStatus  int
+	preflightHeaders http.Header
+	postStatus       int
+}
+
+// preflightOnly returns an openURL closure that issues an OPTIONS to
+// the redirect_uri, captures the response, then does NOT follow up
+// with a POST. Used to assert preflight behavior in isolation; the
+// listener will time out subsequently (callers set a short
+// devLoginBrowserTimeout).
+func preflightOnly(t *testing.T, origin string, out *rawCallbackHTTPResult) func(string) error {
+	t.Helper()
+	return func(authURL string) error {
+		u, err := url.Parse(authURL)
+		if err != nil {
+			return fmt.Errorf("parse authURL: %w", err)
+		}
+		redirectURI := u.Query().Get("redirect_uri")
+		req, err := http.NewRequest(http.MethodOptions, redirectURI, nil)
+		if err != nil {
+			return fmt.Errorf("build OPTIONS: %w", err)
+		}
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		req.Header.Set("Access-Control-Request-Headers", "Content-Type")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("OPTIONS: %w", err)
+		}
+		out.preflightStatus = resp.StatusCode
+		out.preflightHeaders = resp.Header.Clone()
+		_ = resp.Body.Close()
+		return nil
+	}
+}
+
+func TestRunDevLoginBrowser_OPTIONSPreflight_AllowsApprovedOrigin(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 150*time.Millisecond)
+
+	var result rawCallbackHTTPResult
+	overrideOpenURL(t, preflightOnly(t, testAppOrigin, &result))
+
+	// Listener will time out because we never POST. That's expected;
+	// we only care about the preflight response shape.
+	_ = runDevLoginBrowser(context.Background(), cfg)
+
+	if result.preflightStatus != http.StatusNoContent {
+		t.Errorf("OPTIONS status = %d, want %d", result.preflightStatus, http.StatusNoContent)
+	}
+	if got, want := result.preflightHeaders.Get("Access-Control-Allow-Origin"), testAppOrigin; got != want {
+		t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, want)
+	}
+	if got := result.preflightHeaders.Get("Access-Control-Allow-Methods"); !strings.Contains(got, "POST") {
+		t.Errorf("Access-Control-Allow-Methods = %q, want substring POST", got)
+	}
+	if got := result.preflightHeaders.Get("Access-Control-Allow-Headers"); !strings.Contains(got, "Content-Type") {
+		t.Errorf("Access-Control-Allow-Headers = %q, want substring Content-Type", got)
+	}
+	if got, want := result.preflightHeaders.Get("Access-Control-Allow-Private-Network"), "true"; got != want {
+		t.Errorf("Access-Control-Allow-Private-Network = %q, want %q (Chrome PNA requires this verbatim)", got, want)
+	}
+	if got, want := result.preflightHeaders.Get("Vary"), "Origin"; got != want {
+		t.Errorf("Vary = %q, want %q", got, want)
+	}
+}
+
+func TestRunDevLoginBrowser_OPTIONSPreflight_RejectsForeignOrigin(t *testing.T) {
+	// A foreign Origin still gets 204 (the listener doesn't reveal
+	// whether the OPTIONS arrived) but WITHOUT CORS headers. Browsers
+	// will refuse to fire the subsequent POST.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 150*time.Millisecond)
+
+	var result rawCallbackHTTPResult
+	overrideOpenURL(t, preflightOnly(t, "https://evil.example.com", &result))
+	_ = runDevLoginBrowser(context.Background(), cfg)
+
+	if result.preflightStatus != http.StatusNoContent {
+		t.Errorf("OPTIONS status = %d, want %d", result.preflightStatus, http.StatusNoContent)
+	}
+	if got := result.preflightHeaders.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want empty (foreign origin must NOT be echoed)", got)
+	}
+	if got := result.preflightHeaders.Get("Access-Control-Allow-Private-Network"); got != "" {
+		t.Errorf("Access-Control-Allow-Private-Network = %q, want empty for foreign origin", got)
+	}
+}
+
+func TestRunDevLoginBrowser_POSTFromDisallowedOrigin_403(t *testing.T) {
+	// Defense-in-depth: even if the browser somehow fires a POST without
+	// a matching preflight (e.g., a privileged extension, a security
+	// bypass), the listener rejects POSTs whose Origin header doesn't
+	// match the configured app URL. State validation alone is not enough
+	// — a hostile local web page that learned the state token via stderr
+	// leakage (SEC-001 / #109) would otherwise still land a valid
+	// payload.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 200*time.Millisecond)
+
+	var postStatus int
+	overrideOpenURL(t, func(authURL string) error {
+		// Use successPostCallback's mechanics but force a foreign Origin.
+		u, _ := url.Parse(authURL)
+		redirectURI := u.Query().Get("redirect_uri")
+		state := u.Query().Get("state")
+		body := validCallbackPayload()
+		body["state"] = state
+		encoded, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPost, redirectURI, bytes.NewReader(encoded))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "https://evil.example.com")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		postStatus = resp.StatusCode
+		_ = resp.Body.Close()
+		return nil
+	})
+
+	_ = runDevLoginBrowser(context.Background(), cfg)
+	if postStatus != http.StatusForbidden {
+		t.Errorf("POST from disallowed Origin status = %d, want %d", postStatus, http.StatusForbidden)
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT != "" {
+		t.Errorf("DevJWT persisted despite Origin-allow-list failure: %q", loaded.DevJWT)
+	}
+}
+
+func TestRunDevLoginBrowser_POSTWithoutOriginHeader_Allowed(t *testing.T) {
+	// curl and other non-browser clients don't send an Origin header.
+	// The listener must accept these — they're how operators verify
+	// liveness during smoke tests, and the loopback-only listener has
+	// no legitimate way to distinguish them from a browser-with-no-
+	// Origin (the latter being a non-event). State validation still
+	// gates persistence.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 2*time.Second)
+	overrideOpenURL(t, successPostCallback(t, validCallbackPayload(), "" /* no Origin */))
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevLoginBrowser without Origin header: %v", err)
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT == "" {
+		t.Errorf("expected DevJWT persisted when POST omits Origin header")
+	}
+}
+
+func TestRunDevLoginBrowser_NonJSONContentType_415(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 200*time.Millisecond)
+
+	var postStatus int
+	overrideOpenURL(t, func(authURL string) error {
+		u, _ := url.Parse(authURL)
+		redirectURI := u.Query().Get("redirect_uri")
+		req, _ := http.NewRequest(http.MethodPost, redirectURI, strings.NewReader("dev_jwt=x"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", testAppOrigin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		postStatus = resp.StatusCode
+		_ = resp.Body.Close()
+		return nil
+	})
+
+	_ = runDevLoginBrowser(context.Background(), cfg)
+	if postStatus != http.StatusUnsupportedMediaType {
+		t.Errorf("POST with non-JSON Content-Type status = %d, want %d", postStatus, http.StatusUnsupportedMediaType)
+	}
+}
+
+func TestRunDevLoginBrowser_JSONContentTypeWithCharset_Accepted(t *testing.T) {
+	// `fetch()` on some browsers tags JSON bodies as
+	// `application/json; charset=utf-8`. mime.ParseMediaType must strip
+	// the parameter and accept the request.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 2*time.Second)
+	overrideOpenURL(t, func(authURL string) error {
+		u, _ := url.Parse(authURL)
+		redirectURI := u.Query().Get("redirect_uri")
+		state := u.Query().Get("state")
+		body := validCallbackPayload()
+		body["state"] = state
+		encoded, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPost, redirectURI, bytes.NewReader(encoded))
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		req.Header.Set("Origin", testAppOrigin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		return nil
+	})
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevLoginBrowser with charset Content-Type: %v", err)
+	}
+}
+
+func TestRunDevLoginBrowser_MalformedJSON_400(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 200*time.Millisecond)
+
+	var postStatus int
+	overrideOpenURL(t, func(authURL string) error {
+		u, _ := url.Parse(authURL)
+		redirectURI := u.Query().Get("redirect_uri")
+		req, _ := http.NewRequest(http.MethodPost, redirectURI, strings.NewReader("{not valid JSON"))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", testAppOrigin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		postStatus = resp.StatusCode
+		_ = resp.Body.Close()
+		return nil
+	})
+
+	_ = runDevLoginBrowser(context.Background(), cfg)
+	if postStatus != http.StatusBadRequest {
+		t.Errorf("POST with malformed JSON status = %d, want %d", postStatus, http.StatusBadRequest)
+	}
+}
+
+func TestRunDevLoginBrowser_UnknownJSONField_400(t *testing.T) {
+	// DisallowUnknownFields catches contract drift: a future app-side
+	// payload extension that the CLI doesn't recognize must fail loud
+	// rather than silently dropping the field. Coordinated wire-format
+	// changes go through andamio-app-v2#700.
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL: "https://preprod.api.andamio.io",
+		APIKey:  "test-api-key",
+	})
+	overrideDevLoginTimeout(t, 200*time.Millisecond)
+
+	var postStatus int
+	overrideOpenURL(t, func(authURL string) error {
+		u, _ := url.Parse(authURL)
+		redirectURI := u.Query().Get("redirect_uri")
+		state := u.Query().Get("state")
+		body := validCallbackPayload()
+		body["state"] = state
+		body["future_unknown_field"] = "surprise"
+		encoded, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPost, redirectURI, bytes.NewReader(encoded))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", testAppOrigin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		postStatus = resp.StatusCode
+		_ = resp.Body.Close()
+		return nil
+	})
+
+	_ = runDevLoginBrowser(context.Background(), cfg)
+	if postStatus != http.StatusBadRequest {
+		t.Errorf("POST with unknown JSON field status = %d, want %d", postStatus, http.StatusBadRequest)
+	}
+	loaded, _ := config.Load()
+	if loaded.DevJWT != "" {
+		t.Errorf("DevJWT persisted despite unknown-field rejection: %q", loaded.DevJWT)
 	}
 }
 

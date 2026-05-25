@@ -3,11 +3,15 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -31,6 +35,68 @@ func shutdownServer(s *http.Server) {
 	_ = s.Shutdown(ctx)
 }
 
+// deriveAppOrigin returns the scheme+host portion of the Andamio app URL
+// derived from a configured API base URL via the same `.api.` → `.app.`
+// substitution that buildAuthURL uses. Returns the empty string for an
+// unparseable BaseURL — callers that depend on the origin (CORS preflight,
+// Origin allow-list) should treat an empty result as "no browser will be
+// allowed to POST" rather than "any browser allowed", which is the safe
+// failure mode. A separate plan (#108) covers BaseURL validation; this
+// helper does not gate that — it just produces a sensible value when
+// BaseURL is well-formed.
+func deriveAppOrigin(baseURL string) string {
+	if baseURL == "" {
+		return ""
+	}
+	appURL := strings.Replace(baseURL, ".api.", ".app.", 1)
+	u, err := url.Parse(appURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// writeCORSPreflight responds to an OPTIONS request from the browser. The
+// allow-list is exact-string (not wildcard) so a misconfigured browser
+// extension or hostile local web page cannot trick the listener into
+// accepting its origin. Access-Control-Allow-Private-Network: true is
+// required by Chrome's Private Network Access spec for any request from a
+// public-network (HTTPS) origin to a private-network (127.0.0.1) listener.
+// Without it, Chrome blocks the preflight and the subsequent POST never
+// fires. Safari and Firefox don't enforce PNA today but accept the header.
+//
+// If the Origin header is missing or doesn't match allowedOrigin we still
+// return 204 but OMIT the CORS headers — the browser will reject the
+// preflight (correct outcome) without us having to write a different
+// status code. Vary: Origin tells caches the response varies by origin.
+func writeCORSPreflight(w http.ResponseWriter, r *http.Request, allowedOrigin string) {
+	if origin := r.Header.Get("Origin"); origin != "" && origin == allowedOrigin {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Private-Network", "true")
+		w.Header().Set("Access-Control-Max-Age", "60")
+		w.Header().Set("Vary", "Origin")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// isJSONContentType parses an HTTP Content-Type header and reports whether
+// its media type is application/json. Permissive on parameters: the app
+// may send `application/json; charset=utf-8` (fetch's default in some
+// browsers) which is still a JSON body. Reject everything else with 415
+// at the call site.
+func isJSONContentType(contentType string) bool {
+	if contentType == "" {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	return mediaType == "application/json"
+}
+
 // devLoginBrowserTimeout bounds the browser-flow listener. Package-level so
 // tests can override it to a short duration; production uses the 5-minute
 // default that matches the gateway's session window. The timeout context is
@@ -41,21 +107,33 @@ func shutdownServer(s *http.Server) {
 // process exit. Documented in the dev login Long help and the plan.
 var devLoginBrowserTimeout = 5 * time.Minute
 
-// devAuthCallbackResult holds the parsed (and sanitized) query params from
-// the /auth/dev-cli browser callback. Distinct from the user-login flow's
-// 4-field authCallbackResult because the dev surface returns a JWT pair
-// (60-min JWT + 30-day rotation refresh token) plus tier and key-hash
-// metadata. NEVER reuse authCallbackResult for the dev flow — the shape
-// is wrong and key fields would silently drop.
+// devAuthCallbackResult holds the parsed (and sanitized) fields from the
+// /auth/dev-cli browser callback POST body. Distinct from the user-login
+// flow's 4-field authCallbackResult because the dev surface returns a JWT
+// pair (60-min JWT + 30-day rotation refresh token) plus identity metadata.
+// NEVER reuse authCallbackResult for the dev flow — the shape is wrong and
+// key fields would silently drop.
+//
+// Wire-format source of truth: andamio-app-v2/src/lib/cli-auth-params.ts
+// (`DevCliSuccessPayload` and `DevCliErrorPayload`). Coordinated changes
+// require a PR on both sides — see andamio-app-v2#700.
+//
+// Address is validated for non-emptiness but NOT persisted: the CLI's
+// canonical identity is DevAlias, and the wallet address has no consuming
+// path inside the CLI today. Validating catches contract drift; persisting
+// would widen the config schema without justification.
+//
+// DevID / Tier / KeyHash are NOT in the POST body. The app dropped them
+// from the wire contract in andamio-app-v2#699. Browser-flow envelopes
+// omit them (devSessionResult uses omitempty); headless flow continues to
+// populate them via the gateway response.
 type devAuthCallbackResult struct {
 	DevJWT                   string
 	DevJWTExpiresAt          string
 	DevRefreshToken          string
 	DevRefreshTokenExpiresAt string
 	Alias                    string
-	DevID                    string
-	Tier                     string
-	KeyHash                  string
+	Address                  string
 	Error                    string
 }
 
@@ -256,9 +334,15 @@ func runDevLogin(cmd *cobra.Command, args []string) error {
 // `TestRunDevHeadlessLogin_JSONOutputShape` and
 // `TestRunDevRefreshFlow_JSONOutputShape` enforce this — both decode
 // captured stdout and assert the literal token bodies are absent.
+//
+// dev_id / tier / key_hash are `omitempty` because the browser-flow wire
+// payload (andamio-app-v2#699 DevCliSuccessPayload) does NOT include them.
+// Headless `dev login --skey` continues to populate all three from the
+// gateway response. Browser-flow envelopes omit them entirely. Documented
+// as a `### Changed` under [Unreleased] in CHANGELOG.
 type devSessionResult struct {
 	Alias                 string `json:"alias"`
-	DevID                 string `json:"dev_id"`
+	DevID                 string `json:"dev_id,omitempty"`
 	Tier                  string `json:"tier,omitempty"`
 	KeyHash               string `json:"key_hash,omitempty"`
 	JWTExpiresAt          string `json:"jwt_expires_at"`
@@ -502,74 +586,154 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 	port := listener.Addr().(*net.TCPAddr).Port
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 
+	// Derive the allowed Origin for CORS+PNA preflight from cfg.BaseURL via
+	// the same `.api.` → `.app.` substitution that buildAuthURL uses. Exact
+	// scheme+host string, no path, no trailing slash. Used both for the
+	// preflight response and as an allow-list against the POST request's
+	// Origin header. Wildcard (*) would technically work for the listener's
+	// 5-min lifetime but would also let any local web page craft a callback
+	// once they guess the state token — pinning the origin is defense-in-
+	// depth alongside the state check.
+	allowedOrigin := deriveAppOrigin(cfg.BaseURL)
+
 	// Buffered channel so the callback handler's send never blocks if the
 	// timeout fires first and nobody is reading.
 	resultChan := make(chan devAuthCallbackResult, 1)
 
+	// All sends on resultChan use non-blocking select. The channel is
+	// capacity-1; a slow handler racing a faster one (or two concurrent
+	// valid POSTs) must NOT deadlock here. If the channel is already full,
+	// the first result wins and subsequent results are dropped silently —
+	// the main goroutine will Shutdown the server shortly after reading.
+	sendResult := func(r devAuthCallbackResult) {
+		select {
+		case resultChan <- r:
+		default:
+		}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		// GET only. Wrong method → 405, listener keeps waiting for a
-		// subsequent valid GET. Mirrors the user-login callback hardening.
-		if r.Method != http.MethodGet {
+		// 1. Method gate. OPTIONS → CORS+PNA preflight. POST → handler.
+		// Anything else → 405. The GET path that v0.13.x's #101 originally
+		// shipped is gone; andamio-app-v2#699 settled the wire contract on
+		// POST+JSON (refresh tokens in URL history is the security argument
+		// — see docs/plans/2026-05-25-002-fix-dev-login-callback-post-json
+		// -contract-plan.md).
+		switch r.Method {
+		case http.MethodOptions:
+			writeCORSPreflight(w, r, allowedOrigin)
+			return
+		case http.MethodPost:
+			// fall through
+		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		q := r.URL.Query()
+		// 2. Origin allow-list (defense-in-depth alongside state validation).
+		// Browser-originated POSTs carry an Origin header automatically;
+		// curl and friends do not. We reject mismatched Origin but allow
+		// missing Origin — the latter is the loopback-diagnostic case where
+		// an operator hits the listener with `curl` from another terminal
+		// (which is how the listener's liveness gets verified during smoke
+		// tests). State validation in step 4 still gates persistence.
+		if origin := r.Header.Get("Origin"); origin != "" && origin != allowedOrigin {
+			http.Error(w, "Origin not allowed", http.StatusForbidden)
+			return
+		}
 
-		// CSRF state validation FIRST — any request without a matching state
-		// token is treated as spoofed. We do NOT echo it into resultChan and
-		// we do NOT short-circuit the flow; the listener keeps waiting for a
-		// legitimate callback. Closes the unauthenticated-DoS path where a
-		// local process knowing the loopback port could send `?error=foo`
-		// (no state required) and terminate the flow remotely. State check
-		// must precede `?error` processing because the gateway's error
-		// path also echoes our state token.
-		if returnedState := q.Get("state"); returnedState != state {
+		// 3. Content-Type gate. POST + JSON body is the only accepted shape.
+		// Parsing the media type strips a charset suffix so `application/
+		// json; charset=utf-8` is accepted alongside the bare form.
+		if !isJSONContentType(r.Header.Get("Content-Type")) {
+			http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+			return
+		}
+
+		// 4. Read body with a 64 KiB cap. The realistic payload is well
+		// under 1 KiB; the cap is for DoS-resistance and contract-drift
+		// detection. MaxBytesReader writes a 413 to the response writer
+		// and returns an error from Decode if the body exceeds the cap.
+		r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+
+		// 5. Decode into a unified payload struct. DisallowUnknownFields
+		// makes future app-side payload extensions fail loudly here
+		// rather than silently dropping fields — required wire-format
+		// coordination via andamio-app-v2#700.
+		var payload struct {
+			DevJWT                   string `json:"dev_jwt"`
+			DevJWTExpiresAt          string `json:"dev_jwt_expires_at"`
+			DevRefreshToken          string `json:"dev_refresh_token"`
+			DevRefreshTokenExpiresAt string `json:"dev_refresh_token_expires_at"`
+			Alias                    string `json:"alias"`
+			Address                  string `json:"address"`
+			State                    string `json:"state"`
+			Error                    string `json:"error"`
+		}
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&payload); err != nil {
+			// MaxBytesReader has already written 413 in the too-large case;
+			// json.SyntaxError / DisallowUnknownFields violation is 400.
+			// Either way, the listener keeps waiting for a subsequent valid
+			// callback (we did NOT validate state yet, so we must NOT
+			// enqueue an error).
+			if _, ok := err.(*http.MaxBytesError); ok {
+				return
+			}
+			http.Error(w, "Malformed JSON body", http.StatusBadRequest)
+			return
+		}
+
+		// 6. CSRF state validation FIRST — any request without a matching
+		// state token is treated as spoofed. We do NOT echo it into
+		// resultChan and we do NOT short-circuit the flow; the listener
+		// keeps waiting for a legitimate callback. Closes the
+		// unauthenticated-DoS path where a local process knowing the
+		// loopback port could send `{"error":"foo"}` (no state required)
+		// and terminate the flow remotely. State check must precede error
+		// processing because the gateway's error path also echoes state.
+		if payload.State != state {
 			w.WriteHeader(http.StatusBadRequest)
 			fmt.Fprint(w, "Security validation failed.")
 			return
 		}
 
-		result := devAuthCallbackResult{}
-
-		// All sends on resultChan use non-blocking select. The channel is
-		// capacity-1; a slow handler racing a faster one (or two concurrent
-		// valid GETs) must NOT deadlock here. If the channel is already
-		// full, the first result wins and subsequent results are dropped
-		// silently — the main goroutine will Shutdown the server shortly.
-		sendResult := func(r devAuthCallbackResult) {
-			select {
-			case resultChan <- r:
-			default:
-			}
-		}
-
-		// Upstream error: now safely gated behind state validation.
-		if errParam := q.Get("error"); errParam != "" {
-			result.Error = errParam
-			sendResult(result)
+		// 7. Upstream error: now safely gated behind state validation.
+		// Error payload is `{"error": "<code>", "state": "<csrf>"}` per
+		// andamio-app-v2's DevCliErrorPayload. Codes: invalid_request,
+		// auth_failed, user_cancelled, no_access_token.
+		if payload.Error != "" {
+			sendResult(devAuthCallbackResult{Error: payload.Error})
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, "Authentication failed. You can close this window.")
 			return
 		}
 
-		// Parse + sanitize all callback fields. sanitizeCallbackValue drops
+		// 8. Sanitize all success fields. sanitizeCallbackValue drops
 		// JS-style "undefined"/"null" literals and pure whitespace so they
-		// don't land in config as real strings.
-		result.DevJWT = sanitizeCallbackValue(q.Get("dev_jwt"))
-		result.DevJWTExpiresAt = sanitizeCallbackValue(q.Get("dev_jwt_expires_at"))
-		result.DevRefreshToken = sanitizeCallbackValue(q.Get("dev_refresh_token"))
-		result.DevRefreshTokenExpiresAt = sanitizeCallbackValue(q.Get("dev_refresh_token_expires_at"))
-		result.Alias = sanitizeCallbackValue(q.Get("alias"))
-		result.DevID = sanitizeCallbackValue(q.Get("dev_id"))
-		result.Tier = sanitizeCallbackValue(q.Get("tier"))
-		result.KeyHash = sanitizeCallbackValue(q.Get("key_hash"))
+		// don't land in config as real strings. (Less likely in a JSON
+		// body than in a query string, but the same guard for defense in
+		// depth.)
+		result := devAuthCallbackResult{
+			DevJWT:                   sanitizeCallbackValue(payload.DevJWT),
+			DevJWTExpiresAt:          sanitizeCallbackValue(payload.DevJWTExpiresAt),
+			DevRefreshToken:          sanitizeCallbackValue(payload.DevRefreshToken),
+			DevRefreshTokenExpiresAt: sanitizeCallbackValue(payload.DevRefreshTokenExpiresAt),
+			Alias:                    sanitizeCallbackValue(payload.Alias),
+			Address:                  sanitizeCallbackValue(payload.Address),
+		}
 
-		// Validate required fields. The user-login pattern only checks JWT;
-		// dev surface adds two mandatory fields (refresh_token, alias) so a
-		// missing one silently breaks subsequent `dev refresh` or produces
-		// a blank alias in `dev status`. Reject loudly here instead.
+		// 9. Validate required fields. dev_jwt + dev_refresh_token + alias
+		// guard the persistence path; address validates the contract
+		// (Address is not persisted but its absence signals app-side
+		// drift). Missing fields → 400 + enqueue an error result so the
+		// main goroutine surfaces a clear error to the operator.
+		// Carries over the existing GET-handler behavior unchanged; a
+		// separate hardening pass (issue #106) tracks the alternative
+		// "keep listening for a valid retry" pattern but is out of
+		// scope for the contract fix.
 		var missing []string
 		if result.DevJWT == "" {
 			missing = append(missing, "dev_jwt")
@@ -579,6 +743,9 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 		}
 		if result.Alias == "" {
 			missing = append(missing, "alias")
+		}
+		if result.Address == "" {
+			missing = append(missing, "address")
 		}
 		if len(missing) > 0 {
 			result.Error = fmt.Sprintf("missing required callback fields: %v", missing)
@@ -674,14 +841,21 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("authentication succeeded at the gateway, but local config reload failed (%w); the gateway session was consumed — re-run 'andamio dev login' to retry", err)
 	}
 
-	// Build a synthetic secureLoginResponse from the flat callback fields.
-	// JWT and RefreshToken are anonymous nested structs in
-	// secureLoginResponse — composite literal syntax does NOT compose
-	// across the boundary, so field-assignment is required.
+	// Build a synthetic secureLoginResponse from the callback fields. JWT
+	// and RefreshToken are anonymous nested structs in secureLoginResponse
+	// — composite literal syntax does NOT compose across the boundary, so
+	// field-assignment is required.
+	//
+	// UserID and Tier are intentionally left empty: andamio-app-v2#699's
+	// DevCliSuccessPayload does not carry them on the wire. They're
+	// reachable via a separate /v2/auth/developer/account/me call (deferred
+	// to a follow-up; tracked in docs/plans/2026-05-25-002-…-plan.md).
+	// persistDevSession will write the empty strings into cfg.DevID and
+	// cfg.DevTier — that's fine; ClearDevAuth below ensures we start from
+	// an empty slot and devSessionResult uses omitempty so JSON consumers
+	// don't see blank fields.
 	var resp secureLoginResponse
-	resp.UserID = result.DevID
 	resp.Alias = result.Alias
-	resp.Tier = result.Tier
 	resp.JWT.Token = result.DevJWT
 	resp.JWT.ExpiresAt = result.DevJWTExpiresAt
 	resp.RefreshToken.Token = result.DevRefreshToken
@@ -689,19 +863,17 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 
 	// ClearDevAuth before persistDevSession matches runDevHeadlessLogin's
 	// pattern (dev.go:390) and ensures a re-login switching accounts cannot
-	// inherit prior-session metadata. Notably, the browser callback's
-	// key_hash is OPTIONAL (line 555) — without ClearDevAuth, a stale
-	// DevKeyHash from a previous headless login would silently survive into
-	// the new browser session because persistDevSession only writes KeyHash
-	// when the new value is non-empty (line 728). Clean slate is the safer
-	// default.
+	// inherit prior-session metadata — particularly important now that the
+	// wire payload no longer carries dev_id/tier/key_hash; without
+	// ClearDevAuth, those fields from a previous headless login would
+	// silently survive into the new browser session.
 	freshCfg.ClearDevAuth()
 
-	// fallbackAlias = "" because browser mode has no flag alias. The
-	// callback validation above already rejects an empty alias, so this
-	// fallback path should never fire — but pass "" explicitly so a future
-	// drift in persistDevSession's signature doesn't silently change behavior.
-	persistDevSession(freshCfg, &resp, result.KeyHash, "")
+	// keyHash="" because the browser flow does not compute a signing-key
+	// hash (the wallet's signing key never leaves the browser). fallbackAlias
+	// = "" because browser mode has no flag alias; the callback validation
+	// above rejects an empty alias so this fallback path should never fire.
+	persistDevSession(freshCfg, &resp, "", "")
 
 	if err := config.Save(freshCfg); err != nil {
 		// Same caveat as the Load failure above: the gateway issued tokens
