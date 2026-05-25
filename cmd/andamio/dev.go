@@ -293,6 +293,18 @@ type secureLoginResponse struct {
 func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed25519.PrivateKey, pubKey ed25519.PublicKey, skeyPath, alias, address string) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
+	// Pre-flight: API key required (dual-credential dev-portal contract).
+	// Mirrors the browser-flow guard at runDevLoginBrowser. Without this,
+	// headless without an API key falls through to c.Post and surfaces a
+	// wrapped "failed to open developer login session" — the underlying
+	// AuthError is buried, and humans/agents lose the actionable
+	// "auth login --api-key" hint. Both modes should signal identically.
+	if cfg.APIKey == "" {
+		return &apierr.AuthError{
+			Message: "dev login requires an API key. Run 'andamio auth login --api-key <key>' first",
+		}
+	}
+
 	c := client.New(cfg)
 
 	// Step 1: Open login session keyed to (alias, wallet_address). The gateway
@@ -655,7 +667,11 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 	// for the realistic operator threat model.
 	freshCfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("failed to reload config: %w", err)
+		// The gateway has already issued the JWT + refresh token at this
+		// point and consumed the 5-min session nonce. Tell the user
+		// explicitly so they don't think "auth failed" — auth succeeded
+		// server-side; only the local persistence failed.
+		return fmt.Errorf("authentication succeeded at the gateway, but local config reload failed (%w); the gateway session was consumed — re-run 'andamio dev login' to retry", err)
 	}
 
 	// Build a synthetic secureLoginResponse from the flat callback fields.
@@ -671,6 +687,16 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 	resp.RefreshToken.Token = result.DevRefreshToken
 	resp.RefreshToken.ExpiresAt = result.DevRefreshTokenExpiresAt
 
+	// ClearDevAuth before persistDevSession matches runDevHeadlessLogin's
+	// pattern (dev.go:390) and ensures a re-login switching accounts cannot
+	// inherit prior-session metadata. Notably, the browser callback's
+	// key_hash is OPTIONAL (line 555) — without ClearDevAuth, a stale
+	// DevKeyHash from a previous headless login would silently survive into
+	// the new browser session because persistDevSession only writes KeyHash
+	// when the new value is non-empty (line 728). Clean slate is the safer
+	// default.
+	freshCfg.ClearDevAuth()
+
 	// fallbackAlias = "" because browser mode has no flag alias. The
 	// callback validation above already rejects an empty alias, so this
 	// fallback path should never fire — but pass "" explicitly so a future
@@ -678,7 +704,11 @@ func runDevLoginBrowser(ctx context.Context, cfg *config.Config) error {
 	persistDevSession(freshCfg, &resp, result.KeyHash, "")
 
 	if err := config.Save(freshCfg); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
+		// Same caveat as the Load failure above: the gateway issued tokens
+		// and consumed the session — only the local Save failed. Tell the
+		// user so they don't blame "auth" for what is a disk/permissions
+		// issue.
+		return fmt.Errorf("authentication succeeded at the gateway, but local config save failed (%w); the gateway session was consumed — re-run 'andamio dev login' to retry", err)
 	}
 
 	// Success output. JSON envelope carries only non-secret metadata —

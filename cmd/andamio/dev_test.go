@@ -92,7 +92,12 @@ func devTestEnv(t *testing.T, stub *devGatewayStub) (*config.Config, ed25519.Pri
 	// so pointing $HOME at a tempdir keeps the test off the real config.
 	t.Setenv("HOME", t.TempDir())
 
-	cfg := &config.Config{BaseURL: srv.URL}
+	// Seed APIKey so the headless flow's API-key pre-flight guard
+	// passes. Mirrors the dual-credential contract: real headless
+	// invocations require both `auth login --api-key` and the wallet
+	// flags. Tests that specifically exercise the empty-APIKey guard
+	// can override this after the helper returns.
+	cfg := &config.Config{BaseURL: srv.URL, APIKey: "test-api-key"}
 
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -437,6 +442,34 @@ func TestRunDevHeadlessLogin_CompleteAuthErrorBubblesAsTypedAuthError(t *testing
 	// rewrite that drops the hint is a deliberate, test-failing change.
 	if !strings.Contains(err.Error(), "--address") || !strings.Contains(err.Error(), "--skey") {
 		t.Errorf("err = %q, want hint that names both --address and --skey (the most likely root cause of a 401 at /complete)", err.Error())
+	}
+}
+
+// TestRunDevHeadlessLogin_NoAPIKey_PreFlightAuthError pins symmetry with
+// TestRunDevLoginBrowser_NoAPIKey_PreFlightAuthError — dev-portal surfaces
+// are dual-credential (X-API-Key + dev JWT), so the headless flow must
+// short-circuit BEFORE touching the gateway when APIKey is empty. Without
+// this guard, the gateway returns 401 from /login/session and the CLI
+// wraps it as "failed to open developer login session", burying the
+// actionable `auth login --api-key` hint that an agent or human needs.
+func TestRunDevHeadlessLogin_NoAPIKey_PreFlightAuthError(t *testing.T) {
+	stub := &devGatewayStub{}
+	cfg, priv, pub := devTestEnv(t, stub)
+	cfg.APIKey = "" // override the helper's default seed
+
+	err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "myalias", "addr")
+	if err == nil {
+		t.Fatal("expected AuthError when APIKey is empty")
+	}
+	var authErr *apierr.AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected *apierr.AuthError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "auth login --api-key") {
+		t.Errorf("err = %q, want hint mentioning 'auth login --api-key'", err.Error())
+	}
+	if stub.gotSessionRequest {
+		t.Errorf("session endpoint must NOT be called when APIKey is empty (pre-flight failed to gate)")
 	}
 }
 
@@ -1372,15 +1405,35 @@ func TestRunDevLoginBrowser_JSONOutputShape_NoTokenLeak(t *testing.T) {
 	_ = output.SetFormat("json")
 	t.Cleanup(func() { _ = output.SetFormat("text") })
 
-	captured := captureStdout(t, func() {
-		if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
-			t.Fatalf("runDevLoginBrowser: %v", err)
-		}
+	// Capture stderr alongside stdout so the JSON-mode stderr-discipline
+	// invariant (plan R9: "Stderr carries no human prose either" in JSON
+	// mode) is pinned by this test. Nesting captureStderr outside
+	// captureStdout works because each helper swaps its respective stream
+	// via t.Cleanup and the swaps are independent.
+	var captured string
+	stderrCaptured := captureStderr(t, func() {
+		captured = captureStdout(t, func() {
+			if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+				t.Fatalf("runDevLoginBrowser: %v", err)
+			}
+		})
 	})
 
 	// Token-leak guard: tokens MUST NOT appear on stdout.
 	if strings.Contains(captured, "SECRET.SHOULD-NOT-LEAK") {
 		t.Fatalf("token body leaked to stdout: %s", captured)
+	}
+	// Token-leak guard (stderr): also pin that no token body landed on
+	// stderr. The success messages are gated on !isJSON, so stderr should
+	// be empty too.
+	if strings.Contains(stderrCaptured, "SECRET.SHOULD-NOT-LEAK") {
+		t.Fatalf("token body leaked to stderr: %s", stderrCaptured)
+	}
+	// Stderr-discipline guard (plan R9): in --output json mode, stderr
+	// must carry no human prose. Any non-empty stderr indicates a
+	// fmt.Fprintf on os.Stderr that forgot to gate on !isJSON.
+	if strings.TrimSpace(stderrCaptured) != "" {
+		t.Errorf("--output json must emit empty stderr (R9); got %q", stderrCaptured)
 	}
 
 	// JSON envelope shape — only non-secret metadata.
@@ -1463,6 +1516,44 @@ func TestRunDevLoginBrowser_KeyHashAbsent_PersistsEmpty(t *testing.T) {
 	}
 	if loaded.DevJWT == "" {
 		t.Errorf("expected other fields to persist even when key_hash is absent")
+	}
+}
+
+// TestRunDevLoginBrowser_StaleKeyHashFromPriorHeadlessClearedOnBrowserLogin
+// pins the ClearDevAuth invariant in the browser flow. Without
+// freshCfg.ClearDevAuth() before persistDevSession, a DevKeyHash left over
+// from a prior headless login would silently survive into a browser-flow
+// session for a different account — the browser callback's key_hash is
+// optional, and persistDevSession only writes KeyHash when the new value
+// is non-empty. Mirrors runDevHeadlessLogin's ClearDevAuth call at
+// dev.go:390. This test fails (DevKeyHash sticks) before the fix and
+// passes after.
+func TestRunDevLoginBrowser_StaleKeyHashFromPriorHeadlessClearedOnBrowserLogin(t *testing.T) {
+	cfg := devBrowserTestEnv(t, config.Config{
+		BaseURL:    "https://preprod.api.andamio.io",
+		APIKey:     "test-api-key",
+		DevKeyHash: "stale-hash-from-prior-headless-login",
+	})
+	// Persist the stale hash to disk so freshCfg.Load() picks it up
+	// inside runDevLoginBrowser.
+	if err := config.Save(cfg); err != nil {
+		t.Fatalf("seed config.Save: %v", err)
+	}
+
+	params := validCallbackParams()
+	params.Del("key_hash") // browser callback often won't carry one
+	overrideOpenURL(t, successCallback(t, params))
+	overrideDevLoginTimeout(t, 2*time.Second)
+
+	if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevLoginBrowser: %v", err)
+	}
+	loaded, _ := config.Load()
+	if loaded.DevKeyHash != "" {
+		t.Errorf("stale DevKeyHash from prior headless login leaked into browser session: got %q, want empty", loaded.DevKeyHash)
+	}
+	if loaded.DevJWT == "" {
+		t.Errorf("expected new dev JWT to persist after browser login")
 	}
 }
 
@@ -1764,13 +1855,23 @@ func TestRunDevLoginBrowser_AlreadyAuthed_JSONMode_EmptyStdout(t *testing.T) {
 	_ = output.SetFormat("json")
 	t.Cleanup(func() { _ = output.SetFormat("text") })
 
-	captured := captureStdout(t, func() {
-		if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
-			t.Fatalf("expected nil, got %v", err)
-		}
+	// Capture stderr too: the no-op early-return contract (plan line 86,
+	// R9) is "exit 0, empty stdout, nothing on stderr either". Stderr
+	// prints in this path are gated on !isJSON, so stderr must be empty
+	// in JSON mode.
+	var captured string
+	stderrCaptured := captureStderr(t, func() {
+		captured = captureStdout(t, func() {
+			if err := runDevLoginBrowser(context.Background(), cfg); err != nil {
+				t.Fatalf("expected nil, got %v", err)
+			}
+		})
 	})
 	if strings.TrimSpace(captured) != "" {
 		t.Errorf("--output json early-return must emit empty stdout; got %q", captured)
+	}
+	if strings.TrimSpace(stderrCaptured) != "" {
+		t.Errorf("--output json early-return must emit empty stderr; got %q", stderrCaptured)
 	}
 }
 
