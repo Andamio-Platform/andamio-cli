@@ -635,9 +635,18 @@ var openURL = browser.OpenURL
 // user-JWT browser flow, `/auth/dev-cli` for the developer-JWT browser flow.
 // Both surfaces share the same `redirect_uri` + `state` query-param contract.
 func buildAuthURL(baseURL, path, redirectURI, state string) string {
-	// Convert API base URL to app URL
-	// e.g., https://preprod.api.andamio.io -> https://preprod.app.andamio.io
-	appURL := strings.Replace(baseURL, ".api.", ".app.", 1)
+	// Convert API base URL to app URL. Preprod carries a subdomain prefix
+	// (preprod.api.andamio.io) but production does not (api.andamio.io), so
+	// a plain ".api." replace no-ops on production and points the browser at
+	// the API gateway. Handle both host shapes.
+	// e.g. https://preprod.api.andamio.io -> https://preprod.app.andamio.io
+	//      https://api.andamio.io         -> https://app.andamio.io
+	appURL := baseURL
+	if strings.Contains(baseURL, ".api.") {
+		appURL = strings.Replace(baseURL, ".api.", ".app.", 1)
+	} else {
+		appURL = strings.Replace(baseURL, "//api.", "//app.", 1)
+	}
 
 	// Build the auth URL with query params
 	params := url.Values{}
