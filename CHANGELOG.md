@@ -6,6 +6,11 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-06-04
+
+### Fixed
+- `andamio user login` and `andamio dev login` (browser flows) now derive the correct app host on **production**. `buildAuthURL` previously did a plain `.api.` → `.app.` substitution, which silently no-ops on the production base URL `https://api.andamio.io` (no subdomain prefix) and sent the browser to the API gateway — which 404s on `/auth/cli` and `/auth/dev-cli`. The conversion now handles both host shapes: `https://preprod.api.andamio.io` → `https://preprod.app.andamio.io` and `https://api.andamio.io` → `https://app.andamio.io`. Regression test `TestBuildAuthURL` pins both. No envelope or contract change.
+
 ## [0.13.1] - 2026-05-25
 
 ### Fixed
