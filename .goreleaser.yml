@@ -43,6 +43,11 @@ homebrew_casks:
       owner: Andamio-Platform
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    # Skip publishing the cask for prerelease tags (e.g. vX.Y.Z-rc.1) so a
+    # prerelease never becomes the `brew install` default and validation/test
+    # tags can't push a broken cask to the public tap. Real vX.Y.Z tags publish
+    # as before.
+    skip_upload: "auto"
     homepage: "https://github.com/Andamio-Platform/andamio-cli"
     description: "CLI for the Andamio Protocol"
     binaries:
