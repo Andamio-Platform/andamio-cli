@@ -800,3 +800,25 @@ func TestCheckSilentSLTFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestUploadURLDerivation guards the host derivation for image uploads. The
+// upload must target the app host, not the API gateway, on both preprod and
+// mainnet base URLs. A regression here resurfaces issue #117 (mainnet 404).
+func TestUploadURLDerivation(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+		want    string
+	}{
+		{"mainnet", "https://api.andamio.io", "https://app.andamio.io/api/upload"},
+		{"preprod", "https://preprod.api.andamio.io", "https://preprod.app.andamio.io/api/upload"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := appURLFromBase(tc.baseURL) + "/api/upload"
+			if got != tc.want {
+				t.Errorf("upload URL for base %q = %q, want %q", tc.baseURL, got, tc.want)
+			}
+		})
+	}
+}

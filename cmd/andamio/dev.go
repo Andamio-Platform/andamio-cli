@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -36,19 +35,19 @@ func shutdownServer(s *http.Server) {
 }
 
 // deriveAppOrigin returns the scheme+host portion of the Andamio app URL
-// derived from a configured API base URL via the same `.api.` → `.app.`
-// substitution that buildAuthURL uses. Returns the empty string for an
-// unparseable BaseURL — callers that depend on the origin (CORS preflight,
-// Origin allow-list) should treat an empty result as "no browser will be
-// allowed to POST" rather than "any browser allowed", which is the safe
-// failure mode. A separate plan (#108) covers BaseURL validation; this
-// helper does not gate that — it just produces a sensible value when
-// BaseURL is well-formed.
+// derived from a configured API base URL via the shared appURLFromBase helper,
+// which handles both the preprod `.api.` and mainnet bare `//api.` host shapes.
+// Returns the empty string for an unparseable BaseURL — callers that depend on
+// the origin (CORS preflight, Origin allow-list) should treat an empty result
+// as "no browser will be allowed to POST" rather than "any browser allowed",
+// which is the safe failure mode. A separate plan (#108) covers BaseURL
+// validation; this helper does not gate that — it just produces a sensible
+// value when BaseURL is well-formed.
 func deriveAppOrigin(baseURL string) string {
 	if baseURL == "" {
 		return ""
 	}
-	appURL := strings.Replace(baseURL, ".api.", ".app.", 1)
+	appURL := appURLFromBase(baseURL)
 	u, err := url.Parse(appURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return ""
