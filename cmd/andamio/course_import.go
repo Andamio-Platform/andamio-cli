@@ -1412,9 +1412,10 @@ func updateModuleContent(ctx context.Context, c *client.Client, courseID string,
 // uploadImage uploads a single image file to the app's /api/upload endpoint.
 // Returns the public CDN URL on success.
 func uploadImage(cfg *config.Config, filePath string) (string, error) {
-	// Derive app URL from API URL (same pattern as user.go OAuth flow)
-	appURL := strings.Replace(cfg.BaseURL, ".api.", ".app.", 1)
-	uploadURL := appURL + "/api/upload"
+	// Derive app URL from API URL via the shared helper, which handles both
+	// host shapes (preprod's `.api.` subdomain and mainnet's bare `//api.`).
+	// A plain `.api.` replace no-ops on mainnet and 404s the upload (issue #117).
+	uploadURL := appURLFromBase(cfg.BaseURL) + "/api/upload"
 
 	// Read file
 	fileData, err := os.ReadFile(filePath)

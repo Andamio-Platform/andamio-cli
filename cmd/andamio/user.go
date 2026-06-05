@@ -630,23 +630,32 @@ func getInt(m map[string]interface{}, key string) int {
 // this compiles cleanly even though user.go itself does not reference it.
 var openURL = browser.OpenURL
 
+// appURLFromBase converts a configured API base URL into the corresponding
+// Andamio app base URL by swapping the `api` host segment for `app`. The host
+// has two real shapes and no single string replace covers both:
+//
+//	https://preprod.api.andamio.io -> https://preprod.app.andamio.io  (.api. form)
+//	https://api.andamio.io         -> https://app.andamio.io          (//api. form)
+//
+// A plain `.api.` replace no-ops on production (`api.andamio.io` contains
+// `//api.`, not `.api.`), which silently pointed image uploads and the dev-login
+// Origin allow-list at the API gateway on mainnet (issue #117). This is the
+// single source of truth for the swap — buildAuthURL, uploadImage, and
+// deriveAppOrigin all route through it. Empty input returns empty (no segment
+// to match); callers that need validation parse the result themselves.
+func appURLFromBase(baseURL string) string {
+	if strings.Contains(baseURL, ".api.") {
+		return strings.Replace(baseURL, ".api.", ".app.", 1)
+	}
+	return strings.Replace(baseURL, "//api.", "//app.", 1)
+}
+
 // buildAuthURL constructs the authentication URL for the app's CLI auth page.
 // The `path` argument selects between auth surfaces — `/auth/cli` for the
 // user-JWT browser flow, `/auth/dev-cli` for the developer-JWT browser flow.
 // Both surfaces share the same `redirect_uri` + `state` query-param contract.
 func buildAuthURL(baseURL, path, redirectURI, state string) string {
-	// Convert API base URL to app URL. Preprod carries a subdomain prefix
-	// (preprod.api.andamio.io) but production does not (api.andamio.io), so
-	// a plain ".api." replace no-ops on production and points the browser at
-	// the API gateway. Handle both host shapes.
-	// e.g. https://preprod.api.andamio.io -> https://preprod.app.andamio.io
-	//      https://api.andamio.io         -> https://app.andamio.io
-	appURL := baseURL
-	if strings.Contains(baseURL, ".api.") {
-		appURL = strings.Replace(baseURL, ".api.", ".app.", 1)
-	} else {
-		appURL = strings.Replace(baseURL, "//api.", "//app.", 1)
-	}
+	appURL := appURLFromBase(baseURL)
 
 	// Build the auth URL with query params
 	params := url.Values{}

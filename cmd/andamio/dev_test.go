@@ -2533,3 +2533,29 @@ func TestRunDevLogin_SkeyExplicitEmpty_RoutesToHeadless(t *testing.T) {
 		t.Errorf("err = %q, want partial-flag error naming missing --alias and --address", err.Error())
 	}
 }
+
+// TestDeriveAppOrigin guards the dev-login Origin allow-list derivation. The
+// origin must resolve to the app host on both preprod and mainnet, and must
+// fail closed (empty) on empty/unparseable input so a misderived origin can
+// never widen the CORS allow-list. Mainnet was previously misderived to the
+// API host (issue #117's sibling bug).
+func TestDeriveAppOrigin(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+		want    string
+	}{
+		{"mainnet", "https://api.andamio.io", "https://app.andamio.io"},
+		{"preprod", "https://preprod.api.andamio.io", "https://preprod.app.andamio.io"},
+		{"empty fails closed", "", ""},
+		{"unparseable fails closed", "://nope", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveAppOrigin(tc.baseURL)
+			if got != tc.want {
+				t.Errorf("deriveAppOrigin(%q) = %q, want %q", tc.baseURL, got, tc.want)
+			}
+		})
+	}
+}

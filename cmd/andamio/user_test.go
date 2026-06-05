@@ -54,3 +54,24 @@ func TestBuildAuthURL(t *testing.T) {
 		})
 	}
 }
+
+func TestAppURLFromBase(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+		want    string
+	}{
+		{"production (no prefix)", "https://api.andamio.io", "https://app.andamio.io"},
+		{"preprod (subdomain prefix)", "https://preprod.api.andamio.io", "https://preprod.app.andamio.io"},
+		{"mainnet (subdomain prefix)", "https://mainnet.api.andamio.io", "https://mainnet.app.andamio.io"},
+		{"empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := appURLFromBase(tc.baseURL)
+			if got != tc.want {
+				t.Errorf("appURLFromBase(%q) = %q, want %q", tc.baseURL, got, tc.want)
+			}
+		})
+	}
+}
