@@ -6,6 +6,8 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-06-05
+
 ### Fixed
 - `andamio course import` / `import-all` image uploads now derive the correct app host on **mainnet**. `uploadImage` previously did a plain `.api.` → `.app.` substitution, which no-ops on the mainnet base URL `https://api.andamio.io` (no subdomain prefix) and POSTed images to the API gateway `https://api.andamio.io/api/upload` → **404**. Lesson text imported fine but every image failed and lessons were stored with unresolved `assets/<file>` references (broken images on-platform). Hit during the Cardano Go PBL mainnet import — 11 images across modules 099/100/102/202. Re-import picks up the images once a fixed binary is installed. The 0.13.2 fix corrected the same bug in `buildAuthURL` (browser auth); this generalizes that dual-host logic into a single shared `appURLFromBase` helper and routes all three derivation sites through it. Regression tests `TestUploadURLDerivation`, `TestAppURLFromBase` pin both host shapes. Closes #117.
 - `andamio dev login` (browser flow) Origin allow-list (`deriveAppOrigin`) carried the same latent single-`.api.`-replace bug and would have misderived the allowed Origin to the API host on mainnet, rejecting the legitimate app-origin callback POST. Now routes through `appURLFromBase`; the empty/unparseable fail-closed contract is preserved. Regression test `TestDeriveAppOrigin` covers mainnet, preprod, and both fail-closed paths.
