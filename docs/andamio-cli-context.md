@@ -175,9 +175,15 @@ andamio course modules "$COURSE_ID" --output json
 | Command | Auth | Description |
 |---------|------|-------------|
 | `teacher courses` | jwt | List courses where you are a teacher |
-| `teacher assignments list` | jwt | List pending assignment commitments |
-| `teacher assignments list --course <id>` | jwt | List commitments for a specific course (includes full submission) |
+| `teacher assignments list` | jwt | List pending assignment commitments (lightweight summary, no nested `content`) |
+| `teacher assignments list --course <id>` | jwt | List commitments for a course, including full submissions |
 | `teacher assignments get <course> <module> <student>` | jwt | Get a specific student's commitment |
+| `teacher assessment build --course-id <id> --alias <you> --decision <student>=<accept\|refuse>` | jwt | Build an assessment transaction **without signing or submitting it**. Repeat `--decision`, or pass `--decisions-file <path>` |
+
+Submissions carry two evidence fields:
+
+- `content.evidence_text` — the submission as Markdown. Read this for the prose.
+- `content.evidence` — the raw Tiptap document. This is the hash-bearing form; read it to verify an on-chain commitment hash.
 
 ### project — Project data
 
@@ -257,17 +263,38 @@ SLTS=$(andamio course slts "$COURSE" "$MODULE" --output json)
 # 2. Get the assignment prompt
 ASSIGNMENT=$(andamio course assignment "$COURSE" "$MODULE" --output json)
 
-# 3. List pending submissions
-SUBMISSIONS=$(andamio teacher assignments list --course "$COURSE" --output json)
+# 3. List submissions awaiting review
+andamio teacher assignments list --course "$COURSE" --output json \
+  | jq '.data[] | select(.content.commitment_status == "SUBMITTED")'
 
-# 4. Get a specific student's submission
-SUBMISSION=$(andamio teacher assignments get "$COURSE" "$MODULE" "$STUDENT" --output json)
-# The submission content is at: .content.evidence (Tiptap JSON)
+# 4. Read what a student submitted, as prose — no Tiptap traversal needed
+andamio teacher assignments get "$COURSE" "$MODULE" "$STUDENT" --output json \
+  | jq -r '.content.evidence_text'
+# .content.evidence holds the raw Tiptap document; read that to verify a hash.
 
-# 5. After evaluation, build assess transaction
-andamio tx build /v2/tx/course/teacher/assignments/assess \
-  --body '{"course_id":"...","assessments":[{"student_alias":"...","result":"pass"}]}'
+# 5. After evaluation, build the assessment transaction — nothing is signed
+#    or submitted. One transaction carries every decision, accepts AND refuses.
+andamio teacher assessment build \
+  --course-id "$COURSE" \
+  --alias "$TEACHER_ALIAS" \
+  --decision student-01=accept \
+  --decision student-02=refuse \
+  --output json
 ```
+
+The build envelope carries the decision set alongside `unsigned_tx`, so a human
+reviews both from one command rather than trusting a separate summary of what
+the CBOR encodes. **The echoed decisions are the request, not a decode of the
+returned transaction.**
+
+```bash
+# 6. A human approves, then signs and submits — separate steps by design
+andamio tx sign --tx "$UNSIGNED_TX" --skey ./payment.skey --output json
+andamio tx submit --tx "$SIGNED_TX" --output json
+```
+
+Never auto-sign. The separation exists so a person stands between an agent's
+recommendation and a credential landing on-chain.
 
 ### Manage project tasks
 

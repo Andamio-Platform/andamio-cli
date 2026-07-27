@@ -487,3 +487,59 @@ func TestCommandTree_PreservesTheOneZeroSurface(t *testing.T) {
 		}
 	}
 }
+
+// --- the 1.0 surface as a reader encounters it (issue #127) ----------------
+
+// #127's test: someone who has never used a previous version reads the help
+// output and sees a coherent tool. They should not be able to tell that
+// something was cut out of the middle of it.
+func TestRootHelp_DescribesTheOneZeroSurface(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	out, err := exec.Command(bin, "--help").CombinedOutput()
+	if err != nil {
+		t.Fatalf("--help failed: %v\n%s", err, out)
+	}
+	help := string(out)
+
+	for _, want := range []string{"Owner", "Teacher", "Manager", "--output json"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("root help does not mention %q:\n%s", want, help)
+		}
+	}
+
+	// The only legitimate mention of the retired roles is the pointer telling
+	// a reader where that work lives now. Anything else is a leftover.
+	for _, line := range strings.Split(help, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "student") && !strings.Contains(lower, "contributor") {
+			continue
+		}
+		if strings.Contains(lower, "andamio app") {
+			continue
+		}
+		t.Errorf("root help references the retired surface outside the app pointer: %q", line)
+	}
+}
+
+// The exit-code contract has to be reachable from the binary, not only from a
+// file in the repo — a script author debugging a branch has the tool in front
+// of them (issue #126's "documented well enough to be relied on").
+func TestExitCodesHelpTopic_IsReachable(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	out, err := exec.Command(bin, "help", "exit-codes").CombinedOutput()
+	if err != nil {
+		t.Fatalf("help exit-codes failed: %v\n%s", err, out)
+	}
+	topic := string(out)
+
+	for _, want := range []string{
+		"not_found", "auth", "removed_command", "unreachable", "conflict",
+		"empty", "0", "5",
+	} {
+		if !strings.Contains(topic, want) {
+			t.Errorf("exit-codes help topic is missing %q:\n%s", want, topic)
+		}
+	}
+}

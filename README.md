@@ -1,6 +1,16 @@
 # Andamio CLI
 
-CLI for interacting with the Andamio Protocol.
+A developer tool for the people who author work on the Andamio Protocol and assess it: course **Owners** and **Teachers**, and project **Managers**.
+
+| Role | What you do here |
+|------|------------------|
+| **Own** | Create courses and projects, register them on-chain, manage teachers and managers |
+| **Teach** | Write and publish module content, review submissions, build assessment transactions |
+| **Manage** | Create and mint project tasks, review contributions, assess work |
+
+Learners and contributors use the [Andamio app](https://app.andamio.io), which signs and submits their work in one flow.
+
+The CLI is built to be driven by programs as well as people. Every list and get command takes `--output json`; progress goes to stderr and data to stdout; nothing reads stdin or prompts. See [Scripting](#scripting) below.
 
 ## Installation
 
@@ -107,6 +117,50 @@ andamio course list -o csv         # CSV for spreadsheets
 andamio course list -o markdown    # Markdown tables
 ```
 
+## Scripting
+
+`--output json` is the stable surface. Data goes to stdout, progress and errors
+to stderr, and no command reads stdin or prompts — everything works without a
+TTY.
+
+Discover ids first, then use them:
+
+```bash
+COURSE_ID=$(andamio course list --output json | jq -r '.data[0].course_id')
+andamio course modules "$COURSE_ID" --output json | jq -r '.data[].course_module_code'
+```
+
+### Exit codes and error kinds
+
+Every failure carries an exit code and, under `--output json`, a `kind` field.
+Both come from the same classification, so they never disagree.
+
+| Code | `kind` | When |
+|------|--------|------|
+| 0 | — | Success, **including an empty but valid result set** |
+| 1 | `error` / `server` / `backpressure` / `canceled` | Unexpected, 5xx, retry-later, or interrupted |
+| 2 | `not_found` | Resource doesn't exist |
+| 3 | `auth` | No credentials, or 401 / 403 |
+| 4 | `removed_command` | Command was retired in 1.0 |
+| 5 | `unreachable` | The request never reached the service |
+| 6 | `conflict` | Conflicts with existing state |
+
+**An empty result is not an error.** A list command that finds nothing emits an
+empty collection and exits 0. That is what keeps three different situations
+apart — a person infers the difference from context, a program cannot:
+
+```bash
+out=$(andamio teacher assignments list --course "$COURSE_ID" --output json)
+case $? in
+  0) jq '.data | length' <<<"$out" ;;          # 0 means nothing to review
+  3) echo "not permitted" >&2 ;;
+  5) echo "service unreachable — retry" >&2 ;;
+  *) jq -r '.kind + ": " + .error' <<<"$out" >&2 ;;
+esac
+```
+
+Run `andamio help exit-codes` for the full table.
+
 ## Commands
 
 ### `andamio config`
@@ -126,6 +180,8 @@ andamio course list -o markdown    # Markdown tables
 
 ### `andamio course`
 
+Read:
+
 - `course list` — List available courses
 - `course get <course-id>` — Get course details
 - `course modules <course-id>` — List modules for a course
@@ -133,8 +189,39 @@ andamio course list -o markdown    # Markdown tables
 - `course lesson <course-id> <module-code> <slt-index>` — Get lesson content
 - `course assignment <course-id> <module-code>` — Get assignment
 - `course intro <course-id> <module-code>` — Get module introduction
+
+Author:
+
 - `course export <course-id> <module-code>` — Export module to local directory
 - `course import <path> --course-id <id>` — Import module from local directory
+- `course owner create|update|register` — Create and register a course
+- `course owner teachers --course-id <id> --add <alias>` — Manage teachers
+- `course teacher register-module|publish-module|update-module-status` — Module lifecycle
+- `course credential verify-hash <course-id>` — Verify credential hashes
+- `course credential compute-hash` — Compute an SLT hash locally (no auth needed)
+
+### `andamio teacher`
+
+- `teacher courses` — List courses where you are a teacher
+- `teacher assignments list [--course <id>]` — List commitments awaiting review
+- `teacher assignments get <course-id> <module-code> <student-alias>` — Read one submission
+- `teacher assessment build --course-id <id> --alias <you> --decision <student>=accept` — Build an assessment transaction **without signing or submitting it**
+
+`teacher assignments` returns each submission as Markdown in
+`content.evidence_text`, alongside the raw Tiptap document in
+`content.evidence` — read the first to get the prose, the second to verify a
+hash.
+
+`teacher assessment build` stops at the unsigned transaction so a person can
+review the decisions before approving them. Sign and submit are separate steps
+(`tx sign`, `tx submit`); `tx run` still does the whole lifecycle in one if you
+want that.
+
+### `andamio manager`
+
+- `manager projects` — List projects you manage
+- `project manager commitments --project-id <id>` — List task commitments, pending and assessed
+- `project manager qualified-contributors --project-id <id>` — Who holds every prerequisite SLT
 
 ### `andamio project`
 

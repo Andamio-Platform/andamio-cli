@@ -232,36 +232,97 @@ Terminal states (no further transitions):
 - **CREDENTIAL_CLAIMED** — credential NFT claimed by student
 - **LEFT** — student left the module voluntarily
 
-## Student Enrollment and Assignments
+## Assessing Submissions (Teacher)
 
-### Enroll in a course module (on-chain)
+Learners enrol, submit evidence and claim credentials in the [Andamio
+app](https://app.andamio.io), which signs and submits their work in one flow.
+From the CLI you observe those transitions and act on the one that is yours:
+**assessment**.
+
+A commitment moves through `AWAITING_SUBMISSION` → `SUBMITTED` → `ACCEPTED` /
+`REFUSED` → `CREDENTIAL_CLAIMED`. Only the middle step is yours. Everything
+below picks up at `SUBMITTED`.
+
+### See what is waiting
 
 ```bash
-andamio tx run /v2/tx/course/student/enroll \
-  --body '{"alias":"<student-alias>","course_id":"<course-id>","course_module_code":"101"}' \
+andamio teacher assignments list --course <course-id>
+```
+
+The Status column shows each commitment's state. For scripting, filter to the
+ones actually awaiting your judgement:
+
+```bash
+andamio teacher assignments list --course <course-id> --output json \
+  | jq '.data[] | select(.content.commitment_status == "SUBMITTED")'
+```
+
+### Read what was submitted
+
+```bash
+andamio teacher assignments get <course-id> <module-code> <student-alias> \
+  --output json | jq -r '.content.evidence_text'
+```
+
+Evidence is stored as a Tiptap document. `content.evidence_text` is that
+document rendered as Markdown — read it for the prose. `content.evidence` is
+the raw document, which is what the on-chain commitment hash is computed over;
+read that if you are verifying a hash.
+
+### Build the assessment transaction
+
+Assessment is one transaction carrying every decision — accepts **and**
+refuses. The transaction records your decision for every submission you
+assessed, not only the passing ones.
+
+```bash
+andamio teacher assessment build \
+  --course-id <course-id> \
+  --alias <your-teacher-alias> \
+  --decision student-01=accept \
+  --decision student-02=refuse
+```
+
+Nothing is signed or submitted. You get the unsigned transaction alongside the
+decision set it was built from, so you can check what you are about to approve.
+
+For a large cohort, pass a file instead:
+
+```bash
+andamio teacher assessment build --course-id <course-id> --alias <you> \
+  --decisions-file decisions.json --output json
+```
+
+```json
+[
+  {"alias": "student-01", "outcome": "accept"},
+  {"alias": "student-02", "outcome": "refuse"}
+]
+```
+
+### Sign and submit
+
+Separate steps, deliberately — this is where a person approves what an agent
+recommended:
+
+```bash
+andamio tx sign --tx <unsigned-tx> --skey ./payment.skey
+andamio tx submit --tx <signed-tx>
+```
+
+If you want the whole lifecycle in one command instead, `tx run` still does
+build → sign → submit → register → confirm:
+
+```bash
+andamio tx run /v2/tx/course/teacher/assignments/assess \
+  --body '{"alias":"<you>","course_id":"<course-id>","assignment_decisions":[{"alias":"student-01","outcome":"accept"}]}' \
   --skey ./payment.skey \
-  --tx-type course_enroll
+  --tx-type assessment_assess
 ```
 
-### Submit assignment evidence
+### Off-chain review
 
-```bash
-andamio course student submit \
-  --course-id <course-id> \
-  --module-code 101 \
-  --evidence-file ./evidence.md
-```
-
-Or inline:
-
-```bash
-andamio course student submit \
-  --course-id <course-id> \
-  --module-code 101 \
-  --evidence "Completed all exercises. See repo: https://github.com/..."
-```
-
-### Teacher reviews a submission
+To record a decision in the database without an on-chain transaction:
 
 ```bash
 andamio course teacher review \
@@ -271,22 +332,9 @@ andamio course teacher review \
   --decision accept
 ```
 
-List pending reviews:
-
-```bash
-andamio course teacher commitments --course-id <course-id>
-```
-
-### Claim credential (on-chain)
-
-After the teacher accepts the submission:
-
-```bash
-andamio tx run /v2/tx/course/student/credential/claim \
-  --body '{"alias":"<student-alias>","course_id":"<course-id>","course_module_code":"101"}' \
-  --skey ./payment.skey \
-  --tx-type credential_claim
-```
+After you accept, the learner claims their credential in the app. The
+commitment reaches `CREDENTIAL_CLAIMED` on its own; nothing further is required
+from you.
 
 ## Verifying Hashes
 

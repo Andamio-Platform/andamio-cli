@@ -65,17 +65,35 @@ func buildVersionOutput() string {
 
 var rootCmd = &cobra.Command{
 	Use:     "andamio",
-	Short:   "CLI for interacting with the Andamio Protocol",
+	Short:   "Developer CLI for authoring and assessing on the Andamio Protocol",
 	Version: versionString(),
-	Long: `Andamio CLI provides commands for interacting with the Andamio Protocol.
+	Long: `Andamio CLI is a developer tool for the people who author work and assess it:
+course Owners and Teachers, and project Managers.
 
-Query courses, credentials, and more from the command line.
+  Own       create courses and projects, register them on-chain, manage
+            teachers and managers
+  Teach     write and publish module content, review submissions, build
+            assessment transactions
+  Manage    create and mint project tasks, review contributions, assess work
 
-Machine-readable output: pass --output json to any list/get/action command for
-structured JSON. "andamio --version --output json" emits
-{"version":"<x>","commit":"<sha7>","built":"<timestamp>"} so scripts and agents
-can identify the CLI version before invoking commands. See CHANGELOG.md for the
-envelope contract and breaking-change history.`,
+Learners and contributors use the Andamio app, which signs and submits their
+work in one flow.
+
+BUILT TO BE DRIVEN BY PROGRAMS
+
+Every list and get command takes --output json, and that is the stable surface
+scripts and agents should use. Progress goes to stderr, data to stdout, and no
+command reads stdin or prompts — everything works without a TTY.
+
+Failures are distinguishable without parsing prose: each carries an exit code
+and a "kind" field. An empty result is a success (exit 0, empty collection),
+which is what keeps "nothing found" apart from "not permitted" (exit 3) and
+"could not reach the service" (exit 5). Run 'andamio help exit-codes' for the
+full table.
+
+"andamio --version --output json" emits {"version":"<x>","commit":"<sha7>",
+"built":"<timestamp>"} so a caller can identify the CLI before invoking it.
+See CHANGELOG.md for the envelope contract and breaking-change history.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		return output.SetFormat(outputFormat)
 	},

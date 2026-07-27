@@ -81,12 +81,46 @@ Three auth slots coexist in config:
 
 The app URL is derived from the API URL by replacing `.api.` with `.app.` in the hostname.
 
+## The 1.0 Surface
+
+Andamio CLI 1.0 is scoped to the roles that **author work and assess it**: course Owners and Teachers, project Managers. The learner and contributor command surface (`course student *`, `project contributor *`) was removed in 1.0 — learners and contributors use the Andamio app, which signs and submits their work in one flow.
+
+Removed commands are not deleted from the routing table. `cmd/andamio/retired.go` holds a registry of retired paths, each registered as a **hidden** cobra stub that returns a typed `apierr.RemovedCommandError` (exit 4) naming the removal and the replacement. One registry drives stub registration, message text, and the regression guards. Adding a future retirement is one table entry.
+
+Two properties are load-bearing and easy to break:
+
+- Stubs use `FParseErrWhitelist{UnknownFlags: true}`, **not** `DisableFlagParsing`. The latter also skips the root's persistent `--output` flag, so `course student claim --output json` would emit plain text instead of a JSON error envelope.
+- Stubs must not inherit an auth `PersistentPreRunE`. Both retired groups gated on `jwtAuthPreRunE`; inheriting it would greet an unauthenticated caller with "not authenticated" instead of the removal notice.
+
+`TestNoSourceFileCallsARetiredRoute` walks the AST of every non-test source file and fails on a string literal referencing `/course/student/` or `/project/contributor/`. It inspects literals rather than raw text so comments explaining a removal stay legal.
+
+## Failure Contract
+
+Every failure carries an exit code **and**, under `--output json`, a `kind` field. Both derive from `apierr.Kind`, the single mapper, so they cannot drift apart. `Kind` unwraps through `fmt.Errorf("%w")` and `ReportedError` — the command layer wraps liberally, and a mapper that only inspected the top-level error would classify nearly everything as generic.
+
+| Exit | `kind` | When |
+|------|--------|------|
+| 0 | — | Success, including an empty but valid result set |
+| 1 | `error` / `server` / `backpressure` / `canceled` | Unexpected, 5xx, retry-later, interrupted |
+| 2 | `not_found` | 404 |
+| 3 | `auth` | No credentials, or 401/403 |
+| 4 | `removed_command` | Retired in 1.0 |
+| 5 | `unreachable` | Request never reached the service |
+| 6 | `conflict` | 409 |
+
+**An empty result is exit 0 with an empty collection, not an error.** This is what keeps "nothing found", "not permitted" (3) and "could not reach the service" (5) distinguishable. Do not "fix" `printList` to return an error on empty.
+
+`apierr.NetworkError` wraps transport failures in `internal/client`. It deliberately excludes context cancellation and deadline expiry — an operator pressing Ctrl-C is not the service being down. It implements `Unwrap()` so the retry classifier still reaches the underlying `net.Error`; removing that silently disables retries on connection failures.
+
+Exit codes 0–3 predate 1.0 and are fixed. `conflict` moved from 1 to 6 in 1.0.
+
 ## Complete Command Reference
 
 ### Global Flags
 - `-o, --output` — Output format: text (default), json, csv, markdown
 - `-h, --help` — Help for any command
 - `--version` — Print version with commit hash and build date. With `--output json` emits `{version, commit, built}` as structured JSON; plain-text format is preserved when `--output` is absent or `text`.
+- `andamio help exit-codes` — Help topic documenting the exit-code and kind contract above (`cmd/andamio/exitcodes_help.go`).
 
 ### auth — API key management
 | Command | Endpoint | Auth | Description |
@@ -135,15 +169,6 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course teacher update-module-status` | `/v2/course/teacher/course-module/update-status` | jwt | Update module status. `--course-id`, `--module-code`, `--status` |
 | `course teacher review` | `/v2/course/teacher/assignment-commitment/review` | jwt | Review commitment. `--course-id`, `--module-code`, `--participant-alias`, `--decision` (accept/refuse) |
 | `course teacher commitments` | `/v2/course/teacher/assignment-commitments/list` | jwt | List pending reviews. `--course-id` |
-| `course student courses` | `/v2/course/student/courses/list` | jwt | List enrolled courses |
-| `course student credentials` | `/v2/course/student/credentials/list` | jwt | List earned credentials |
-| `course student commitments` | `/v2/course/student/assignment-commitments/list` | jwt | List assignment commitments |
-| `course student commitment` | `/v2/course/student/assignment-commitment/get` | jwt | Get commitment. `--course-id`, `--slt-hash` (required), `--module-code` (optional) |
-| `course student create` | `/v2/course/student/commitment/create` | jwt | Enroll in module. `--course-id`, `--module-code` |
-| `course student submit` | `/v2/course/student/commitment/submit` | jwt | Submit evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
-| `course student update` | `/v2/course/student/commitment/update` | jwt | Update evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
-| `course student leave` | `/v2/course/student/commitment/leave` | jwt | Leave commitment. `--course-id`, `--module-code`, `--pending-tx-hash` |
-| `course student claim` | `/v2/course/student/commitment/claim` | jwt | Claim credential. `--course-id`, `--module-code`, `--pending-tx-hash` |
 | `course credential verify-hash <course-id>` | `/api/v2/course/user/modules/{id}` | either | Verify credential hashes match computed SLT hashes |
 | `course credential compute-hash` | local | none | Compute SLT hash from `--slt` flags or `--file` (outline.md). No auth required |
 
@@ -159,12 +184,6 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project tasks <project-id>` | `/v2/project/user/tasks/list` | either | List tasks (public view) |
 | `project manager commitments --project-id <id>` | `/v2/project/manager/commitments/list` | jwt | List task commitments — pending and assessed (with evidence). v2.3 returns the union; filter via `jq` on `--output json` |
 | `project manager qualified-contributors --project-id <id>` | `/v2/project/manager/contributors/get-qualified` | jwt | List aliases qualified to commit (holds every prerequisite SLT). Capped at 500; JSON surfaces `truncated`. |
-| `project contributor list` | `/v2/project/contributor/projects/list` | jwt | List contributor projects |
-| `project contributor commitments` | `/v2/project/contributor/commitments/list` | jwt | List task commitments |
-| `project contributor commitment` | `/v2/project/contributor/commitment/get` | jwt | Get commitment. `--project-id`, `--task-index` |
-| `project contributor commit` | `/v2/project/contributor/commitment/create` | jwt | Commit to task. `--project-id`, `--task-index` |
-| `project contributor update` | `/v2/project/contributor/commitment/update` | jwt | Update evidence. `--project-id`, `--task-index`, `--evidence` or `--evidence-file` (Markdown) |
-| `project contributor delete` | `/v2/project/contributor/commitment/delete` | jwt | Delete commitment. `--project-id`, `--task-index` |
 | `project task list <project-id>` | `/v2/project/manager/tasks/list` | jwt | List tasks (manager) |
 | `project task get <index> --project-id <id>` | `/v2/project/manager/tasks/list` | jwt | Get task by index (filters from list) |
 | `project task create <project-id>` | `/v2/project/manager/task/create` | jwt | Create task. Flags: --title, --lovelace, --expiration, --github-issue |
@@ -174,6 +193,24 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project task import <project-id>` | `/v2/project/manager/task/create,update` | jwt | Import tasks from Markdown files. --dry-run supported |
 | `project task verify-hash <project-id>` | `/v2/project/user/tasks/list` | either | Verify task hashes match computed hashes (diagnostic) |
 | `project task compute-hash` | local | none | Compute task hash from `--content`, `--lovelace`, `--expiration`, `--token` flags or `--file`. No auth required |
+
+### teacher — Assessment (the agent-drivable path)
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `teacher courses` | `/v2/course/teacher/courses/list` | jwt | List courses where you are a teacher |
+| `teacher assignments list [--course <id>]` | `/api/v2/course/teacher/assignment-commitments/list` | jwt | List commitments awaiting review. Without `--course`, returns the lightweight summary (no nested `content`) |
+| `teacher assignments get <course-id> <module-code> <student-alias>` | same, filtered client-side | jwt | Read one submission |
+| `teacher assessment build` | `/api/v2/tx/course/teacher/assignments/assess` | jwt | Build an assessment transaction **without signing or submitting**. `--course-id`, `--alias` (teacher), `--decision <student>=<accept\|refuse>` (repeatable) or `--decisions-file` |
+
+**Evidence decoding.** `teacher assignments list`/`get` add `content.evidence_text` — the submission rendered as Markdown via `tiptapToMarkdown`, the same converter course export uses. It is a **sibling** of `content.evidence`, never a replacement: the raw Tiptap document is hash-bearing (the on-chain commitment hash is computed over the normalized form) and must round-trip byte-for-byte. `evidence_text` is *absent*, not empty-string, when there is no evidence. `get` routes through `fetchTeacherAssignmentsList` so the two commands cannot diverge.
+
+**No `--status` filter**, deliberately. `internal/client/testdata/v2-3-manager-commitments-list-response.md` records the decision to prefer `jq` on the JSON envelope over CLI-layer filtering, and to filter on `task_outcome` presence over enum-string matching since the enum grows new transient values. That decision applies here too.
+
+**Assessment payload naming is a trap.** Top-level `alias` is the **teacher**; `assignment_decisions[].alias` is the **student**. Two fields, same name, two different people. There is no `module_code` at any level — the protocol derives the module from the on-chain commitment. Schema reference: `.claude/skills/assess-assignment/SKILL.md`.
+
+**Inspection is a request-echo, not a CBOR decode.** `AssessmentBuildEnvelope` carries the decision set alongside the unsigned transaction so a reviewer sees both from one command, instead of trusting an agent's separate prose summary of what opaque CBOR encodes. It proves what was *asked for*, not what the gateway *built*. Decoding the transaction needs Plutus datum interpretation and is out of scope for 1.0 — the limitation is stated in the command help and the type doc, not papered over.
+
+Duplicate aliases are **rejected**, not last-wins: two conflicting outcomes for one learner means the caller lost track of its own decision set, and silently picking one would put a credential decision on-chain that nobody made.
 
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |
