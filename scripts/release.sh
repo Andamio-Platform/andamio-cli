@@ -79,7 +79,15 @@ if [[ ! -f CHANGELOG.md ]]; then
   exit 1
 fi
 if grep -qF "## [${VERSION}]" CHANGELOG.md; then
-  echo "  ✓ CHANGELOG entry found for $VERSION"
+  # The heading existing is not enough: the release workflow extracts this
+  # section and feeds it to GoReleaser as the published release body, so an
+  # empty section would publish blank notes. Check what CI will actually get.
+  if ! NOTES=$("$(dirname "$0")/changelog-section.sh" "$VERSION" 2>/dev/null); then
+    echo "  ✗ '## [$VERSION]' exists but has no content beneath it"
+    echo "    The release workflow publishes this section as the release body."
+    exit 1
+  fi
+  echo "  ✓ CHANGELOG entry found for $VERSION ($(printf '%s' "$NOTES" | wc -l | tr -d ' ') lines of release notes)"
 else
   # Extract the body of [Unreleased] (lines after the heading, stopping at the next
   # '## [' heading). Match a non-whitespace bullet ('-' or '*') to determine "has content".

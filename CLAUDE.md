@@ -34,7 +34,11 @@ No linter configuration. Tests exist for export/import conversion functions.
 
 The script runs preflight checks (clean tree, on main, synced with origin, CHANGELOG entry for the target version, build passes), then tags and pushes. GitHub Actions runs GoReleaser to cross-compile and publish binaries to GitHub Releases.
 
-`CHANGELOG.md` at the repo root is the source of truth for user-facing release notes. The `release.sh` preflight warns if no `## [$VERSION]` heading is found — maintainers should move content from `## [Unreleased]` into a new versioned heading before tagging.
+`CHANGELOG.md` at the repo root is the source of truth for user-facing release notes, and since 1.0 that is literally true rather than aspirational: `.github/workflows/release.yml` runs `scripts/changelog-section.sh <version>` to extract the `## [VERSION]` section into `release-notes.md` and passes it to `goreleaser release --release-notes`. Before this, GoReleaser generated the GitHub release body from commit subjects — which for a release whose headline change is a removal would lead with that removal, telling the people least affected that the tool is being wound down.
+
+The `release.sh` preflight checks that the section is **extractable**, not merely that the heading exists: a `## [$VERSION]` heading with nothing under it would otherwise publish a blank release body. Maintainers should move content from `## [Unreleased]` into a new versioned heading before tagging.
+
+The `changelog:` block in `.goreleaser.yml` remains as the fallback for a local `goreleaser release` run without the flag.
 
 Version is injected via ldflags: `-X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}`
 
