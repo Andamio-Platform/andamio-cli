@@ -257,8 +257,17 @@ func executeTxLifecycle(ctx context.Context, c *client.Client, cfg *config.Confi
 //
 // The gateway's confirm logic requires task_hash for project_join and
 // project_credential_claim. For project_join, task_hash is in the request body.
-// For project_credential_claim, it's not — we look it up from the contributor's
-// active commitment via the API.
+// For project_credential_claim, it's not — we look it up from the project's
+// task list.
+//
+// Before 1.0 the credential-claim lookup consulted
+// /api/v2/project/contributor/commitments/list first, falling back to the task
+// list. That route belongs to the contributor surface retired in 1.0 (issue
+// #129), so the CLI no longer calls it and the fallback became the only path.
+// tx run itself stays generic — it accepts any endpoint and any tx type, which
+// is what Owners and Managers rely on. Filtering learner transaction types out
+// of it would turn a clean gateway response into a confusing client-side
+// rejection.
 func extractTaskHash(ctx context.Context, body interface{}, txType string, c *client.Client) string {
 	m, ok := body.(map[string]interface{})
 	if !ok {
@@ -274,55 +283,27 @@ func extractTaskHash(ctx context.Context, body interface{}, txType string, c *cl
 		return ""
 
 	case "project_credential_claim":
-		// task_hash isn't in the credential claim body, but we can look it up
-		// from the contributor's commitment for this project
+		// task_hash isn't in the credential claim body — look it up from the
+		// project's task list.
 		projectID, _ := m["project_id"].(string)
 		if projectID == "" || c == nil {
 			return ""
 		}
-		return lookupContributorTaskHash(ctx, c, projectID)
+		return lookupProjectTaskHash(ctx, c, projectID)
 
 	default:
 		return ""
 	}
 }
 
-// lookupContributorTaskHash fetches the contributor's commitments and returns
-// the task_hash of the first ACCEPTED commitment for the given project.
-// Falls back to the contributor's on-chain commitments if DB records don't match.
-func lookupContributorTaskHash(ctx context.Context, c *client.Client, projectID string) string {
-	// Try DB commitments first (merged records with status)
-	var resp []interface{}
-	if err := c.Post(ctx, "/api/v2/project/contributor/commitments/list", nil, &resp); err == nil {
-		for _, item := range resp {
-			commitment, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			pid, _ := commitment["project_id"].(string)
-			if pid != projectID {
-				continue
-			}
-			content, _ := commitment["content"].(map[string]interface{})
-			if content != nil {
-				status, _ := content["commitment_status"].(string)
-				if status == "ACCEPTED" {
-					if th, ok := commitment["task_hash"].(string); ok && th != "" {
-						return th
-					}
-				}
-			}
-			// Also check chain_only commitments (no content/status, just task_hash)
-			if th, ok := commitment["task_hash"].(string); ok && th != "" {
-				source, _ := commitment["source"].(string)
-				if source == "chain_only" {
-					return th
-				}
-			}
-		}
-	}
-
-	// Fallback: get task_hash from the project's task list
+// lookupProjectTaskHash returns the task_hash of the first task carrying one in
+// the given project, read from the user-visible task list.
+//
+// Best-effort by design: the value feeds registration metadata, and returning
+// "" leaves the gateway to resolve it. Errors are swallowed rather than
+// surfaced so a metadata lookup can't fail a transaction that has already been
+// submitted on-chain.
+func lookupProjectTaskHash(ctx context.Context, c *client.Client, projectID string) string {
 	var taskResp map[string]interface{}
 	body := map[string]string{"project_id": projectID}
 	if err := c.Post(ctx, "/api/v2/project/user/tasks/list", body, &taskResp); err == nil {

@@ -3,17 +3,13 @@ package main
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
-	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -214,6 +210,17 @@ func hexDecodeAssetName(name string) string {
 // Primary purpose: trims whitespace from strings to match @andamio/core
 // computeCommitmentHash. Go's json.Marshal already sorts map keys alphabetically;
 // this function adds string trimming and recursive normalization.
+//
+// NOT DEAD CODE, despite having no production caller since 1.0. Evidence
+// submission moved to the Andamio app when the learner and contributor surface
+// was removed (issue #129), which retired this function's only command-side
+// consumer. It is deliberately retained because
+// commitment_hash_parity_test.go pins it against a hand-verified
+// @andamio/core vector — a cross-repo contract that took real work to
+// establish and that would have to be rebuilt from scratch if evidence
+// hashing returns to the CLI (learner support is scoped out of 1.0, not ruled
+// out). Deleting this means deleting that guarantee; do it deliberately or
+// not at all.
 func normalizeForHashing(v interface{}) interface{} {
 	if v == nil {
 		return nil
@@ -236,259 +243,4 @@ func normalizeForHashing(v interface{}) interface{} {
 	default:
 		return v // numbers, booleans
 	}
-}
-
-// wrapEvidence converts evidence text to a Tiptap JSON document and computes its Blake2b-256 content hash.
-// The hash matches @andamio/core computeCommitmentHash: normalize → JSON.stringify → Blake2b-256.
-// Returns the Tiptap document as a map (for embedding as a JSON object in payloads) and the hex hash.
-func wrapEvidence(text string) (map[string]interface{}, string, error) {
-	tiptapDoc, err := markdownToTiptap(text, nil)
-	if err != nil {
-		return nil, "", fmt.Errorf("markdown to tiptap: %w", err)
-	}
-
-	// Normalize to match frontend: sort keys, trim strings
-	normalized := normalizeForHashing(tiptapDoc)
-
-	jsonBytes, err := json.Marshal(normalized)
-	if err != nil {
-		return nil, "", fmt.Errorf("json marshal: %w", err)
-	}
-
-	hash := cardano.Blake2b256(jsonBytes)
-	// Return the normalized doc (what the hash was computed from)
-	normalizedDoc, _ := normalized.(map[string]interface{})
-	return normalizedDoc, hex.EncodeToString(hash), nil
-}
-
-// resolveTaskHashFromFlags reads --task-hash and --task-index flags and returns the task_hash.
-// When --task-hash is provided directly, skips API resolution (needed for chain-only tasks).
-// Returns (taskHash, taskIndex, error). taskIndex is -1 when --task-hash is used.
-func resolveTaskHashFromFlags(ctx context.Context, cmd *cobra.Command, c *client.Client, projectID string) (string, int, error) {
-	taskHash, _ := cmd.Flags().GetString("task-hash")
-	taskIndexStr, _ := cmd.Flags().GetString("task-index")
-
-	if taskHash != "" && taskIndexStr != "" {
-		return "", 0, fmt.Errorf("--task-hash and --task-index are mutually exclusive")
-	}
-	if taskHash == "" && taskIndexStr == "" {
-		return "", 0, fmt.Errorf("either --task-index or --task-hash is required\n\nUse --task-index for merged tasks, or --task-hash for chain-only tasks.\nList tasks with:\n  andamio project tasks %s --output json", projectID)
-	}
-
-	if taskHash != "" {
-		if len(taskHash) != 64 || !isHex(taskHash) {
-			return "", 0, fmt.Errorf("--task-hash must be a 64-character hex string (Blake2b-256 hash)")
-		}
-		return taskHash, -1, nil
-	}
-
-	taskIndex, err := strconv.Atoi(taskIndexStr)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid task-index %q: must be a number", taskIndexStr)
-	}
-
-	hash, err := resolveTaskHash(ctx, c, projectID, taskIndex)
-	return hash, taskIndex, err
-}
-
-// ResolvedTask contains the full task data needed for hash verification.
-type ResolvedTask struct {
-	TaskHash  string
-	TaskData  cardano.TaskData
-	TaskIndex int
-}
-
-// resolveTaskHash looks up the task_hash for a given project + task index.
-// Fetches the user-visible task list and matches by task_index.
-func resolveTaskHash(ctx context.Context, c *client.Client, projectID string, taskIndex int) (string, error) {
-	resolved, err := resolveTaskData(ctx, c, projectID, taskIndex)
-	if err != nil {
-		return "", err
-	}
-	return resolved.TaskHash, nil
-}
-
-// resolveTaskData looks up the full task data for a given project + task index.
-// Returns the API task_hash plus the task data needed for local hash verification.
-func resolveTaskData(ctx context.Context, c *client.Client, projectID string, taskIndex int) (*ResolvedTask, error) {
-	body := map[string]string{"project_id": projectID}
-	var resp map[string]interface{}
-	if err := c.Post(ctx, "/api/v2/project/user/tasks/list", body, &resp); err != nil {
-		return nil, fmt.Errorf("failed to list tasks: %w", err)
-	}
-
-	data, ok := resp["data"].([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("no tasks found for project %s", projectID)
-	}
-
-	for _, item := range data {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		idx, _ := m["task_index"].(float64)
-		if int(idx) != taskIndex {
-			continue
-		}
-
-		hash, _ := m["task_hash"].(string)
-		if hash == "" {
-			return nil, fmt.Errorf("task %d has no task_hash (may not be on-chain yet)", taskIndex)
-		}
-
-		// Extract on_chain_content (the project_content used for hashing)
-		onChainContent, _ := m["on_chain_content"].(string)
-		projectContent := ""
-		if onChainContent != "" {
-			// on_chain_content is hex-encoded UTF-8
-			decoded, err := hex.DecodeString(onChainContent)
-			if err == nil {
-				projectContent = string(decoded)
-			}
-		}
-		// Fallback to title if on_chain_content is missing
-		if projectContent == "" {
-			if content, ok := m["content"].(map[string]interface{}); ok {
-				projectContent, _ = content["title"].(string)
-			}
-		}
-
-		expirationPosix, _ := m["expiration_posix"].(float64)
-		lovelaceAmount, _ := m["lovelace_amount"].(float64)
-
-		// Extract native assets
-		var nativeAssets []cardano.NativeAsset
-		if assets, ok := m["assets"].([]interface{}); ok {
-			for _, a := range assets {
-				am, ok := a.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				policyID, _ := am["policy_id"].(string)
-				name, _ := am["name"].(string)
-				amountStr, _ := am["amount"].(string)
-				// Amount is a string in the API response
-				var quantity uint64
-				if amountStr != "" {
-					fmt.Sscanf(amountStr, "%d", &quantity)
-				}
-				// Token name must be hex-encoded for hashing
-				tokenNameHex := hexEncodeAssetName(name)
-				nativeAssets = append(nativeAssets, cardano.NativeAsset{
-					PolicyID:  policyID,
-					TokenName: tokenNameHex,
-					Quantity:  quantity,
-				})
-			}
-		}
-
-		return &ResolvedTask{
-			TaskHash:  hash,
-			TaskIndex: taskIndex,
-			TaskData: cardano.TaskData{
-				ProjectContent: projectContent,
-				ExpirationTime: uint64(expirationPosix),
-				LovelaceAmount: uint64(lovelaceAmount),
-				NativeAssets:   nativeAssets,
-			},
-		}, nil
-	}
-	return nil, fmt.Errorf("task index %d not found in project %s\n\nList tasks with:\n  andamio project tasks %s --output json", taskIndex, projectID, projectID)
-}
-
-// resolveSltHashFromFlags reads --slt-hash and --module-code flags and returns the slt_hash.
-// When --slt-hash is provided directly, skips API resolution (needed for chain-only modules).
-// Returns (sltHash, moduleCode, error). moduleCode may be empty when --slt-hash is used.
-func resolveSltHashFromFlags(ctx context.Context, cmd *cobra.Command, c *client.Client, courseID string) (string, string, error) {
-	sltHash, _ := cmd.Flags().GetString("slt-hash")
-	moduleCode, _ := cmd.Flags().GetString("module-code")
-
-	if sltHash != "" && moduleCode != "" {
-		return "", "", fmt.Errorf("--slt-hash and --module-code are mutually exclusive")
-	}
-	if sltHash == "" && moduleCode == "" {
-		return "", "", fmt.Errorf("either --module-code or --slt-hash is required\n\nUse --module-code for modules with a code, or --slt-hash for chain-only modules.\nList modules with:\n  andamio course modules %s --output json", courseID)
-	}
-
-	if sltHash != "" {
-		if len(sltHash) != 64 || !isHex(sltHash) {
-			return "", "", fmt.Errorf("--slt-hash must be a 64-character hex string (Blake2b-256 hash)")
-		}
-		return sltHash, "", nil
-	}
-
-	hash, err := resolveSltHash(ctx, c, courseID, moduleCode)
-	return hash, moduleCode, err
-}
-
-// resolveSltHash looks up the slt_hash for a given course + module code.
-// Fetches the course modules list and matches by module code.
-func resolveSltHash(ctx context.Context, c *client.Client, courseID, moduleCode string) (string, error) {
-	path := "/api/v2/course/user/modules/" + url.PathEscape(courseID)
-	var resp map[string]interface{}
-	if err := c.Get(ctx, path, &resp); err != nil {
-		return "", fmt.Errorf("failed to list modules: %w", err)
-	}
-
-	data, ok := resp["data"].([]interface{})
-	if !ok {
-		return "", fmt.Errorf("no modules found for course %s", courseID)
-	}
-
-	for _, item := range data {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		// Check top-level first, then content.course_module_code (merged responses nest it)
-		code, _ := m["course_module_code"].(string)
-		if code == "" {
-			if content, ok := m["content"].(map[string]interface{}); ok {
-				code, _ = content["course_module_code"].(string)
-			}
-		}
-		if code == moduleCode {
-			hash, _ := m["slt_hash"].(string)
-			if hash == "" {
-				return "", fmt.Errorf("module %s has no slt_hash (may not be on-chain yet)", moduleCode)
-			}
-			return hash, nil
-		}
-	}
-	return "", fmt.Errorf("module %s not found in course %s\n\nList modules with:\n  andamio course modules %s --output json", moduleCode, courseID, courseID)
-}
-
-// maxEvidenceFileSize is the maximum allowed evidence file size (1 MB).
-const maxEvidenceFileSize = 1 << 20
-
-// readEvidenceFlag reads the evidence text from either --evidence or --evidence-file.
-// The two flags are mutually exclusive; at least one must be set.
-func readEvidenceFlag(cmd *cobra.Command) (string, error) {
-	evidence, _ := cmd.Flags().GetString("evidence")
-	evidenceFile, _ := cmd.Flags().GetString("evidence-file")
-
-	if evidence != "" && evidenceFile != "" {
-		return "", fmt.Errorf("--evidence and --evidence-file are mutually exclusive")
-	}
-
-	if evidenceFile != "" {
-		info, err := os.Stat(evidenceFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read evidence file %s: %w", evidenceFile, err)
-		}
-		if info.Size() > maxEvidenceFileSize {
-			return "", fmt.Errorf("evidence file %s is too large (%d bytes, max %d)", evidenceFile, info.Size(), maxEvidenceFileSize)
-		}
-		data, err := os.ReadFile(evidenceFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read evidence file %s: %w", evidenceFile, err)
-		}
-		evidence = strings.TrimSpace(string(data))
-	}
-
-	if evidence == "" {
-		return "", fmt.Errorf("evidence is required: use --evidence or --evidence-file")
-	}
-	return evidence, nil
 }

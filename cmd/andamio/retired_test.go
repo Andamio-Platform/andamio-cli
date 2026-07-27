@@ -3,7 +3,14 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -297,6 +304,62 @@ func TestHelpOutput_OmitsRetiredGroups(t *testing.T) {
 				t.Errorf("`andamio %s --help` still lists %q:\n%s", tc.group, tc.retired, buf.String())
 			}
 		})
+	}
+}
+
+// No source file may call an API route belonging to the retired surface.
+// Removing the commands without removing their route calls would leave dead
+// requests firing from shared code paths — which is exactly what
+// lookupContributorTaskHash was doing inside the tx lifecycle before 1.0.
+//
+// Inspects string literals rather than raw file text, deliberately. A textual
+// scan also matches comments, and the comments explaining *why* a route was
+// removed are worth keeping — a guard that forbids documenting the removal
+// would push maintainers toward deleting the explanation instead of the code.
+//
+// Skips _test.go files, which legitimately name these routes in order to
+// assert they are never called.
+func TestNoSourceFileCallsARetiredRoute(t *testing.T) {
+	forbidden := []string{
+		"/course/student/",
+		"/project/contributor/",
+	}
+
+	for _, root := range []string{"../../cmd", "../../internal"} {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+
+			file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+			if err != nil {
+				return fmt.Errorf("parsing %s: %w", path, err)
+			}
+
+			ast.Inspect(file, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				value, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					return true
+				}
+				for _, route := range forbidden {
+					if strings.Contains(value, route) {
+						t.Errorf("%s has a string literal referencing retired API route %q: %s", path, route, lit.Value)
+					}
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
+		}
 	}
 }
 

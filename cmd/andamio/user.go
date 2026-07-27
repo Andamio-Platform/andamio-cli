@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -502,7 +503,7 @@ func runUserMe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print formatted dashboard
-	printDashboard(data)
+	printDashboard(os.Stdout, data)
 	return nil
 }
 
@@ -520,89 +521,87 @@ const (
 	cBrightCyan = "\033[96m"
 )
 
-func printDashboard(data map[string]interface{}) {
-	fmt.Println()
+// printDashboard renders the text-mode `user me` dashboard.
+//
+// Scoped to the 1.0 roles: what you teach, what you manage, and what is waiting
+// on your judgement. The gateway payload also carries learner and contributor
+// state — a "student" section with enrolled courses, and enrolled / completed /
+// contributing counts — which 1.0 deliberately does not render. Learner and
+// contributor work happens in the Andamio app (issue #129), and surfacing it in
+// the tool's most-run command would put the retired surface straight back
+// (issue #127).
+//
+// That is a rendering decision, not a data one. runUserMe returns the gateway
+// payload verbatim under --output json, so a script that wants enrollment data
+// still gets it — the CLI does not edit an API response it does not own.
+//
+// Takes an io.Writer rather than printing directly so the layout is testable
+// without capturing os.Stdout, matching renderTeacherAssignmentsListText and
+// renderQualifiedContributorsText.
+func printDashboard(w io.Writer, data map[string]interface{}) {
+	fmt.Fprintln(w)
 
 	// User info
 	if user, ok := data["user"].(map[string]interface{}); ok {
 		alias := getStr(user, "alias")
-		fmt.Printf("%s%s◆ %s%s\n", cBold, cGreen, alias, cReset)
-		fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", cDim, cCyan, cReset)
+		fmt.Fprintf(w, "%s%s◆ %s%s\n", cBold, cGreen, alias, cReset)
+		fmt.Fprintf(w, "%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", cDim, cCyan, cReset)
 	}
 
 	// Counts summary
 	if counts, ok := data["counts"].(map[string]interface{}); ok {
-		fmt.Printf("\n%s%s📊 Summary%s\n", cBold, cYellow, cReset)
-		enrolled := getInt(counts, "enrolled_courses")
-		completed := getInt(counts, "completed_courses")
+		fmt.Fprintf(w, "\n%s%s📊 Summary%s\n", cBold, cYellow, cReset)
 		teaching := getInt(counts, "teaching_courses")
 		managing := getInt(counts, "managing_projects")
-		contributing := getInt(counts, "contributing_projects")
 		credentials := getInt(counts, "total_credentials")
 
-		fmt.Printf("   %sCourses%s     %s%d%s enrolled  %s%d%s completed  %s%d%s teaching\n",
-			cDim, cReset, cBold, enrolled, cReset, cBold, completed, cReset, cBold, teaching, cReset)
-		fmt.Printf("   %sProjects%s    %s%d%s managing  %s%d%s contributing\n",
-			cDim, cReset, cBold, managing, cReset, cBold, contributing, cReset)
-		fmt.Printf("   %sCredentials%s %s%d%s earned\n",
+		fmt.Fprintf(w, "   %sCourses%s     %s%d%s teaching\n",
+			cDim, cReset, cBold, teaching, cReset)
+		fmt.Fprintf(w, "   %sProjects%s    %s%d%s managing\n",
+			cDim, cReset, cBold, managing, cReset)
+		fmt.Fprintf(w, "   %sCredentials%s %s%d%s earned\n",
 			cDim, cReset, cBold, credentials, cReset)
 	}
 
 	// Teacher section
 	if teacher, ok := data["teacher"].(map[string]interface{}); ok {
 		if courses, ok := teacher["courses"].([]interface{}); ok && len(courses) > 0 {
-			fmt.Printf("\n%s%s📚 Teaching%s\n", cBold, cMagenta, cReset)
+			fmt.Fprintf(w, "\n%s%s📚 Teaching%s\n", cBold, cMagenta, cReset)
 			for _, c := range courses {
 				if course, ok := c.(map[string]interface{}); ok {
 					title := getStr(course, "title")
 					if title == "" {
 						title = "(untitled)"
 					}
-					fmt.Printf("   %s▸%s %s\n", cMagenta, cReset, title)
+					fmt.Fprintf(w, "   %s▸%s %s\n", cMagenta, cReset, title)
 				}
 			}
 		}
 		if pending := getInt(teacher, "total_pending_reviews"); pending > 0 {
-			fmt.Printf("   %s%s⚠ %d pending reviews%s\n", cBold, cYellow, pending, cReset)
-		}
-	}
-
-	// Student section
-	if student, ok := data["student"].(map[string]interface{}); ok {
-		if enrolled, ok := student["enrolled_courses"].([]interface{}); ok && len(enrolled) > 0 {
-			fmt.Printf("\n%s%s🎓 Learning%s\n", cBold, cGreen, cReset)
-			for _, c := range enrolled {
-				if course, ok := c.(map[string]interface{}); ok {
-					title := getStr(course, "title")
-					if title == "" {
-						title = "(untitled)"
-					}
-					fmt.Printf("   %s▸%s %s\n", cGreen, cReset, title)
-				}
-			}
+			fmt.Fprintf(w, "   %s%s⚠ %d pending reviews%s\n", cBold, cYellow, pending, cReset)
 		}
 	}
 
 	// Projects section
 	if projects, ok := data["projects"].(map[string]interface{}); ok {
 		if managing, ok := projects["managing"].([]interface{}); ok && len(managing) > 0 {
-			fmt.Printf("\n%s%s🔧 Managing%s\n", cBold, cBlue, cReset)
+			fmt.Fprintf(w, "\n%s%s🔧 Managing%s\n", cBold, cBlue, cReset)
 			for _, p := range managing {
 				if proj, ok := p.(map[string]interface{}); ok {
 					title := getStr(proj, "title")
 					if title == "" {
 						title = "(untitled)"
 					}
-					fmt.Printf("   %s▸%s %s\n", cBlue, cReset, title)
+					fmt.Fprintf(w, "   %s▸%s %s\n", cBlue, cReset, title)
 				}
 			}
 		}
 		if pending := getInt(projects, "total_pending_assessments"); pending > 0 {
-			fmt.Printf("   %s%s⚠ %d pending assessments%s\n", cBold, cYellow, pending, cReset)
+			fmt.Fprintf(w, "   %s%s⚠ %d pending assessments%s\n", cBold, cYellow, pending, cReset)
 		}
 	}
 
-	fmt.Println()
+	fmt.Fprintln(w)
 }
 
 func getStr(m map[string]interface{}, key string) string {
