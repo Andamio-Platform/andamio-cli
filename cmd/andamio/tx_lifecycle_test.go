@@ -38,6 +38,30 @@ func (p *pathRecorder) requested() []string {
 	return append([]string{}, p.paths...)
 }
 
+// newRoutingClient serves a different body per request path, so a test can
+// distinguish which of two lookups produced an answer — the difference between
+// "returned the right hash" and "returned the right hash for the right reason".
+func newRoutingClient(t *testing.T, rec *pathRecorder, byPath map[string]interface{}) *client.Client {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec.mu.Lock()
+		rec.paths = append(rec.paths, r.URL.Path)
+		rec.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		if body, ok := byPath[r.URL.Path]; ok {
+			_ = json.NewEncoder(w).Encode(body)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"no stub for this path"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	return client.New(&config.Config{BaseURL: srv.URL})
+}
+
 func newRecordingClient(t *testing.T, body interface{}) (*client.Client, *pathRecorder) {
 	t.Helper()
 
@@ -71,26 +95,87 @@ func taskListBody(taskHash string) map[string]interface{} {
 	}
 }
 
-// The credential-claim lookup must not touch the contributor surface retired in
-// 1.0. Asserting on the requested paths — rather than only on the returned hash
-// — is what makes this a real guard: a reintroduced contributor call that
-// happened to also return the right hash would pass a value-only assertion.
-func TestExtractTaskHash_CredentialClaim_UsesNoRetiredRoute(t *testing.T) {
-	c, rec := newRecordingClient(t, taskListBody("abc123"))
+// The credential-claim lookup MUST consult the contributor's commitments, and
+// must prefer that answer over the task-list fallback.
+//
+// 1.0 retired the `project contributor` commands, not the gateway routes, and
+// tx run is generic — project_credential_claim still runs through it. During
+// implementation this lookup was removed on the mistaken assumption that the
+// route was going away too, which silently degraded the path to the fallback
+// below. On a multi-task project that returns the wrong task's hash, so the
+// gateway confirms the claim against a task the contributor never completed.
+//
+// The two tasks here carry different hashes precisely so a fallback-only
+// implementation cannot pass.
+func TestExtractTaskHash_CredentialClaim_PrefersContributorCommitment(t *testing.T) {
+	commitments := []interface{}{
+		map[string]interface{}{
+			"project_id": "proj-1",
+			"task_hash":  "committed-task-hash",
+			"content":    map[string]interface{}{"commitment_status": "ACCEPTED"},
+		},
+	}
+
+	rec := &pathRecorder{}
+	c := newRoutingClient(t, rec, map[string]interface{}{
+		"/api/v2/project/contributor/commitments/list": commitments,
+		"/api/v2/project/user/tasks/list":              taskListBody("first-task-hash"),
+	})
 
 	body := map[string]interface{}{"project_id": "proj-1"}
 	got := extractTaskHash(t.Context(), body, "project_credential_claim", c)
 
-	if got != "abc123" {
-		t.Errorf("task hash = %q, want %q", got, "abc123")
+	if got == "first-task-hash" {
+		t.Error("fell through to the task-list fallback; the accepted commitment's hash must win")
 	}
+	if got != "committed-task-hash" {
+		t.Errorf("task hash = %q, want %q", got, "committed-task-hash")
+	}
+
+	var sawCommitments bool
 	for _, path := range rec.requested() {
-		if strings.Contains(path, "/contributor/") || strings.Contains(path, "/student/") {
-			t.Errorf("called retired route %q", path)
+		if strings.Contains(path, "/project/contributor/commitments/list") {
+			sawCommitments = true
 		}
 	}
-	if len(rec.requested()) == 0 {
-		t.Error("no request was made; the fallback lookup did not run")
+	if !sawCommitments {
+		t.Error("never queried the contributor commitments route")
+	}
+}
+
+// Only when the commitments lookup yields nothing does the task list stand in.
+func TestExtractTaskHash_CredentialClaim_FallsBackWhenNoCommitmentMatches(t *testing.T) {
+	rec := &pathRecorder{}
+	c := newRoutingClient(t, rec, map[string]interface{}{
+		"/api/v2/project/contributor/commitments/list": []interface{}{},
+		"/api/v2/project/user/tasks/list":              taskListBody("first-task-hash"),
+	})
+
+	body := map[string]interface{}{"project_id": "proj-1"}
+	if got := extractTaskHash(t.Context(), body, "project_credential_claim", c); got != "first-task-hash" {
+		t.Errorf("task hash = %q, want the task-list fallback %q", got, "first-task-hash")
+	}
+}
+
+// A commitment for a different project must not be borrowed.
+func TestExtractTaskHash_CredentialClaim_IgnoresOtherProjects(t *testing.T) {
+	commitments := []interface{}{
+		map[string]interface{}{
+			"project_id": "some-other-project",
+			"task_hash":  "wrong-project-hash",
+			"content":    map[string]interface{}{"commitment_status": "ACCEPTED"},
+		},
+	}
+
+	rec := &pathRecorder{}
+	c := newRoutingClient(t, rec, map[string]interface{}{
+		"/api/v2/project/contributor/commitments/list": commitments,
+		"/api/v2/project/user/tasks/list":              taskListBody("first-task-hash"),
+	})
+
+	body := map[string]interface{}{"project_id": "proj-1"}
+	if got := extractTaskHash(t.Context(), body, "project_credential_claim", c); got == "wrong-project-hash" {
+		t.Error("used a commitment belonging to a different project")
 	}
 }
 

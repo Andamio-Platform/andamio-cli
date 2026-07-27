@@ -38,7 +38,7 @@ What 1.0 adds is a designed automation surface for assessment. Our own tooling h
 
   Running a removed command tells you what happened and where the operation lives now, rather than showing a generic error. It exits 4 with `kind: removed_command`, so a script can detect it. This works for every retired command in every invocation shape, including with the flags a pre-1.0 tutorial would have told you to pass.
 
-  Some of these commands depended on API routes that are being retired and would have stopped working regardless. Removing only those would have left a tool that has to explain itself — a learner who can read but not commit, submit but not create.
+  **This is a change to the CLI, not to the API.** The gateway routes these commands used are unaffected and remain available — what 1.0 removes is the CLI's decision to expose them. Removing part of the surface would have left a tool that has to explain itself: a learner who can read but not commit, submit but not create.
 
   **Scoped out, not ruled out.** Learner support may return in a later release if there is a reason for it. Its absence from 1.0 is a scope decision.
 

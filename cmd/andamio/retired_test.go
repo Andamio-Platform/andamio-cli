@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -307,10 +308,40 @@ func TestHelpOutput_OmitsRetiredGroups(t *testing.T) {
 	}
 }
 
-// No source file may call an API route belonging to the retired surface.
+// retiredRouteAllowance permits one file to reference one route prefix that
+// otherwise belongs to the retired surface.
+//
+// 1.0 retired the learner and contributor **commands**, not the gateway routes,
+// which remain live. Almost every reference to those routes was there only to
+// serve a removed command and had to go with it — but not all of them, and the
+// difference is not visible from the URL. An allowance is an explicit,
+// reviewable claim that a specific call site serves a surviving command.
+type retiredRouteAllowance struct {
+	File   string
+	Route  string
+	Reason string
+}
+
+var retiredRouteAllowances = []retiredRouteAllowance{
+	{
+		File:  "tx_lifecycle.go",
+		Route: "/project/contributor/",
+		Reason: "extractTaskHash resolves registration metadata for tx run's " +
+			"project_credential_claim, which survives 1.0 because tx run is generic. " +
+			"Dropping it degrades the lookup to the task-list fallback, which picks " +
+			"the wrong task on any multi-task project.",
+	},
+}
+
+// No source file may call an API route belonging to the retired surface unless
+// it carries an explicit allowance above.
+//
 // Removing the commands without removing their route calls would leave dead
-// requests firing from shared code paths — which is exactly what
-// lookupContributorTaskHash was doing inside the tx lifecycle before 1.0.
+// requests firing from shared code paths. The inverse mistake is just as real:
+// during implementation this guard was written to forbid the routes outright,
+// which pushed a live and load-bearing lookup out of the tx lifecycle on the
+// mistaken assumption that the route was going away too. Hence allowances
+// rather than a blanket ban — each one states why that call site survives.
 //
 // Inspects string literals rather than raw file text, deliberately. A textual
 // scan also matches comments, and the comments explaining *why* a route was
@@ -318,11 +349,20 @@ func TestHelpOutput_OmitsRetiredGroups(t *testing.T) {
 // would push maintainers toward deleting the explanation instead of the code.
 //
 // Skips _test.go files, which legitimately name these routes in order to
-// assert they are never called.
+// assert how they are or are not called.
 func TestNoSourceFileCallsARetiredRoute(t *testing.T) {
 	forbidden := []string{
 		"/course/student/",
 		"/project/contributor/",
+	}
+
+	allowed := func(path, route string) bool {
+		for _, a := range retiredRouteAllowances {
+			if filepath.Base(path) == a.File && a.Route == route {
+				return true
+			}
+		}
+		return false
 	}
 
 	for _, root := range []string{"../../cmd", "../../internal"} {
@@ -349,8 +389,10 @@ func TestNoSourceFileCallsARetiredRoute(t *testing.T) {
 					return true
 				}
 				for _, route := range forbidden {
-					if strings.Contains(value, route) {
-						t.Errorf("%s has a string literal referencing retired API route %q: %s", path, route, lit.Value)
+					if strings.Contains(value, route) && !allowed(path, route) {
+						t.Errorf("%s has a string literal referencing retired API route %q: %s\n"+
+							"If this call site serves a surviving command, add a retiredRouteAllowance saying so.",
+							path, route, lit.Value)
 					}
 				}
 				return true
@@ -360,6 +402,26 @@ func TestNoSourceFileCallsARetiredRoute(t *testing.T) {
 		if err != nil {
 			t.Fatalf("walking %s: %v", root, err)
 		}
+	}
+}
+
+// An allowance is a deliberate exception, so it has to stay honest: each one
+// must name a file that exists and actually contains the route it permits.
+// Otherwise a stale allowance silently widens the guard.
+func TestRetiredRouteAllowances_AreStillNeeded(t *testing.T) {
+	for _, a := range retiredRouteAllowances {
+		t.Run(a.File+" "+a.Route, func(t *testing.T) {
+			if a.Reason == "" {
+				t.Error("allowance has no reason")
+			}
+			src, err := os.ReadFile(filepath.Join("..", "..", "cmd", "andamio", a.File))
+			if err != nil {
+				t.Fatalf("allowance names a file that cannot be read: %v", err)
+			}
+			if !strings.Contains(string(src), a.Route) {
+				t.Errorf("%s no longer references %q — remove this allowance", a.File, a.Route)
+			}
+		})
 	}
 }
 
