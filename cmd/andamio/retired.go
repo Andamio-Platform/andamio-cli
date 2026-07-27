@@ -50,8 +50,34 @@ type retiredCommand struct {
 }
 
 // retiredCommands is the single source of truth for what was retired.
-// Populated in the 1.0 removal; see the file comment above.
-var retiredCommands []retiredCommand
+//
+// Two groups and their fifteen subcommands, matching what
+// cmd/andamio/course_student.go and cmd/andamio/project_contributor.go
+// registered before they were deleted. The group entries matter as much as the
+// leaves: without them, `andamio course student` alone would fall through to
+// cobra's unknown-command error instead of explaining itself.
+var retiredCommands = []retiredCommand{
+	// course student — removed in 1.0 (issue #129)
+	{Path: "course student", Guidance: retiredAppGuidance},
+	{Path: "course student courses", Guidance: retiredAppGuidance},
+	{Path: "course student credentials", Guidance: retiredAppGuidance},
+	{Path: "course student commitments", Guidance: retiredAppGuidance},
+	{Path: "course student commitment", Guidance: retiredAppGuidance},
+	{Path: "course student create", Guidance: retiredAppGuidance},
+	{Path: "course student submit", Guidance: retiredAppGuidance},
+	{Path: "course student update", Guidance: retiredAppGuidance},
+	{Path: "course student leave", Guidance: retiredAppGuidance},
+	{Path: "course student claim", Guidance: retiredAppGuidance},
+
+	// project contributor — removed in 1.0 (issue #129)
+	{Path: "project contributor", Guidance: retiredAppGuidance},
+	{Path: "project contributor list", Guidance: retiredAppGuidance},
+	{Path: "project contributor commitments", Guidance: retiredAppGuidance},
+	{Path: "project contributor commitment", Guidance: retiredAppGuidance},
+	{Path: "project contributor commit", Guidance: retiredAppGuidance},
+	{Path: "project contributor update", Guidance: retiredAppGuidance},
+	{Path: "project contributor delete", Guidance: retiredAppGuidance},
+}
 
 func init() {
 	if err := registerRetiredCommands(rootCmd, retiredCommands); err != nil {
@@ -119,11 +145,19 @@ func registerRetiredCommands(root *cobra.Command, entries []retiredCommand) erro
 //
 //   - Hidden keeps the command out of `--help`, so the 1.0 surface reads as a
 //     coherent tool rather than one with holes in it (issue #127).
-//   - DisableFlagParsing means `course student submit --course-id x` reaches
-//     RunE instead of dying on an unknown flag. Anyone running a retired command
-//     is following old instructions, and those instructions have flags.
+//   - FParseErrWhitelist.UnknownFlags means `course student submit --course-id x`
+//     reaches RunE instead of dying on an unknown flag. Anyone running a retired
+//     command is following pre-1.0 instructions, and those instructions carry
+//     flags that no longer exist.
 //   - ArbitraryArgs means trailing positional arguments don't trigger a cobra
 //     usage error before RunE runs.
+//
+// The whitelist is deliberately used in preference to DisableFlagParsing, which
+// would also get the message through. DisableFlagParsing skips *all* parsing,
+// including the root's persistent --output flag, so `course student claim
+// --output json` would print a plain-text error and never reach the JSON error
+// envelope in main.go. A caller that asked for JSON gets JSON, even when the
+// answer is "this command is gone".
 //
 // The stub deliberately does not inherit an auth PersistentPreRunE. The groups
 // this replaces both gated on jwtAuthPreRunE, and inheriting that would greet an
@@ -132,10 +166,12 @@ func registerRetiredCommands(root *cobra.Command, entries []retiredCommand) erro
 // asks for.
 func newRetiredCommand(use string, entry retiredCommand) *cobra.Command {
 	return &cobra.Command{
-		Use:                use,
-		Hidden:             true,
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
+		Use:    use,
+		Hidden: true,
+		Args:   cobra.ArbitraryArgs,
+		FParseErrWhitelist: cobra.FParseErrWhitelist{
+			UnknownFlags: true,
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return &apierr.RemovedCommandError{
 				Command:  entry.Path,
