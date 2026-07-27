@@ -95,16 +95,29 @@ func init() {
 	rootCmd.TraverseChildren = true
 }
 
-// Exit codes:
+// Exit codes, paired with the "kind" field of the --output json error envelope:
 //
-//	0 — success (including an empty but valid result set)
-//	1 — generic error (server, unexpected, interrupted)
-//	2 — not found (resource doesn't exist)
-//	3 — auth required (no API key or JWT, or 401/403 response)
-//	4 — command removed in 1.0 (see cmd/andamio/retired.go)
+//	0                     — success, including an empty but valid result set
+//	1  error              — generic: unexpected, server-side, interrupted, bad input
+//	2  not_found          — resource doesn't exist (404)
+//	3  auth               — no credentials, or 401/403
+//	4  removed_command    — retired in 1.0 (see cmd/andamio/retired.go)
+//	5  unreachable        — the request never reached the service
+//	6  conflict           — conflicts with existing state (409)
 //
-// Codes 0-3 predate 1.0 and are load-bearing for existing scripts — they are
-// fixed. New codes are appended.
+// A caller can branch on the exit code alone or on "kind" alone; the two never
+// disagree. Kinds without a dedicated exit code (server, backpressure,
+// canceled) share exit 1 — they are already distinguishable via "kind", and
+// splitting them further buys a caller nothing today.
+//
+// Codes 0-3 predate 1.0 and are load-bearing for existing scripts, so they are
+// fixed. 4 and 5 are new. 6 is the one change to an existing path: conflicts
+// were typed but exited 1, indistinguishable from a generic failure. 1.0 is
+// the right moment to fix that, and it is called out in the changelog.
+//
+// Note that an empty result is NOT an error. Commands that find nothing emit
+// an empty collection and exit 0 — "nothing found", "could not reach the
+// service" and "not permitted" stay three distinct outcomes.
 func main() {
 	// Wire SIGINT to the cobra context so Ctrl-C cancels cmd.Context() in
 	// every subcommand. Individual commands that install their own signal
@@ -126,23 +139,32 @@ func main() {
 			err = reported.Err
 		}
 
-		var notFound *apierr.NotFoundError
-		var authErr *apierr.AuthError
-		var removed *apierr.RemovedCommandError
-		switch {
-		case errors.As(err, &notFound):
+		// Exit code and kind are derived from the same classification so they
+		// can never disagree — apierr.Kind is the single mapper, and this
+		// switch translates its result rather than re-inspecting the error.
+		kind := apierr.Kind(err)
+		switch kind {
+		case apierr.KindNotFound:
 			exitCode = 2
-		case errors.As(err, &authErr):
+		case apierr.KindAuth:
 			exitCode = 3
-		case errors.As(err, &removed):
+		case apierr.KindRemovedCommand:
 			exitCode = 4
+		case apierr.KindUnreachable:
+			exitCode = 5
+		case apierr.KindConflict:
+			exitCode = 6
 		}
 
 		if !alreadyReported {
 			if output.GetFormat() == output.FormatJSON {
-				b, _ := json.Marshal(map[string]string{"error": err.Error()})
+				b, _ := json.Marshal(map[string]string{
+					"error": err.Error(),
+					"kind":  kind,
+				})
 				fmt.Println(string(b))
 			} else {
+				// Text mode is unchanged: no kind leaks into human output.
 				fmt.Fprintln(os.Stderr, err)
 			}
 		}

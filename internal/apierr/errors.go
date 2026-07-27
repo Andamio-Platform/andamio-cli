@@ -1,4 +1,87 @@
+// Package apierr carries the CLI's typed error taxonomy.
+//
+// Every error the CLI surfaces maps to exactly one Kind and exactly one exit
+// code. That mapping is the contract a non-human caller relies on: a person
+// reading an error infers a lot from context, but a program takes the wrong
+// branch silently. "Nothing found", "could not reach the service" and "not
+// permitted" are three different situations, and a caller has to act on each
+// of them differently.
+//
+// The exit-code mapping lives in cmd/andamio/main.go; Kind below is the
+// machine-readable name that rides in the --output json error envelope.
 package apierr
+
+import (
+	"context"
+	"errors"
+)
+
+// Kind values are the stable, machine-readable failure names emitted as the
+// "kind" field of the --output json error envelope. They are part of the
+// CLI's public contract: scripts branch on them, so values are added rather
+// than renamed.
+const (
+	KindNotFound       = "not_found"
+	KindAuth           = "auth"
+	KindConflict       = "conflict"
+	KindServer         = "server"
+	KindBackpressure   = "backpressure"
+	KindRemovedCommand = "removed_command"
+	KindUnreachable    = "unreachable"
+	KindCanceled       = "canceled"
+	KindError          = "error"
+)
+
+// Kind classifies err into one of the Kind constants.
+//
+// Unwraps through fmt.Errorf("%w") and ReportedError, which matters more than
+// it might appear: the command layer wraps liberally ("failed to get
+// commitment: %w"), so a mapper that only type-asserted the top-level error
+// would classify almost everything as the generic kind and quietly defeat the
+// whole point.
+//
+// Order matters where a single error could satisfy two checks. Context
+// cancellation is tested before anything else because an interrupted or
+// timed-out request is a distinct outcome from an unreachable service, and the
+// transport layer wraps the former in the latter's territory.
+func Kind(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return KindCanceled
+	}
+
+	var (
+		notFound     *NotFoundError
+		auth         *AuthError
+		conflict     *ConflictError
+		server       *ServerError
+		backpressure *BackpressureError
+		removed      *RemovedCommandError
+		network      *NetworkError
+	)
+
+	switch {
+	case errors.As(err, &removed):
+		return KindRemovedCommand
+	case errors.As(err, &notFound):
+		return KindNotFound
+	case errors.As(err, &auth):
+		return KindAuth
+	case errors.As(err, &conflict):
+		return KindConflict
+	case errors.As(err, &backpressure):
+		return KindBackpressure
+	case errors.As(err, &server):
+		return KindServer
+	case errors.As(err, &network):
+		return KindUnreachable
+	}
+	return KindError
+}
 
 // NotFoundError is returned when a requested resource does not exist (HTTP 404).
 // main.go maps this to exit code 2.
@@ -49,6 +132,28 @@ type BackpressureError struct {
 }
 
 func (e *BackpressureError) Error() string { return e.Message }
+
+// NetworkError is returned when a request never reached the service — DNS
+// failure, connection refused, TLS failure, a dropped connection mid-flight.
+// main.go maps this to exit code 5.
+//
+// This exists because "could not reach the service" was previously
+// indistinguishable from every other unclassified failure: the transport error
+// from http.Client.Do travelled to main.go untyped and exited 1, exactly like a
+// malformed flag or a JSON decode failure. A person retries or asks a
+// colleague; a program takes the wrong branch.
+//
+// Deliberately NOT used for context cancellation or deadline expiry. An
+// operator pressing Ctrl-C and a service being down are different outcomes, and
+// collapsing them would reintroduce the ambiguity this type exists to remove —
+// see wrapTransportError in internal/client.
+type NetworkError struct {
+	Message string
+	Err     error
+}
+
+func (e *NetworkError) Error() string { return e.Message }
+func (e *NetworkError) Unwrap() error { return e.Err }
 
 // RemovedCommandError is returned when a caller invokes a command that was
 // retired in Andamio CLI 1.0. main.go maps this to exit code 4.

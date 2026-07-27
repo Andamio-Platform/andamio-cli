@@ -70,7 +70,7 @@ func (c *Client) Get(ctx context.Context, path string, result interface{}) error
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return wrapTransportError(ctx, "GET", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -137,7 +137,7 @@ func (c *Client) Post(ctx context.Context, path string, body interface{}, result
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return wrapTransportError(ctx, "POST", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -178,7 +178,7 @@ func (c *Client) Put(ctx context.Context, path string, body interface{}, result 
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return wrapTransportError(ctx, "PUT", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -209,7 +209,7 @@ func (c *Client) Delete(ctx context.Context, path string, result interface{}) er
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return wrapTransportError(ctx, "DELETE", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -221,6 +221,34 @@ func (c *Client) Delete(ctx context.Context, path string, result interface{}) er
 		return json.NewDecoder(resp.Body).Decode(result)
 	}
 	return nil
+}
+
+// wrapTransportError classifies an error from http.Client.Do.
+//
+// Context cancellation and deadline expiry are returned unchanged. An operator
+// pressing Ctrl-C, a --timeout expiring, and a service being unreachable are
+// three different outcomes; wrapping the first two as NetworkError would tell a
+// caller the network is down when the caller is the one who stopped. Everything
+// else that prevented the request from completing — DNS failure, connection
+// refused, TLS failure, a connection dropped mid-flight — is genuinely "could
+// not reach the service".
+//
+// Note this classifies transport failures only. A response that arrives and
+// carries an error status goes through statusError instead.
+func wrapTransportError(ctx context.Context, method, url string, err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	// A cancelled context can surface as an unrelated transport error depending
+	// on where in the request lifecycle the cancellation landed, so consult the
+	// context itself rather than trusting the error alone.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return &apierr.NetworkError{
+		Message: fmt.Sprintf("could not reach %s %s: %v", method, url, err),
+		Err:     err,
+	}
 }
 
 // statusError maps an HTTP error status to the typed error the CLI expects.

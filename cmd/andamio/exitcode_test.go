@@ -1,0 +1,213 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// runCLI invokes the built binary with HOME pointed at a scratch config so the
+// developer's real credentials are never used, and returns stdout, stderr and
+// the exit code.
+func runCLI(t *testing.T, bin, baseURL string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+
+	home := t.TempDir()
+	dir := filepath.Join(home, ".andamio")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A JWT is present so auth gating passes and the request actually reaches
+	// the stub; the stub decides what status comes back.
+	cfg, _ := json.Marshal(map[string]string{
+		"base_url": baseURL,
+		"api_key":  "test-key",
+		"user_jwt": "test-jwt",
+	})
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := exec.Command(bin, args...)
+	cmd.Env = append(os.Environ(), "HOME="+home)
+
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("running %v: %v", args, err)
+		}
+		code = exitErr.ExitCode()
+	}
+	return outBuf.String(), errBuf.String(), code
+}
+
+func statusStub(t *testing.T, status int) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"message":"stub"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// The contract issue #126 turns on: each distinguishable failure gets its own
+// exit code AND its own kind, and the two never disagree.
+func TestExitCodes_AndKindsAgree(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	cases := []struct {
+		name     string
+		status   int
+		wantCode int
+		wantKind string
+	}{
+		{"not found", http.StatusNotFound, 2, "not_found"},
+		{"unauthorized", http.StatusUnauthorized, 3, "auth"},
+		{"forbidden", http.StatusForbidden, 3, "auth"},
+		{"conflict", http.StatusConflict, 6, "conflict"},
+		{"server error", http.StatusInternalServerError, 1, "server"},
+		{"backpressure", http.StatusTooManyRequests, 1, "backpressure"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			url := statusStub(t, tc.status)
+			stdout, _, code := runCLI(t, bin, url, "course", "list", "--output", "json")
+
+			if code != tc.wantCode {
+				t.Errorf("exit code = %d, want %d", code, tc.wantCode)
+			}
+
+			var parsed map[string]string
+			if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+				t.Fatalf("stdout is not JSON: %v\nraw: %q", err, stdout)
+			}
+			if parsed["kind"] != tc.wantKind {
+				t.Errorf("kind = %q, want %q", parsed["kind"], tc.wantKind)
+			}
+			if parsed["error"] == "" {
+				t.Error("error message is empty")
+			}
+		})
+	}
+}
+
+// "Could not reach the service" gets its own code. Before 1.0 this was exit 1,
+// indistinguishable from a malformed flag or a decode failure.
+func TestExitCodes_UnreachableServiceIsFive(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	// Reserve a port, then release it, so nothing is listening.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+
+	stdout, _, code := runCLI(t, bin, url, "course", "list", "--output", "json")
+
+	if code != 5 {
+		t.Errorf("exit code = %d, want 5 (unreachable)", code)
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+		t.Fatalf("stdout is not JSON: %v\nraw: %q", err, stdout)
+	}
+	if parsed["kind"] != "unreachable" {
+		t.Errorf("kind = %q, want %q", parsed["kind"], "unreachable")
+	}
+}
+
+func TestExitCodes_RemovedCommandIsFour(t *testing.T) {
+	bin := buildTestBinary(t)
+	url := statusStub(t, http.StatusOK)
+
+	stdout, _, code := runCLI(t, bin, url, "course", "student", "claim", "--output", "json")
+
+	if code != 4 {
+		t.Errorf("exit code = %d, want 4 (removed command)", code)
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+		t.Fatalf("stdout is not JSON: %v\nraw: %q", err, stdout)
+	}
+	if parsed["kind"] != "removed_command" {
+		t.Errorf("kind = %q, want %q", parsed["kind"], "removed_command")
+	}
+}
+
+// The three outcomes issue #126 names by name must be mutually distinguishable
+// on the same command. This is the assertion that would have failed before 1.0:
+// "nothing found" and "could not reach the service" both looked like success or
+// exit 1 depending on the path.
+func TestExitCodes_ThreeOutcomesAreDistinct(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	// Nothing found: a valid empty result set.
+	emptySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer emptySrv.Close()
+
+	// Not permitted.
+	forbiddenURL := statusStub(t, http.StatusForbidden)
+
+	// Unreachable.
+	deadSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := deadSrv.URL
+	deadSrv.Close()
+
+	emptyOut, _, emptyCode := runCLI(t, bin, emptySrv.URL, "course", "list", "--output", "json")
+	_, _, forbiddenCode := runCLI(t, bin, forbiddenURL, "course", "list", "--output", "json")
+	_, _, deadCode := runCLI(t, bin, deadURL, "course", "list", "--output", "json")
+
+	if emptyCode != 0 {
+		t.Errorf("empty result exited %d, want 0 — nothing found is not an error", emptyCode)
+	}
+	if !strings.Contains(emptyOut, `"data"`) {
+		t.Errorf("empty result did not emit a data collection: %q", emptyOut)
+	}
+	if forbiddenCode != 3 {
+		t.Errorf("forbidden exited %d, want 3", forbiddenCode)
+	}
+	if deadCode != 5 {
+		t.Errorf("unreachable exited %d, want 5", deadCode)
+	}
+
+	codes := map[int]string{emptyCode: "empty", forbiddenCode: "forbidden", deadCode: "unreachable"}
+	if len(codes) != 3 {
+		t.Errorf("the three outcomes are not distinguishable by exit code: %v", codes)
+	}
+}
+
+// Text mode must be unchanged: kind is a machine-readable field, and leaking it
+// into human output would be a regression in the other direction.
+func TestExitCodes_TextModeCarriesNoKind(t *testing.T) {
+	bin := buildTestBinary(t)
+	url := statusStub(t, http.StatusNotFound)
+
+	stdout, stderr, code := runCLI(t, bin, url, "course", "list")
+
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if strings.Contains(stderr, "kind") || strings.Contains(stdout, "kind") {
+		t.Errorf("text mode leaked the kind field:\nstdout: %q\nstderr: %q", stdout, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("error output went to stdout: %q", stdout)
+	}
+	if stderr == "" {
+		t.Error("no error message on stderr")
+	}
+}
