@@ -50,6 +50,24 @@ type BackpressureError struct {
 
 func (e *BackpressureError) Error() string { return e.Message }
 
+// RemovedCommandError is returned when a caller invokes a command that was
+// retired in Andamio CLI 1.0. main.go maps this to exit code 4.
+//
+// This is not an "unknown command" — the CLI knows exactly what was asked for
+// and is declining to do it because the operation moved elsewhere. Command
+// carries the full retired path (e.g. "course student submit") and Guidance
+// names where the operation lives now. Both are populated from the single
+// registry in cmd/andamio/retired.go so every retired command explains itself
+// the same way.
+type RemovedCommandError struct {
+	Command  string
+	Guidance string
+}
+
+func (e *RemovedCommandError) Error() string {
+	return "'andamio " + e.Command + "' was removed in Andamio CLI 1.0.\n" + e.Guidance
+}
+
 // ReportedError wraps an error whose output has already been printed to stdout
 // (e.g., a structured JSON result). main.go should set the exit code from the
 // wrapped error but skip printing a second error message.

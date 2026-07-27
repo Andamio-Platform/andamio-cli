@@ -97,10 +97,14 @@ func init() {
 
 // Exit codes:
 //
-//	0 — success
-//	1 — generic error (network, server, unexpected)
+//	0 — success (including an empty but valid result set)
+//	1 — generic error (server, unexpected, interrupted)
 //	2 — not found (resource doesn't exist)
 //	3 — auth required (no API key or JWT, or 401/403 response)
+//	4 — command removed in 1.0 (see cmd/andamio/retired.go)
+//
+// Codes 0-3 predate 1.0 and are load-bearing for existing scripts — they are
+// fixed. New codes are appended.
 func main() {
 	// Wire SIGINT to the cobra context so Ctrl-C cancels cmd.Context() in
 	// every subcommand. Individual commands that install their own signal
@@ -124,11 +128,14 @@ func main() {
 
 		var notFound *apierr.NotFoundError
 		var authErr *apierr.AuthError
+		var removed *apierr.RemovedCommandError
 		switch {
 		case errors.As(err, &notFound):
 			exitCode = 2
 		case errors.As(err, &authErr):
 			exitCode = 3
+		case errors.As(err, &removed):
+			exitCode = 4
 		}
 
 		if !alreadyReported {
