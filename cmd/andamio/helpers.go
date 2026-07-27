@@ -98,7 +98,17 @@ func padRunes(s string, width int) string {
 	return s + strings.Repeat(" ", width-n)
 }
 
-// printList fetches a list endpoint and prints using PrintList
+// printList fetches a list endpoint and prints using PrintList.
+//
+// An empty result is a success, not an error: JSON mode emits {"data": []} and
+// the command exits 0. That is deliberate and load-bearing. "Nothing found",
+// "could not reach the service" and "not permitted" are three different
+// outcomes that a caller has to act on differently, and collapsing the first
+// into an error would put it back on the same footing as the other two.
+// Exit codes 0 / 5 / 3 and kinds ""/unreachable/auth keep them apart — see the
+// exit-code contract in main.go.
+//
+// The human-readable empty message goes to stderr so stdout stays parseable.
 func printList(ctx context.Context, path, emptyMsg, titleKey, idKey string, usePost bool) error {
 	cfg, err := config.Load()
 	if err != nil {

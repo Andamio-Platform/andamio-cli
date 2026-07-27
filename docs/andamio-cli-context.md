@@ -54,14 +54,56 @@ andamio course list --output markdown  # Markdown table
 
 **For agents: always use `--output json`**. This is the stable, machine-parseable interface.
 
-## Exit Codes
+## Exit Codes and Error Kinds
 
-| Code | Meaning | When |
-|------|---------|------|
-| 0 | Success | Command completed normally |
-| 1 | Generic error | Network, server, unexpected errors |
-| 2 | Not found | Resource doesn't exist (404) |
-| 3 | Auth required | No credentials or invalid credentials (401/403) |
+Every failure carries an exit code **and**, under `--output json`, a `kind`
+field. Both derive from the same classification, so they never disagree —
+branch on whichever is more convenient.
+
+| Code | `kind` | When |
+|------|--------|------|
+| 0 | — | Success, **including an empty but valid result set** |
+| 1 | `error` | Unexpected, or bad input |
+| 1 | `server` | 5xx response |
+| 1 | `backpressure` | 408 / 425 / 429 — retry later |
+| 1 | `canceled` | Interrupted, or a `--timeout` expired |
+| 2 | `not_found` | Resource doesn't exist (404) |
+| 3 | `auth` | No credentials, or 401 / 403 |
+| 4 | `removed_command` | Command was retired in 1.0 |
+| 5 | `unreachable` | The request never reached the service |
+| 6 | `conflict` | Conflicts with existing state (409) |
+
+**An empty result is not an error.** A list command that finds nothing emits an
+empty collection and exits 0:
+
+```bash
+andamio course list --output json   # {"data":[]}, exit 0
+```
+
+This is what keeps three different situations apart. Check them like this:
+
+```bash
+out=$(andamio teacher assignments list --course "$COURSE" --output json); code=$?
+case $code in
+  0) count=$(jq '.data | length' <<<"$out")    # 0 means nothing awaiting review
+     ;;
+  3) echo "not permitted — check your login" >&2 ;;
+  5) echo "service unreachable — retry later" >&2 ;;
+  *) jq -r '.kind + ": " + .error' <<<"$out" >&2 ;;
+esac
+```
+
+Error envelope shape under `--output json`:
+
+```json
+{"error": "API error 404: ...", "kind": "not_found"}
+```
+
+Text mode prints the message to stderr and carries no `kind`.
+
+**Stability.** Codes 0–3 predate 1.0 and are fixed. New kinds may be added; the
+existing ones are not renamed. Note that 1.0 moved `conflict` from exit 1 to
+exit 6 — see CHANGELOG.
 
 ## Composability Contract
 

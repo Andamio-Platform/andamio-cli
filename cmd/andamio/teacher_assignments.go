@@ -309,9 +309,18 @@ func runTeacherAssignmentsGet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A missing or non-array data field means the course has no commitments to
+	// match against — the same outcome as searching the list and finding
+	// nothing, and it must classify the same way. This branch previously
+	// returned an untyped error and exited 1, so "this course has no
+	// commitments" was indistinguishable from a server failure, while the
+	// otherwise-identical branch at the bottom of this function exited 2.
 	data, ok := resp["data"].([]interface{})
 	if !ok {
-		return fmt.Errorf("no commitments found for course %s", courseID)
+		return &apierr.NotFoundError{
+			Message: fmt.Sprintf("no commitments found for course %s. Run 'andamio teacher assignments list --course %s' to check the course id",
+				courseID, courseID),
+		}
 	}
 
 	for _, item := range data {

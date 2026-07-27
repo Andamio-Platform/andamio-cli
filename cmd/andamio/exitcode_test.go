@@ -211,3 +211,150 @@ func TestExitCodes_TextModeCarriesNoKind(t *testing.T) {
 		t.Error("no error message on stderr")
 	}
 }
+
+// --- agent-driven path audit (U7) ------------------------------------------
+
+// courseWithCommitments stubs the assignment-commitments endpoint.
+func commitmentsStub(t *testing.T, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// Both not-found branches of 'teacher assignments get' must classify the same
+// way. Before 1.0 the malformed/missing-data branch returned an untyped error
+// and exited 1 — indistinguishable from a server failure — while the
+// no-matching-student branch three lines later exited 2.
+func TestAgentPaths_AssignmentsGet_BothNotFoundBranchesExitTwo(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"data field absent", `{}`},
+		{"data field is not an array", `{"data":"unexpected"}`},
+		{"data field is null", `{"data":null}`},
+		{"no matching student", `{"data":[{"course_module_code":"101","student_alias":"someone-else"}]}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			url := commitmentsStub(t, tc.body)
+			stdout, _, code := runCLI(t, bin, url,
+				"teacher", "assignments", "get", "course-1", "101", "student-01", "--output", "json")
+
+			if code != 2 {
+				t.Errorf("exit code = %d, want 2 (not found)", code)
+			}
+			var parsed map[string]string
+			if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+				t.Fatalf("stdout is not JSON: %v\nraw: %q", err, stdout)
+			}
+			if parsed["kind"] != "not_found" {
+				t.Errorf("kind = %q, want %q", parsed["kind"], "not_found")
+			}
+		})
+	}
+}
+
+// The outcome those not-found branches must stay distinct from.
+func TestAgentPaths_AssignmentsGet_ServerFailureIsNotNotFound(t *testing.T) {
+	bin := buildTestBinary(t)
+	url := statusStub(t, http.StatusInternalServerError)
+
+	stdout, _, code := runCLI(t, bin, url,
+		"teacher", "assignments", "get", "course-1", "101", "student-01", "--output", "json")
+
+	if code == 2 {
+		t.Error("a server failure exited 2; it must not look like not-found")
+	}
+	var parsed map[string]string
+	_ = json.Unmarshal([]byte(stdout), &parsed)
+	if parsed["kind"] != "server" {
+		t.Errorf("kind = %q, want %q", parsed["kind"], "server")
+	}
+}
+
+// The three-way distinction, on the assessment paths an agent actually drives.
+func TestAgentPaths_AssessmentReads_ThreeOutcomesDistinct(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	empty := commitmentsStub(t, `{"data":[]}`)
+	forbidden := statusStub(t, http.StatusForbidden)
+
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	commands := [][]string{
+		{"teacher", "assignments", "list", "--course", "course-1", "--output", "json"},
+		{"project", "manager", "commitments", "--project-id", "proj-1", "--output", "json"},
+	}
+
+	for _, args := range commands {
+		t.Run(strings.Join(args[:3], " "), func(t *testing.T) {
+			emptyOut, _, emptyCode := runCLI(t, bin, empty, args...)
+			_, _, forbiddenCode := runCLI(t, bin, forbidden, args...)
+			_, _, deadCode := runCLI(t, bin, deadURL, args...)
+
+			if emptyCode != 0 {
+				t.Errorf("empty result exited %d, want 0", emptyCode)
+			}
+			if !strings.Contains(emptyOut, "data") {
+				t.Errorf("empty result did not emit a data collection: %q", emptyOut)
+			}
+			if forbiddenCode != 3 {
+				t.Errorf("forbidden exited %d, want 3", forbiddenCode)
+			}
+			if deadCode != 5 {
+				t.Errorf("unreachable exited %d, want 5", deadCode)
+			}
+		})
+	}
+}
+
+// The empty-set contract, pinned on the shared list helper so a future
+// "improvement" that turns empty into an error has to break a test first.
+func TestAgentPaths_EmptyListIsSuccessNotError(t *testing.T) {
+	bin := buildTestBinary(t)
+	url := commitmentsStub(t, `{"data":[]}`)
+
+	t.Run("json emits an empty collection on stdout", func(t *testing.T) {
+		stdout, _, code := runCLI(t, bin, url, "course", "list", "--output", "json")
+		if code != 0 {
+			t.Errorf("exit code = %d, want 0", code)
+		}
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+			t.Fatalf("stdout is not JSON: %v\nraw: %q", err, stdout)
+		}
+		data, ok := parsed["data"].([]interface{})
+		if !ok {
+			t.Fatalf("data is %T, want an array", parsed["data"])
+		}
+		if len(data) != 0 {
+			t.Errorf("data has %d entries, want 0", len(data))
+		}
+		if _, hasErr := parsed["error"]; hasErr {
+			t.Error("empty result emitted an error field")
+		}
+	})
+
+	t.Run("text puts the notice on stderr and nothing on stdout", func(t *testing.T) {
+		stdout, stderr, code := runCLI(t, bin, url, "course", "list")
+		if code != 0 {
+			t.Errorf("exit code = %d, want 0", code)
+		}
+		if strings.TrimSpace(stdout) != "" {
+			t.Errorf("stdout carried the empty notice: %q", stdout)
+		}
+		if !strings.Contains(strings.ToLower(stderr), "no ") {
+			t.Errorf("stderr has no empty-result notice: %q", stderr)
+		}
+	})
+}
