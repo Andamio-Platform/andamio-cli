@@ -52,6 +52,8 @@ What 1.0 adds is a designed automation surface for assessment. Our own tooling h
 
 ### Fixed
 
+- **An unrecognized command now fails instead of reporting success.** `andamio bogus-command` — and any typo like `andamio course lst` — previously printed the help text to **stdout** and exited **0**. A script doing `andamio course lst --output json | jq '.data[]'` got help text in the pipe and a success code. Unrecognized commands now write to stderr, leave stdout clean, exit non-zero, and suggest a near match where there is one. Asking a group what it offers (`andamio course` with no arguments) still prints help and exits 0.
+
 - `andamio teacher assignments get` returned an untyped error (exit 1) when a course had no commitments, while the otherwise-identical "no matching student" branch a few lines later correctly exited 2. Both now exit 2 with `kind: not_found`, so "this course has nothing" is no longer indistinguishable from a server failure.
 
 - The assess-transaction example in `docs/andamio-cli-context.md` documented fields that do not exist (`assessments`, `student_alias`, `result: "pass"`). The real shape is `assignment_decisions`, `alias`, `outcome: "accept"`. An agent following the old example would have built a request the API rejects. `teacher assessment build` now owns that payload shape so it cannot be got wrong by hand.

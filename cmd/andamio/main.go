@@ -145,6 +145,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
+	// Runs here rather than in an init() because the command tree is only
+	// complete once every file's init() has registered its commands — see
+	// guardUnknownSubcommands.
+	guardUnknownSubcommands(rootCmd)
+
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		exitCode := 1
 
