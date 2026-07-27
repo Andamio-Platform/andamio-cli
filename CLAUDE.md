@@ -331,7 +331,7 @@ This CLI is part of the Andamio developer toolchain:
 
 | Repo | Relationship |
 |------|-------------|
-| **andamio-docs** (`andamio-docs`) | CLI docs live at `content/docs/guides/developers/cli/`. 6 pages covering install, auth, courses, import/export. |
+| **andamio-docs** (`andamio-docs`) | CLI docs live at `content/docs/apps-tooling/cli/` — `index.mdx` (the command reference) and `import-format.mdx`. Note the API transaction specs under `public/yaml/transactions/v2/course/student/**` and `.../project/contributor/**` are **not** stale: 1.0 retired the CLI commands, not the gateway routes. Post-1.0 update tracked in `Andamio-Platform/andamio-docs#64`. |
 | **andamio-lesson-coach-v2** (`andamio-lesson-coach-v2`) | Creates course content that this CLI reads and will eventually sync. Compiles modules to import-ready format. |
 | **andamio-app-template** (`andamio-app-template`) | Forkable Next.js starter. CLI and template are parallel developer entry points — CLI for terminal users, template for UI builders. |
 | **andamio-api** (`andamio-api`) | Go gateway that serves all endpoints this CLI consumes. Base URLs: preprod.api.andamio.io, mainnet.api.andamio.io. |
