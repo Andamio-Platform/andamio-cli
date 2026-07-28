@@ -180,11 +180,11 @@ When building a typed-error gate — or any client-side predicate conditioned
 on an external status code / body shape — **read the gateway code** (or
 capture a real response) before merging. In the andamio toolchain the
 gateway source is checked out alongside the CLI at
-`~/projects/01-projects/andamio-api/`, so verification is a grep away:
+`$REPOS/andamio-api/`, so verification is a grep away:
 
 ```bash
 grep -rn "StatusConflict\|StatusBadRequest\|fiber.Status" \
-    ~/projects/01-projects/andamio-api/internal/handlers/v2/ | \
+    $REPOS/andamio-api/internal/handlers/v2/ | \
     grep -i "<the-error-code-name>"
 ```
 

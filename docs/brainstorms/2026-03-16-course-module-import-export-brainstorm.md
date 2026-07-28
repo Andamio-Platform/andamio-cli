@@ -110,6 +110,6 @@ None - all key decisions resolved.
 
 ## Related
 
-- **Coach compile skill:** `~/projects/01-projects/andamio-lesson-coach-v2/.claude/skills/compile/SKILL.md`
+- **Coach compile skill:** `$REPOS/andamio-lesson-coach-v2/.claude/skills/compile/SKILL.md`
 - **API endpoint:** `POST /v2/course/teacher/course-module/update`
 - **Tiptap format:** ProseMirror-based JSON schema
