@@ -430,7 +430,7 @@ From `docs/solutions/`:
 
 ### Related Work
 
-- Coach compile skill: `~/projects/01-projects/andamio-lesson-coach-v2/.claude/skills/compile/SKILL.md`
+- Coach compile skill: `$REPOS/andamio-lesson-coach-v2/.claude/skills/compile/SKILL.md`
 - API spec: `./openapi.json`
 
 ## Open Items

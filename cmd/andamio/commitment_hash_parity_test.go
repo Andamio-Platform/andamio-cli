@@ -35,7 +35,7 @@ import (
 //	  console.log(m.computeCommitmentHash(<JSON below>)))'
 //
 // Verified 2026-04-24 against andamio-core@<current> built at
-// ~/projects/01-projects/andamio-core/dist/utils/hashing/index.mjs.
+// $REPOS/andamio-core/dist/utils/hashing/index.mjs.
 // If this test ever fails after a @andamio/core release, re-run the TS
 // computation and update `want` — then open a follow-up to investigate
 // why the normalization/hash contract changed.

@@ -288,10 +288,10 @@ After this feature, CLI users can access:
 
 ### Internal References
 
-- Existing auth: `/Users/james/projects/01-projects/andamio-platform/andamio-app-v2/src/lib/andamio-auth.ts`
-- Auth context: `/Users/james/projects/01-projects/andamio-platform/andamio-app-v2/src/contexts/andamio-auth-context.tsx`
-- CLI config: `/Users/james/projects/01-projects/andamio-cli/internal/config/config.go`
-- CLI client: `/Users/james/projects/01-projects/andamio-cli/internal/client/client.go`
+- Existing auth: `$REPOS/andamio-app-v2/src/lib/andamio-auth.ts`
+- Auth context: `$REPOS/andamio-app-v2/src/contexts/andamio-auth-context.tsx`
+- CLI config: `internal/config/config.go`
+- CLI client: `internal/client/client.go`
 
 ### External References
 

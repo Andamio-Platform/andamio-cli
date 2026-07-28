@@ -355,8 +355,8 @@ Test expectation: none — documentation-only unit; no behavioral change.
 ## Documentation / Operational Notes
 
 - After both this plan and andamio-app-v2#698 land, update `andamio-docs` CLI install/auth pages to document the new `dev login` no-args path. Out of scope for this PR; track separately.
-- The verification task note at `~/projects/02-areas/andamio/000-task-notes/Tasks/2026-05-22-verify-andamio-cli-013-before-andrew-handoff.md` should be revised to cover the browser flow once both halves ship — the current checklist only verifies the headless path (i.e., the v0.13.0 fix, not the actual Andrew-blocker).
-- The staged reply to Andrew at `~/projects/02-areas/andamio/000-inbox/2026-05-20-andrew-cli-auth-401-reply.md` should be revised to point at this plan / the new commands, not the headless `dev login --skey` path it currently describes.
+- The verification task note at `the 2026-05-22 verify andamio cli 013 before andrew handoff note (internal)` should be revised to cover the browser flow once both halves ship — the current checklist only verifies the headless path (i.e., the v0.13.0 fix, not the actual Andrew-blocker).
+- The staged reply to Andrew at `the 2026-05-20 andrew cli auth 401 reply note (internal)` should be revised to point at this plan / the new commands, not the headless `dev login --skey` path it currently describes.
 
 ## Sources & References
 

@@ -5,7 +5,7 @@ status: active
 date: 2026-03-18
 origin:
   - docs/brainstorms/2026-03-18-project-task-management-brainstorm.md
-  - ~/projects/02-areas/andamio/docs/brainstorms/2026-03-18-github-integration-cli-brainstorm.md
+  - the 2026-03-18 github integration cli brainstorm note (internal)
 ---
 
 # feat: Project Task Management Commands
@@ -25,7 +25,7 @@ Project managers currently must use the web app to create and manage tasks. The 
 The demo story: a GitHub issue connects to (a) what someone needs to learn (Andamio course/module) and (b) where they earn reputation and rewards. The CLI makes this composable.
 
 (See brainstorm: `docs/brainstorms/2026-03-18-project-task-management-brainstorm.md`)
-(See brainstorm: `~/projects/02-areas/andamio/docs/brainstorms/2026-03-18-github-integration-cli-brainstorm.md`)
+(See brainstorm: `the 2026-03-18 github integration cli brainstorm note (internal)`)
 
 ## Proposed Solution
 
@@ -347,8 +347,8 @@ The audience sees: a real GitHub issue becomes an Andamio task. The developer wh
 ### Origin
 
 - **Brainstorm (CLI):** [docs/brainstorms/2026-03-18-project-task-management-brainstorm.md](docs/brainstorms/2026-03-18-project-task-management-brainstorm.md) — Key decisions: commands under `project`, directory of Markdown files, ISO 8601 dates, include tokens, warn-then-overwrite conflicts.
-- **Brainstorm (GitHub):** `~/projects/02-areas/andamio/docs/brainstorms/2026-03-18-github-integration-cli-brainstorm.md` — Key decisions: CLI stays Andamio-only, convention-based linking, composability over built-in GitHub features.
-- **Plan (GitHub):** `~/projects/02-areas/andamio/docs/plans/2026-03-18-feat-cli-task-commands-github-integration-plan.md` — Demo flow, script examples, `--github-issue` flag design.
+- **Brainstorm (GitHub):** `the 2026-03-18 github integration cli brainstorm note (internal)` — Key decisions: CLI stays Andamio-only, convention-based linking, composability over built-in GitHub features.
+- **Plan (GitHub):** `the 2026-03-18 feat cli task commands github integration plan note (internal)` — Demo flow, script examples, `--github-issue` flag design.
 
 ### Internal References
 

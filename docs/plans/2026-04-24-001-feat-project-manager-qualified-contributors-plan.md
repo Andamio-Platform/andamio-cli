@@ -290,7 +290,7 @@ runProjectManagerQualifiedContributors:
 ## Sources & References
 
 - **Issue:** https://github.com/Andamio-Platform/andamio-cli/issues/70
-- **Gateway plan:** `~/projects/01-projects/andamio-dev-kit-internal/plans/EligibleContributorsEndpointPlan.md` (response shape, status codes, 500-alias cap)
+- **Gateway plan:** `$REPOS/andamio-dev-kit-internal/plans/EligibleContributorsEndpointPlan.md` (response shape, status codes, 500-alias cap)
 - **Related code:**
   - `cmd/andamio/project_manager_ops.go` — sibling command + registration site
   - `cmd/andamio/helpers.go` — `getJSONWithHint`, `jwtAuthPreRunE`

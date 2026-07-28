@@ -880,8 +880,8 @@ func TestRegressions(t *testing.T) {
 ## References
 
 - **goldmark documentation:** https://github.com/yuin/goldmark
-- **Implementation:** `/Users/james/projects/01-projects/andamio-cli/cmd/andamio/course_import.go`
-- **Tests:** `/Users/james/projects/01-projects/andamio-cli/cmd/andamio/course_import_test.go`
+- **Implementation:** `cmd/andamio/course_import.go`
+- **Tests:** `cmd/andamio/course_import_test.go`
 - **Tiptap format:** https://www.tiptap.dev/guide/output#json
 - **ProseMirror nodes:** https://prosemirror.net/docs/ref/#model
 

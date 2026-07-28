@@ -3,7 +3,7 @@ title: "fix: Resolve 6 remaining CLI PBL retro issues"
 type: fix
 status: completed
 date: 2026-04-01
-origin: ~/projects/02-areas/andamio/000-task-notes/Tasks/cli-pbl-retro-fixes.md
+origin: the internal `cli-pbl-retro-fixes` note
 ---
 
 # fix: Resolve 6 remaining CLI PBL retro issues
@@ -253,7 +253,7 @@ The Midnight PBL walkthrough exposed 10 issues. Four are fixed (--address flag r
 
 ## Sources & References
 
-- **Origin document:** ~/projects/02-areas/andamio/000-task-notes/Tasks/cli-pbl-retro-fixes.md
+- **Origin document:** the internal `cli-pbl-retro-fixes` note
 - Related code: `cmd/andamio/course_teacher_ops.go`, `internal/config/config.go`, `cmd/andamio/tx_build.go`, `cmd/andamio/course_owner.go`
 - Config pattern: `cmd/andamio/config.go` (set-submit-url as model)
 - Submit header flow: `cmd/andamio/tx_submit.go`, `cmd/andamio/tx_lifecycle.go`
