@@ -29,7 +29,7 @@ func callSnapshot(cmd *cobra.Command, args []string) error {
 
 var snapshotCmd = &cobra.Command{
 	Hidden: true,
-	Short:  "Pull snaphot of current cmd output",
+	Short:  "Pull snaphot of current cmd output and json structs",
 	Use:    "snapshot",
 	RunE:   callSnapshot,
 }
