@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
 )
 
 // TestSanitizeCallbackValue covers the browser-callback → config → user-status
@@ -231,5 +232,136 @@ func TestRunHeadlessLogin_UndecodableGatewayJWTLeavesExpiryEmpty(t *testing.T) {
 	}
 	if cfg.UserJWT != "opaque-token-format" {
 		t.Errorf("UserJWT = %q; undecodable tokens must still be stored", cfg.UserJWT)
+	}
+}
+
+// --- user status: decoded-exp fallback + skew-aligned probe (#134) ---
+
+// statusJSON runs the JSON branch of user status against a scratch HOME
+// seeded with cfgMap and returns the parsed envelope.
+func statusJSON(t *testing.T, cfgMap map[string]string) map[string]interface{} {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	dir := filepath.Join(os.Getenv("HOME"), ".andamio")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if cfgMap["base_url"] == "" {
+		cfgMap["base_url"] = "https://preprod.api.andamio.io"
+	}
+	data, _ := json.Marshal(cfgMap)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := output.SetFormat("json"); err != nil {
+		t.Fatalf("SetFormat: %v", err)
+	}
+	t.Cleanup(func() { _ = output.SetFormat("text") })
+
+	raw := captureStdout(t, func() {
+		if err := runUserStatus(nil, nil); err != nil {
+			t.Fatalf("runUserStatus: %v", err)
+		}
+	})
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		t.Fatalf("stdout is not JSON: %v\nraw: %q", err, raw)
+	}
+	return parsed
+}
+
+func TestUserStatus_DecodedExpFallback_Expired(t *testing.T) {
+	// Pre-fix shape: headless login stored a JWT but no jwt_expires_at.
+	expired := jwtWithExp(time.Now().Add(-1 * time.Hour))
+	parsed := statusJSON(t, map[string]string{"api_key": "k", "user_jwt": expired})
+
+	if v, _ := parsed["session_expired"].(bool); !v {
+		t.Errorf("session_expired = %v, want true (decoded from token exp)", parsed["session_expired"])
+	}
+	if parsed["session_expires_at"] == nil {
+		t.Error("session_expires_at absent; decoded fallback should surface it")
+	}
+}
+
+func TestUserStatus_DecodedExpFallback_Fresh(t *testing.T) {
+	fresh := jwtWithExp(time.Now().Add(2 * time.Hour))
+	parsed := statusJSON(t, map[string]string{"api_key": "k", "user_jwt": fresh})
+
+	if v, _ := parsed["session_expired"].(bool); v {
+		t.Error("session_expired = true for fresh token")
+	}
+	if secs, _ := parsed["session_remaining_seconds"].(float64); secs <= 0 {
+		t.Errorf("session_remaining_seconds = %v, want > 0", parsed["session_remaining_seconds"])
+	}
+}
+
+func TestUserStatus_UndecodableTokenKeepsLegacyShape(t *testing.T) {
+	parsed := statusJSON(t, map[string]string{"api_key": "k", "user_jwt": "test-jwt"})
+
+	if _, present := parsed["session_expires_at"]; present {
+		t.Error("session_expires_at present for undecodable token; legacy no-expiry shape must be preserved")
+	}
+	if _, present := parsed["session_expired"]; present {
+		t.Error("session_expired present for undecodable token")
+	}
+	if v, _ := parsed["user_authenticated"].(bool); !v {
+		t.Error("user_authenticated must remain true (presence-based)")
+	}
+}
+
+func TestUserStatus_StoredExpiryTakesPrecedenceOverDecodedExp(t *testing.T) {
+	// Stored says 2099; token says expired an hour ago. Stored wins.
+	expiredToken := jwtWithExp(time.Now().Add(-1 * time.Hour))
+	parsed := statusJSON(t, map[string]string{
+		"api_key":        "k",
+		"user_jwt":       expiredToken,
+		"jwt_expires_at": "2099-01-01T00:00:00Z",
+	})
+
+	if got := parsed["session_expires_at"]; got != "2099-01-01T00:00:00Z" {
+		t.Errorf("session_expires_at = %v, want stored value", got)
+	}
+	if v, _ := parsed["session_expired"].(bool); v {
+		t.Error("session_expired = true; stored expiry must take precedence")
+	}
+}
+
+// The probe uses the same skew as enforcement: a token expiring inside the
+// 30s window reads as expired here, matching the exit-3 the next command
+// would produce.
+func TestUserStatus_ProbeAgreesWithEnforcementSkew(t *testing.T) {
+	insideSkew := jwtWithExp(time.Now().Add(config.ExpirySkew - 2*time.Second))
+	parsed := statusJSON(t, map[string]string{"api_key": "k", "user_jwt": insideSkew})
+
+	if v, _ := parsed["session_expired"].(bool); !v {
+		t.Error("session_expired = false inside the skew window; probe and enforcement disagree")
+	}
+}
+
+func TestUserStatus_TextHintDropsLogoutStep(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := filepath.Join(os.Getenv("HOME"), ".andamio")
+	_ = os.MkdirAll(dir, 0o700)
+	expired := jwtWithExp(time.Now().Add(-1 * time.Hour))
+	data, _ := json.Marshal(map[string]string{
+		"base_url": "https://preprod.api.andamio.io", "api_key": "k", "user_jwt": expired,
+	})
+	_ = os.WriteFile(filepath.Join(dir, "config.json"), data, 0o600)
+
+	stdout := captureStdout(t, func() {
+		if err := runUserStatus(nil, nil); err != nil {
+			t.Fatalf("runUserStatus: %v", err)
+		}
+	})
+
+	if !strings.Contains(stdout, "EXPIRED") {
+		t.Errorf("text mode does not report EXPIRED: %q", stdout)
+	}
+	if strings.Contains(stdout, "logout &&") {
+		t.Errorf("stale two-step hint survives: %q", stdout)
+	}
+	if !strings.Contains(stdout, "Run 'andamio user login' to re-authenticate.") {
+		t.Errorf("missing single-step recovery hint: %q", stdout)
 	}
 }
