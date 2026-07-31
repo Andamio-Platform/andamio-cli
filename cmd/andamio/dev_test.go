@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -2557,5 +2558,80 @@ func TestDeriveAppOrigin(t *testing.T) {
 				t.Errorf("deriveAppOrigin(%q) = %q, want %q", tc.baseURL, got, tc.want)
 			}
 		})
+	}
+}
+
+// dev status's jwt_expired must use the same decoded-exp + skew predicate as
+// devKeysClient's enforcement gate — a probe that says "valid" inside the
+// 30s window while `dev keys list` exits 3 reproduces the flaky-probe
+// problem #134 fixed for the user slot.
+func TestDevStatus_ProbeAgreesWithEnforcementSkew(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := filepath.Join(os.Getenv("HOME"), ".andamio")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Token expires inside the skew window; the stored expiry string claims
+	// plenty of time left. Enforcement (decoded exp) must win.
+	insideSkew := jwtWithExp(time.Now().Add(config.ExpirySkew - 2*time.Second))
+	cfgJSON, _ := json.Marshal(map[string]string{
+		"base_url":           "https://preprod.api.andamio.io",
+		"dev_jwt":            insideSkew,
+		"dev_jwt_expires_at": time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfgJSON, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := output.SetFormat("json"); err != nil {
+		t.Fatalf("SetFormat: %v", err)
+	}
+	t.Cleanup(func() { _ = output.SetFormat("text") })
+
+	raw := captureStdout(t, func() {
+		if err := runDevStatus(nil, nil); err != nil {
+			t.Fatalf("runDevStatus: %v", err)
+		}
+	})
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		t.Fatalf("stdout not JSON: %v\nraw: %q", err, raw)
+	}
+	if v, _ := parsed["jwt_expired"].(bool); !v {
+		t.Error("jwt_expired = false inside the skew window; dev status disagrees with devKeysClient enforcement")
+	}
+}
+
+// dev refresh authenticates via the refresh token in the body; the user-slot
+// JWT must never ride on the request (an expired one would otherwise trigger
+// the user-login-flavored warning mid dev-flow).
+func TestDevRefresh_UserJWTNeverRides(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	var gotAuth []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(secureLoginBody("jwt.NEW", "refresh.NEW", "myalias", "dev-1", "free", "2099-01-01T00:00:00Z", "2099-02-01T00:00:00Z"))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{
+		BaseURL:         srv.URL,
+		APIKey:          "k",
+		UserJWT:         jwtWithExp(time.Now().Add(-1 * time.Hour)), // expired user slot
+		DevJWT:          "dev-jwt",
+		DevRefreshToken: "refresh-token",
+	}
+	if err := runDevRefreshFlow(context.Background(), cfg); err != nil {
+		t.Fatalf("runDevRefreshFlow: %v", err)
+	}
+	if len(gotAuth) == 0 {
+		t.Fatal("no request reached the stub")
+	}
+	for i, h := range gotAuth {
+		if h != "" {
+			t.Errorf("request %d carried Authorization %q; refresh must not send any JWT", i, h)
+		}
 	}
 }

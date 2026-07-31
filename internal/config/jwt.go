@@ -103,13 +103,6 @@ func (c *Config) UserJWTExpired(now time.Time) bool {
 	return c.UserJWT != "" && TokenExpired(c.UserJWT, now)
 }
 
-// DevJWTExpired reports whether the stored developer JWT is locally known to
-// be expired at now. False when no dev JWT is stored or its expiry is
-// unknowable.
-func (c *Config) DevJWTExpired(now time.Time) bool {
-	return c.DevJWT != "" && TokenExpired(c.DevJWT, now)
-}
-
 // UserJWTFromEnv reports whether the current user JWT value was injected via
 // ANDAMIO_JWT at Load time (and has not been rotated since). Callers use
 // this to pick the right recovery hint: "update or unset ANDAMIO_JWT"

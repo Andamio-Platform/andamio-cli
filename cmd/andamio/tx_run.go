@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -53,9 +52,9 @@ Examples:
     --tx-type course_create \
     --instance-id abc123 \
     --no-wait`,
-	Args: cobra.ExactArgs(1),
+	Args:    cobra.ExactArgs(1),
 	PreRunE: jwtAuthPreRunE,
-	RunE: runTxRun,
+	RunE:    runTxRun,
 }
 
 func init() {
@@ -157,22 +156,32 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// checkJWTExpiry warns about or rejects expired JWTs. Returns an error only if expired.
+// checkJWTExpiry warns about or rejects expired JWTs before the multi-step
+// tx pipeline starts. The hard expired case is normally caught earlier by
+// jwtAuthPreRunE (decoded exp, skew, env-aware hint); this pre-check adds
+// the "valid now but may die before the register step" warning. It prefers
+// the token's own exp claim — the stored jwt_expires_at describes the
+// *stored* token and can be stale when ANDAMIO_JWT overrides the slot — and
+// falls back to the stored string only for tokens the CLI cannot decode.
 func checkJWTExpiry(cfg *config.Config, isJSON bool) error {
-	if cfg.JWTExpiresAt == "" {
-		return nil
-	}
-	expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt)
-	if err != nil {
-		if !isJSON {
-			fmt.Fprintf(os.Stderr, "Warning: could not parse JWT expiry %q — skipping expiry pre-check\n", cfg.JWTExpiresAt)
+	exp, ok := config.TokenExpiry(cfg.UserJWT)
+	if !ok {
+		if cfg.JWTExpiresAt == "" {
+			return nil
 		}
-		return nil
+		parsed, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt)
+		if err != nil {
+			if !isJSON {
+				fmt.Fprintf(os.Stderr, "Warning: could not parse JWT expiry %q — skipping expiry pre-check\n", cfg.JWTExpiresAt)
+			}
+			return nil
+		}
+		exp = parsed
 	}
-	remaining := time.Until(expiresAt)
-	if remaining <= 0 {
-		return &apierr.AuthError{Message: "JWT has expired. Run 'andamio user login' to refresh"}
+	if config.ExpiredAt(exp, time.Now()) {
+		return expiredAuthError("session", exp, cfg.UserJWTRecoveryHint())
 	}
+	remaining := time.Until(exp)
 	if remaining < 5*time.Minute && !isJSON {
 		fmt.Fprintf(os.Stderr, "Warning: JWT expires in %s — pipeline may fail at register step. Run 'andamio user login' to refresh.\n", remaining.Truncate(time.Second))
 	}

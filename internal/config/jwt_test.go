@@ -125,9 +125,6 @@ func TestConfigAccessors_ExpiryPredicates(t *testing.T) {
 	if !cfg.UserJWTExpired(now) {
 		t.Error("UserJWTExpired = false, want true")
 	}
-	if cfg.DevJWTExpired(now) {
-		t.Error("DevJWTExpired = true, want false")
-	}
 	if cfg.HasFreshUserAuth(now) {
 		t.Error("HasFreshUserAuth = true for expired JWT, want false")
 	}
@@ -139,8 +136,8 @@ func TestConfigAccessors_ExpiryPredicates(t *testing.T) {
 
 	// Empty and undecodable slots.
 	cfg = &Config{}
-	if cfg.UserJWTExpired(now) || cfg.DevJWTExpired(now) {
-		t.Error("empty slots must not report expired")
+	if cfg.UserJWTExpired(now) {
+		t.Error("empty slot must not report expired")
 	}
 	if cfg.HasFreshUserAuth(now) {
 		t.Error("HasFreshUserAuth = true with no JWT, want false")
@@ -181,5 +178,49 @@ func TestUserJWTFromEnv_NoEnv(t *testing.T) {
 	cfg.UserJWT = "stored-token"
 	if cfg.UserJWTFromEnv() {
 		t.Error("UserJWTFromEnv = true for stored JWT, want false")
+	}
+}
+
+func TestDevJWTFromEnv(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ANDAMIO_DEV_JWT", "env-dev-token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.DevJWTFromEnv() {
+		t.Error("DevJWTFromEnv = false for env-injected dev JWT, want true")
+	}
+	cfg.DevJWT = "rotated"
+	if cfg.DevJWTFromEnv() {
+		t.Error("DevJWTFromEnv = true after rotation, want false")
+	}
+}
+
+func TestRecoveryHints(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ANDAMIO_JWT", "")
+	t.Setenv("ANDAMIO_DEV_JWT", "")
+
+	cfg := &Config{UserJWT: "stored", DevJWT: "stored"}
+	if hint := cfg.UserJWTRecoveryHint(); hint != "Run 'andamio user login' to re-authenticate." {
+		t.Errorf("stored user hint = %q", hint)
+	}
+	if hint := cfg.DevJWTRecoveryHint(); hint != "Run 'andamio dev refresh' (or 'andamio dev login') to re-authenticate." {
+		t.Errorf("stored dev hint = %q", hint)
+	}
+
+	t.Setenv("ANDAMIO_JWT", "env-user")
+	t.Setenv("ANDAMIO_DEV_JWT", "env-dev")
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if hint := loaded.UserJWTRecoveryHint(); hint != "Update or unset ANDAMIO_JWT to re-authenticate." {
+		t.Errorf("env user hint = %q", hint)
+	}
+	if hint := loaded.DevJWTRecoveryHint(); hint != "Update or unset ANDAMIO_DEV_JWT to re-authenticate." {
+		t.Errorf("env dev hint = %q", hint)
 	}
 }

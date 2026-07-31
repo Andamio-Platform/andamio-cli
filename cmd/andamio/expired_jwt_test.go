@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Andamio-Platform/andamio-cli/internal/config"
 )
 
 // expiredJWT builds a structurally valid (unsigned) JWT whose exp is in the
@@ -244,5 +246,166 @@ func TestExpiredJWT_CourseModulesRoutesToUserEndpoint(t *testing.T) {
 				t.Errorf("no request hit %q; paths seen: %v", tc.wantPathPart, paths)
 			}
 		})
+	}
+}
+
+// checkJWTExpiry (tx run pre-check) must judge the token actually in the
+// slot, not the stored jwt_expires_at string — an ANDAMIO_JWT override makes
+// the stored value describe a different token entirely.
+func TestCheckJWTExpiry_PrefersDecodedExpOverStoredString(t *testing.T) {
+	fresh := jwtWithExp(time.Now().Add(1 * time.Hour))
+	cfg := &config.Config{
+		UserJWT:      fresh,
+		JWTExpiresAt: "2020-01-01T00:00:00Z", // stale metadata from a previous session
+	}
+	if err := checkJWTExpiry(cfg, true); err != nil {
+		t.Errorf("fresh decodable token rejected because of stale stored expiry: %v", err)
+	}
+
+	expired := jwtWithExp(time.Now().Add(-1 * time.Hour))
+	cfg = &config.Config{UserJWT: expired, JWTExpiresAt: "2099-01-01T00:00:00Z"}
+	if err := checkJWTExpiry(cfg, true); err == nil {
+		t.Error("expired decodable token accepted because of fresh stored expiry")
+	}
+}
+
+func TestCheckJWTExpiry_UndecodableFallsBackToStored(t *testing.T) {
+	cfg := &config.Config{UserJWT: "opaque", JWTExpiresAt: "2020-01-01T00:00:00Z"}
+	err := checkJWTExpiry(cfg, true)
+	if err == nil {
+		t.Fatal("expired stored expiry for undecodable token must still hard-fail")
+	}
+	if !strings.Contains(err.Error(), "session expired at") {
+		t.Errorf("unexpected message: %v", err)
+	}
+
+	cfg = &config.Config{UserJWT: "opaque"}
+	if err := checkJWTExpiry(cfg, true); err != nil {
+		t.Errorf("undecodable token without stored expiry must pass: %v", err)
+	}
+}
+
+// U8 companion coverage: all five either-auth course reads route to user
+// endpoints when the JWT is expired.
+func TestExpiredJWT_AllCourseReadsRouteToUserEndpoints(t *testing.T) {
+	bin := buildTestBinary(t)
+	expired := jwtWithExp(time.Now().Add(-1 * time.Hour))
+
+	cases := []struct {
+		args         []string
+		wantPathPart string
+	}{
+		{[]string{"course", "slts", "course-1", "101"}, "/api/v2/course/user/slts/"},
+		{[]string{"course", "lesson", "course-1", "101", "1"}, "/api/v2/course/user/lesson/"},
+		{[]string{"course", "intro", "course-1", "101"}, "/api/v2/course/user/introduction/"},
+		{[]string{"course", "assignment", "course-1", "101"}, "/api/v2/course/user/assignment/"},
+	}
+
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.args[:2], " "), func(t *testing.T) {
+			var paths []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				paths = append(paths, r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":{}}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			argv := append(tc.args, "--output", "json")
+			_, _, code := runCLIWithJWT(t, bin, srv.URL, expired, nil, argv...)
+
+			if code != 0 {
+				t.Errorf("exit code = %d, want 0", code)
+			}
+			for _, p := range paths {
+				if strings.Contains(p, "/teacher/") {
+					t.Errorf("teacher endpoint %q hit with an expired JWT", p)
+				}
+			}
+			found := false
+			for _, p := range paths {
+				if strings.Contains(p, tc.wantPathPart) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("no request hit %q; paths seen: %v", tc.wantPathPart, paths)
+			}
+		})
+	}
+}
+
+// A fresh ANDAMIO_JWT must not be judged by a stale on-disk jwt_expires_at
+// left over from a previous stored session — neither by enforcement (exit
+// codes) nor by the user-status probe.
+func TestExpiredJWT_FreshEnvJWTNotJudgedByStaleStoredExpiry(t *testing.T) {
+	bin := buildTestBinary(t)
+	oldExpired := jwtWithExp(time.Now().Add(-24 * time.Hour))
+	freshEnv := jwtWithExp(time.Now().Add(1 * time.Hour))
+
+	home := t.TempDir()
+	dir := filepath.Join(home, ".andamio")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// A pre-existing stored session (expired) with its persisted expiry.
+	cfg, _ := json.Marshal(map[string]string{
+		"base_url":       "http://127.0.0.1:0", // replaced below
+		"api_key":        "test-key",
+		"user_jwt":       oldExpired,
+		"jwt_expires_at": time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339),
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	cfg, _ = json.Marshal(map[string]string{
+		"base_url":       srv.URL,
+		"api_key":        "test-key",
+		"user_jwt":       oldExpired,
+		"jwt_expires_at": time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	env := []string{"HOME=" + home, "ANDAMIO_JWT=" + freshEnv}
+
+	run := func(args ...string) (string, int) {
+		cmd := exec.Command(bin, args...)
+		cmd.Env = append(os.Environ(), env...)
+		var outBuf, errBuf strings.Builder
+		cmd.Stdout = &outBuf
+		cmd.Stderr = &errBuf
+		code := 0
+		if err := cmd.Run(); err != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				t.Fatalf("running %v: %v", args, err)
+			}
+			code = exitErr.ExitCode()
+		}
+		return outBuf.String(), code
+	}
+
+	// Enforcement: the fresh env token passes the fail-fast and reaches the
+	// gateway.
+	if _, code := run("course", "owner", "list", "--output", "json"); code != 0 {
+		t.Errorf("course owner list exit = %d, want 0 (fresh env JWT wrongly judged expired)", code)
+	}
+
+	// Probe: user status reports the env token's real state, not the stale
+	// stored metadata.
+	stdout, code := run("user", "status", "--output", "json")
+	if code != 0 {
+		t.Fatalf("user status exit = %d", code)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+		t.Fatalf("stdout not JSON: %v\nraw: %q", err, stdout)
+	}
+	if v, _ := parsed["session_expired"].(bool); v {
+		t.Error("session_expired = true for a fresh ANDAMIO_JWT (stale stored expiry won)")
 	}
 }

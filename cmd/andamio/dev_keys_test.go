@@ -711,10 +711,54 @@ func TestDevKeysClient_ExpiredUserJWTDoesNotAffectDevSurface(t *testing.T) {
 
 // Undecodable dev JWTs pass through unchanged (fail open) — pins the
 // contract that keeps this file's other fixtures ("dev-jwt-should-be-bearer")
-// meaningful.
+// meaningful. The wire assertion proves "pass through" means both headers
+// actually ride, not merely "no error".
 func TestDevKeysClient_UndecodableDevJWTFailsOpen(t *testing.T) {
-	cfg := &config.Config{APIKey: "k", DevJWT: "not-a-jwt"}
-	if _, err := devKeysClient(cfg); err != nil {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Header.Get("Authorization"), "Bearer not-a-jwt"; got != want {
+			t.Errorf("Authorization = %q, want %q (undecodable token must ride as-is)", got, want)
+		}
+		if got := r.Header.Get("X-API-Key"); got != "k" {
+			t.Errorf("X-API-Key = %q, want k", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"keys":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{BaseURL: srv.URL, APIKey: "k", DevJWT: "not-a-jwt"}
+	c, err := devKeysClient(cfg)
+	if err != nil {
 		t.Fatalf("undecodable dev JWT must not fail fast: %v", err)
+	}
+	var resp devKeysListResponse
+	if err := c.Get(context.Background(), devKeysListPath, &resp); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+}
+
+// An expired env-sourced dev JWT (ANDAMIO_DEV_JWT) points at the env var —
+// a `dev refresh` rotation would be re-shadowed by the env value on the
+// next Load.
+func TestDevKeysClient_ExpiredEnvDevJWTNamesEnvVar(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ANDAMIO_DEV_JWT", jwtWithExp(time.Now().Add(-1*time.Hour)))
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cfg.APIKey = "k"
+
+	_, err = devKeysClient(cfg)
+	var authErr *apierr.AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("want *apierr.AuthError, got %T: %v", err, err)
+	}
+	if !strings.Contains(authErr.Message, "ANDAMIO_DEV_JWT") {
+		t.Errorf("message does not name ANDAMIO_DEV_JWT: %q", authErr.Message)
+	}
+	if strings.Contains(authErr.Message, "dev refresh") {
+		t.Errorf("env-sourced expiry must not point at 'dev refresh': %q", authErr.Message)
 	}
 }

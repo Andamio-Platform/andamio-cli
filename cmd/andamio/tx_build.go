@@ -30,9 +30,9 @@ Examples:
   andamio tx build /v2/tx/instance/owner/course/create --body-file create-course.json --output json
   andamio tx build /v2/tx/global/user/access-token/mint \
     --body '{"alias":"dev1","initiator_data":{"change_address":"addr_test1...","used_addresses":["addr_test1..."]}}'`,
-	Args: cobra.ExactArgs(1),
+	Args:    cobra.ExactArgs(1),
 	PreRunE: jwtAuthPreRunE,
-	RunE: runTxBuild,
+	RunE:    runTxBuild,
 }
 
 func init() {

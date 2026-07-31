@@ -438,6 +438,16 @@ func decodedExpiryRFC3339(token string) string {
 // ANDAMIO_JWT sessions still get truthful expiry. Both output modes of
 // `user status` route through this one resolver.
 func resolveSessionExpiry(cfg *config.Config) (exp time.Time, raw string, ok bool) {
+	// An env-injected token (ANDAMIO_JWT) is not the token the on-disk
+	// jwt_expires_at describes — judging one by the other makes the probe
+	// lie about the credential enforcement actually sees. For env tokens,
+	// the decoded exp claim is the only honest source.
+	if cfg.UserJWTFromEnv() {
+		if t, tok := config.TokenExpiry(cfg.UserJWT); tok {
+			return t, t.UTC().Format(time.RFC3339), true
+		}
+		return time.Time{}, "", false
+	}
 	if cfg.JWTExpiresAt != "" {
 		if t, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt); err == nil {
 			return t, cfg.JWTExpiresAt, true

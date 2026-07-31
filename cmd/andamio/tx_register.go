@@ -24,7 +24,7 @@ Examples:
   andamio tx register --tx-hash abc123... --tx-type access_token_mint
   andamio tx register --tx-hash abc123... --tx-type course_create --instance-id <course-id>`,
 	PreRunE: jwtAuthPreRunE,
-	RunE: runTxRegister,
+	RunE:    runTxRegister,
 }
 
 func init() {
