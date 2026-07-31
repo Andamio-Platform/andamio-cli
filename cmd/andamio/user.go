@@ -122,8 +122,10 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 		return runHeadlessLogin(cmd.Context(), cfg, skeyPath, alias, address)
 	}
 
-	// Check if already authenticated (browser flow only)
-	if cfg.HasUserAuth() {
+	// Check if already authenticated (browser flow only). An expired stored
+	// JWT counts as unauthenticated — refusing here would force the manual
+	// `user logout` two-step this fix removes (issue #134, R3).
+	if cfg.HasFreshUserAuth(time.Now()) {
 		fmt.Printf("Already authenticated as: %s\n", cfg.UserAlias)
 		fmt.Println("Run 'andamio user logout' first to re-authenticate.")
 		return nil
@@ -241,9 +243,16 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("authentication failed: %s", result.Error)
 	}
 
-	// Save JWT to config
+	// Save JWT to config. The app-provided expires_at keeps precedence; when
+	// the callback omits it, fall back to the token's own exp claim so the
+	// session never persists without expiry metadata it actually carries.
 	cfg.UserJWT = result.JWT
 	cfg.JWTExpiresAt = result.ExpiresAt
+	if cfg.JWTExpiresAt == "" {
+		if exp, ok := config.TokenExpiry(result.JWT); ok {
+			cfg.JWTExpiresAt = exp.UTC().Format(time.RFC3339)
+		}
+	}
 	cfg.UserAlias = result.Alias
 	cfg.UserID = result.UserID
 
@@ -272,7 +281,17 @@ func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, 
 		return fmt.Errorf("failed to load signing key: %w", err)
 	}
 
-	c := client.New(cfg)
+	// Build the login client from a copy with the user JWT blanked. Login
+	// never needs prior user auth, and the correctness of re-login must not
+	// depend on the stored token being locally decodable: client.New's
+	// expiry drop only catches tokens it can decode, while a corrupted or
+	// truncated token the gateway rejects would otherwise brick this exact
+	// recovery path (and a decodable-expired one would print a "run user
+	// login" warning while the user is literally running user login). cfg
+	// itself is untouched, so the eventual Save persists the fresh session.
+	loginCfg := *cfg
+	loginCfg.UserJWT = ""
+	c := client.New(&loginCfg)
 
 	// Step 1: Get login session with nonce
 	if !isJSON {
@@ -332,9 +351,14 @@ func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, 
 		return fmt.Errorf("authentication failed: no token received")
 	}
 
-	// Step 4: Store JWT in config
+	// Step 4: Store JWT in config. The validate response carries no expiry
+	// field, so decode the token's own exp claim — without this, `user
+	// status` can never report EXPIRED after a headless login (issue #134).
 	cfg.UserJWT = tokenResp.JWT
-	cfg.JWTExpiresAt = "" // headless flow does not return expiry; extract from JWT if needed
+	cfg.JWTExpiresAt = ""
+	if exp, ok := config.TokenExpiry(tokenResp.JWT); ok {
+		cfg.JWTExpiresAt = exp.UTC().Format(time.RFC3339)
+	}
 	// Use alias from response if available, fall back to flag
 	if tokenResp.User.AccessTokenAlias != nil && *tokenResp.User.AccessTokenAlias != "" {
 		cfg.UserAlias = *tokenResp.User.AccessTokenAlias
@@ -349,16 +373,23 @@ func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, 
 	}
 
 	if isJSON {
-		return output.PrintJSON(map[string]interface{}{
+		envelope := map[string]interface{}{
 			"alias":    cfg.UserAlias,
 			"user_id":  cfg.UserID,
 			"key_hash": signResult.KeyHash,
-		})
+		}
+		if cfg.JWTExpiresAt != "" {
+			envelope["expires_at"] = cfg.JWTExpiresAt
+		}
+		return output.PrintJSON(envelope)
 	}
 
 	fmt.Fprintf(os.Stderr, "\nAuthenticated as: %s\n", cfg.UserAlias)
 	fmt.Fprintf(os.Stderr, "User ID: %s\n", cfg.UserID)
 	fmt.Fprintf(os.Stderr, "Key hash: %s\n", signResult.KeyHash)
+	if cfg.JWTExpiresAt != "" {
+		fmt.Fprintf(os.Stderr, "Session expires: %s\n", cfg.JWTExpiresAt)
+	}
 
 	return nil
 }
