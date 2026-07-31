@@ -54,12 +54,7 @@ Examples:
     --instance-id abc123 \
     --no-wait`,
 	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
-			return err
-		}
-		return requireUserAuth()
-	},
+	PreRunE: jwtAuthPreRunE,
 	RunE: runTxRun,
 }
 

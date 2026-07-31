@@ -2,12 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -17,38 +13,10 @@ import (
 // the exit code.
 func runCLI(t *testing.T, bin, baseURL string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-
-	home := t.TempDir()
-	dir := filepath.Join(home, ".andamio")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	// A JWT is present so auth gating passes and the request actually reaches
-	// the stub; the stub decides what status comes back.
-	cfg, _ := json.Marshal(map[string]string{
-		"base_url": baseURL,
-		"api_key":  "test-key",
-		"user_jwt": "test-jwt",
-	})
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cmd := exec.Command(bin, args...)
-	cmd.Env = append(os.Environ(), "HOME="+home)
-
-	var outBuf, errBuf strings.Builder
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			t.Fatalf("running %v: %v", args, err)
-		}
-		code = exitErr.ExitCode()
-	}
-	return outBuf.String(), errBuf.String(), code
+	// The undecodable "test-jwt" passes auth gating (fail-open contract) so
+	// the request actually reaches the stub; the stub decides what status
+	// comes back.
+	return runCLIWithJWT(t, bin, baseURL, "test-jwt", nil, args...)
 }
 
 func statusStub(t *testing.T, status int) string {

@@ -152,14 +152,8 @@ func devKeysClient(cfg *config.Config) (*client.Client, error) {
 	// Gating here means any token that reaches promotion is known-fresh, so
 	// the client-level drop can only ever fire on genuine user-slot JWTs.
 	// Undecodable dev JWTs pass through (fail open, gateway decides).
-	if cfg.DevJWTExpired(time.Now()) {
-		exp, _ := config.TokenExpiry(cfg.DevJWT)
-		hint := "Run 'andamio dev refresh' (or 'andamio dev login')"
-		if cfg.DevJWTFromEnv() {
-			hint = "Update or unset ANDAMIO_DEV_JWT"
-		}
-		return nil, &apierr.AuthError{Message: fmt.Sprintf(
-			"developer session expired at %s. %s", exp.Local().Format(time.RFC1123), hint)}
+	if exp, ok := config.TokenExpiry(cfg.DevJWT); ok && config.ExpiredAt(exp, time.Now()) {
+		return nil, expiredAuthError("developer session", exp, cfg.DevJWTRecoveryHint())
 	}
 	devCfg := *cfg
 	// `devCfg := *cfg` is a shallow copy — `SubmitHeaders` is the only map

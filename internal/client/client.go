@@ -57,13 +57,9 @@ var expiredJWTWarnOnce sync.Once
 // user-flavored warning below can only fire on genuine user-slot JWTs.
 func New(cfg *config.Config) *Client {
 	userJWT := cfg.UserJWT
-	if userJWT != "" && config.TokenExpired(userJWT, time.Now()) {
+	if exp, ok := config.TokenExpiry(userJWT); ok && config.ExpiredAt(exp, time.Now()) {
 		userJWT = ""
 		expiredJWTWarnOnce.Do(func() {
-			hint := "Run 'andamio user login' to re-authenticate."
-			if cfg.UserJWTFromEnv() {
-				hint = "Update or unset ANDAMIO_JWT."
-			}
 			suffix := "continuing without it."
 			if cfg.APIKey != "" {
 				suffix = "continuing with API key only."
@@ -72,10 +68,8 @@ func New(cfg *config.Config) *Client {
 			// the `dev keys create` one-time-key warning) — scripts pipe
 			// 2>/dev/null; humans running --output json still deserve to know
 			// their session is dead.
-			if exp, ok := config.TokenExpiry(cfg.UserJWT); ok {
-				fmt.Fprintf(os.Stderr, "Warning: stored session expired %s; %s %s\n",
-					exp.Local().Format("2006-01-02 15:04 MST"), suffix, hint)
-			}
+			fmt.Fprintf(os.Stderr, "Warning: stored session expired %s; %s %s\n",
+				exp.Local().Format("2006-01-02 15:04 MST"), suffix, cfg.UserJWTRecoveryHint())
 		})
 	}
 	return &Client{

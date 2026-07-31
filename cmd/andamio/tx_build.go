@@ -31,12 +31,7 @@ Examples:
   andamio tx build /v2/tx/global/user/access-token/mint \
     --body '{"alias":"dev1","initiator_data":{"change_address":"addr_test1...","used_addresses":["addr_test1..."]}}'`,
 	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
-			return err
-		}
-		return requireUserAuth()
-	},
+	PreRunE: jwtAuthPreRunE,
 	RunE: runTxBuild,
 }
 

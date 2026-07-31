@@ -48,16 +48,18 @@ func requireUserAuth() error {
 	if !cfg.HasUserAuth() {
 		return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
 	}
-	if cfg.UserJWTExpired(time.Now()) {
-		exp, _ := config.TokenExpiry(cfg.UserJWT)
-		hint := "Run 'andamio user login' to re-authenticate"
-		if cfg.UserJWTFromEnv() {
-			hint = "Update or unset ANDAMIO_JWT"
-		}
-		return &apierr.AuthError{Message: fmt.Sprintf(
-			"session expired at %s. %s", exp.Local().Format(time.RFC1123), hint)}
+	if exp, ok := config.TokenExpiry(cfg.UserJWT); ok && config.ExpiredAt(exp, time.Now()) {
+		return expiredAuthError("session", exp, cfg.UserJWTRecoveryHint())
 	}
 	return nil
+}
+
+// expiredAuthError builds the exit-3 / kind-auth error for a locally-expired
+// token. Shared by the user-slot fail-fast above and the dev-slot gate in
+// devKeysClient so the message shape cannot drift between the two.
+func expiredAuthError(what string, exp time.Time, hint string) *apierr.AuthError {
+	return &apierr.AuthError{Message: fmt.Sprintf(
+		"%s expired at %s. %s", what, exp.Local().Format(time.RFC1123), hint)}
 }
 
 // getJSON is a helper for simple GET endpoints that return JSON

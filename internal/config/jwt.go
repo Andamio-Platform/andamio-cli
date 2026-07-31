@@ -58,16 +58,43 @@ func TokenExpiry(token string) (time.Time, bool) {
 	return time.Unix(int64(secs), 0), true
 }
 
+// ExpiredAt is THE skew predicate: expired from exp - ExpirySkew onward.
+// Every consumer — the client-layer drop, the prerun fail-fasts, and the
+// `user status` probe — must route through this one function so probe and
+// enforcement cannot disagree by drift.
+func ExpiredAt(exp, now time.Time) bool {
+	return !now.Before(exp.Add(-ExpirySkew))
+}
+
 // TokenExpired reports whether the token is locally known to be expired at
-// now, applying ExpirySkew in the conservative direction (expired from
-// exp - ExpirySkew onward). Undecodable tokens are never expired — see
-// TokenExpiry's fail-open contract.
+// now, applying ExpirySkew in the conservative direction (see ExpiredAt).
+// Undecodable tokens are never expired — see TokenExpiry's fail-open
+// contract. Callers that also need the expiry value should call TokenExpiry
+// once and apply ExpiredAt themselves rather than decoding twice.
 func TokenExpired(token string, now time.Time) bool {
 	exp, ok := TokenExpiry(token)
-	if !ok {
-		return false
+	return ok && ExpiredAt(exp, now)
+}
+
+// UserJWTRecoveryHint returns the recovery instruction for a dead user-slot
+// JWT, matched to where the credential lives: an env-sourced token must
+// point at ANDAMIO_JWT (a fresh login would be shadowed by the env var on
+// the next Load), a stored one at `user login`. Single source of truth for
+// this wording — the client warning, the prerun fail-fast, and `user status`
+// all print it.
+func (c *Config) UserJWTRecoveryHint() string {
+	if c.UserJWTFromEnv() {
+		return "Update or unset ANDAMIO_JWT to re-authenticate."
 	}
-	return !now.Before(exp.Add(-ExpirySkew))
+	return "Run 'andamio user login' to re-authenticate."
+}
+
+// DevJWTRecoveryHint is UserJWTRecoveryHint's dev-slot counterpart.
+func (c *Config) DevJWTRecoveryHint() string {
+	if c.DevJWTFromEnv() {
+		return "Update or unset ANDAMIO_DEV_JWT to re-authenticate."
+	}
+	return "Run 'andamio dev refresh' (or 'andamio dev login') to re-authenticate."
 }
 
 // UserJWTExpired reports whether the stored user JWT is locally known to be

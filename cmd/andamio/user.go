@@ -249,9 +249,7 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 	cfg.UserJWT = result.JWT
 	cfg.JWTExpiresAt = result.ExpiresAt
 	if cfg.JWTExpiresAt == "" {
-		if exp, ok := config.TokenExpiry(result.JWT); ok {
-			cfg.JWTExpiresAt = exp.UTC().Format(time.RFC3339)
-		}
+		cfg.JWTExpiresAt = decodedExpiryRFC3339(result.JWT)
 	}
 	cfg.UserAlias = result.Alias
 	cfg.UserID = result.UserID
@@ -355,10 +353,7 @@ func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, 
 	// field, so decode the token's own exp claim — without this, `user
 	// status` can never report EXPIRED after a headless login (issue #134).
 	cfg.UserJWT = tokenResp.JWT
-	cfg.JWTExpiresAt = ""
-	if exp, ok := config.TokenExpiry(tokenResp.JWT); ok {
-		cfg.JWTExpiresAt = exp.UTC().Format(time.RFC3339)
-	}
+	cfg.JWTExpiresAt = decodedExpiryRFC3339(tokenResp.JWT)
 	// Use alias from response if available, fall back to flag
 	if tokenResp.User.AccessTokenAlias != nil && *tokenResp.User.AccessTokenAlias != "" {
 		cfg.UserAlias = *tokenResp.User.AccessTokenAlias
@@ -427,21 +422,42 @@ type userStatusResult struct {
 	SessionRemainingSeconds int64 `json:"session_remaining_seconds,omitempty"`
 }
 
-// sessionExpiredAt applies the same skew-inclusive predicate the enforcement
-// layers use (client.New drop, requireUserAuth fail-fast): expired from
-// exp - config.ExpirySkew onward. The probe and the enforcement must agree —
-// a `user status` that says "not expired" inside the skew window while the
-// very next command exits 3 would reproduce the flaky-probe problem the
-// session_expired field exists to solve.
-func sessionExpiredAt(expiresAt, now time.Time) bool {
-	return !now.Before(expiresAt.Add(-config.ExpirySkew))
+// decodedExpiryRFC3339 renders a token's decoded exp claim in the RFC3339
+// UTC form the config stores; empty string when the token is undecodable.
+func decodedExpiryRFC3339(token string) string {
+	if exp, ok := config.TokenExpiry(token); ok {
+		return exp.UTC().Format(time.RFC3339)
+	}
+	return ""
+}
+
+// resolveSessionExpiry owns the stored-vs-decoded precedence rule: a
+// non-empty JWTExpiresAt wins (raw carries it verbatim; ok=false when it is
+// unparseable, preserving the legacy raw-print shape), otherwise fall back
+// to the token's own exp claim so pre-fix headless-login configs and
+// ANDAMIO_JWT sessions still get truthful expiry. Both output modes of
+// `user status` route through this one resolver.
+func resolveSessionExpiry(cfg *config.Config) (exp time.Time, raw string, ok bool) {
+	if cfg.JWTExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt); err == nil {
+			return t, cfg.JWTExpiresAt, true
+		}
+		return time.Time{}, cfg.JWTExpiresAt, false
+	}
+	if exp, tok := config.TokenExpiry(cfg.UserJWT); tok {
+		return exp, exp.UTC().Format(time.RFC3339), true
+	}
+	return time.Time{}, "", false
 }
 
 // fillSessionExpiry populates the JSON envelope's expiry triplet from a
-// resolved expiry time.
+// resolved expiry time, using the same config.ExpiredAt predicate as
+// enforcement — a probe that says "not expired" inside the skew window while
+// the very next command exits 3 would reproduce the flaky-probe problem the
+// session_expired field exists to solve.
 func fillSessionExpiry(result *userStatusResult, expiresAt time.Time) {
 	now := time.Now()
-	expired := sessionExpiredAt(expiresAt, now)
+	expired := config.ExpiredAt(expiresAt, now)
 	result.SessionExpired = &expired
 	if !expired {
 		result.SessionRemainingSeconds = int64(expiresAt.Sub(now).Seconds())
@@ -453,13 +469,9 @@ func fillSessionExpiry(result *userStatusResult, expiresAt time.Time) {
 // (stored session vs ANDAMIO_JWT).
 func printSessionExpiry(cfg *config.Config, expiresAt time.Time) {
 	now := time.Now()
-	if sessionExpiredAt(expiresAt, now) {
+	if config.ExpiredAt(expiresAt, now) {
 		fmt.Printf("Session: EXPIRED (at %s)\n", expiresAt.Local().Format(time.RFC1123))
-		if cfg.UserJWTFromEnv() {
-			fmt.Println("\nUpdate or unset ANDAMIO_JWT to re-authenticate.")
-		} else {
-			fmt.Println("\nRun 'andamio user login' to re-authenticate.")
-		}
+		fmt.Println("\n" + cfg.UserJWTRecoveryHint())
 	} else {
 		remaining := expiresAt.Sub(now)
 		fmt.Printf("Session: valid until %s (%s remaining)\n",
@@ -485,16 +497,9 @@ func runUserStatus(cmd *cobra.Command, args []string) error {
 			// Drop "undefined"/"null" from historic configs so the JSON
 			// envelope doesn't carry the same bad value text mode hides.
 			result.UserID = sanitizeCallbackValue(cfg.UserID)
-			if cfg.JWTExpiresAt != "" {
-				result.SessionExpiresAt = cfg.JWTExpiresAt
-				if expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt); err == nil {
-					fillSessionExpiry(&result, expiresAt)
-				}
-			} else if exp, ok := config.TokenExpiry(cfg.UserJWT); ok {
-				// Pre-fix configs (headless logins stored no expiry) and
-				// env-sourced JWTs: fall back to the token's own exp claim
-				// so the probe can still say EXPIRED.
-				result.SessionExpiresAt = exp.UTC().Format(time.RFC3339)
+			exp, raw, ok := resolveSessionExpiry(cfg)
+			result.SessionExpiresAt = raw
+			if ok {
 				fillSessionExpiry(&result, exp)
 			}
 		}
@@ -525,17 +530,12 @@ func runUserStatus(cmd *cobra.Command, args []string) error {
 			fmt.Printf("User ID: %s\n", id)
 		}
 
-		if cfg.JWTExpiresAt != "" {
-			expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt)
-			if err == nil {
-				printSessionExpiry(cfg, expiresAt)
-			} else {
-				fmt.Printf("Session expires: %s\n", cfg.JWTExpiresAt)
-			}
-		} else if exp, ok := config.TokenExpiry(cfg.UserJWT); ok {
-			// Same decoded-exp fallback as the JSON branch above.
+		switch exp, raw, ok := resolveSessionExpiry(cfg); {
+		case ok:
 			printSessionExpiry(cfg, exp)
-		} else {
+		case raw != "":
+			fmt.Printf("Session expires: %s\n", raw)
+		default:
 			fmt.Println("Session: active (no expiry info)")
 		}
 	} else {

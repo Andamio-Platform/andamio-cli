@@ -23,12 +23,7 @@ List valid transaction types with: andamio tx types
 Examples:
   andamio tx register --tx-hash abc123... --tx-type access_token_mint
   andamio tx register --tx-hash abc123... --tx-type course_create --instance-id <course-id>`,
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
-			return err
-		}
-		return requireUserAuth()
-	},
+	PreRunE: jwtAuthPreRunE,
 	RunE: runTxRegister,
 }
 
