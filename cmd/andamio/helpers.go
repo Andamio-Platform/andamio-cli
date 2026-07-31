@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -22,12 +23,39 @@ func jwtAuthPreRunE(cmd *cobra.Command, args []string) error {
 	if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
 		return err
 	}
+	return requireUserAuth()
+}
+
+// requireUserAuth loads config and returns a typed AuthError (exit 3, kind
+// "auth") when no user JWT is stored — or when the stored JWT is locally
+// known to be expired. The expired case fails fast client-side instead of
+// burning a round trip on a request the gateway will 401 (issue #134), and
+// its message names the expiry time plus the correct recovery action: a
+// stored session points at `user login`; an env-sourced one points at
+// ANDAMIO_JWT, because a fresh login would be shadowed by the env var on the
+// next Load. Undecodable tokens are not failed here (fail open — the gateway
+// stays the authority, and non-JWT test fixtures keep working); they behave
+// exactly as before this check existed.
+//
+// Shared by jwtAuthPreRunE and the hand-rolled PreRunEs on course
+// export/import/import-all/create-module and tx build/register/run — the
+// missing-JWT message must stay identical across all of them.
+func requireUserAuth() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 	if !cfg.HasUserAuth() {
 		return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
+	}
+	if cfg.UserJWTExpired(time.Now()) {
+		exp, _ := config.TokenExpiry(cfg.UserJWT)
+		hint := "Run 'andamio user login' to re-authenticate"
+		if cfg.UserJWTFromEnv() {
+			hint = "Update or unset ANDAMIO_JWT"
+		}
+		return &apierr.AuthError{Message: fmt.Sprintf(
+			"session expired at %s. %s", exp.Local().Format(time.RFC1123), hint)}
 	}
 	return nil
 }

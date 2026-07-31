@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -36,14 +35,7 @@ Examples:
 		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
 			return err
 		}
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
+		return requireUserAuth()
 	},
 	RunE: runTxBuild,
 }

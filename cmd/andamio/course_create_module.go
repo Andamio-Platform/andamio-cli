@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -37,14 +36,7 @@ With explicit flags (no path needed):
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.MaximumNArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
+		return requireUserAuth()
 	},
 	RunE: runCreateModule,
 }

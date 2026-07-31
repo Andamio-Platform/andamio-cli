@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -43,15 +42,7 @@ The course can be specified by ID (first arg) or by name (--course flag):
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.RangeArgs(1, 2),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		// Check user auth
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
+		return requireUserAuth()
 	},
 	RunE: runCourseExport,
 }

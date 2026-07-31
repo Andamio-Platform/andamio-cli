@@ -58,14 +58,7 @@ Examples:
 		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
 			return err
 		}
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
+		return requireUserAuth()
 	},
 	RunE: runTxRun,
 }

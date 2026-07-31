@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -41,14 +40,7 @@ Examples:
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
+		return requireUserAuth()
 	},
 	RunE: runImportAll,
 }
