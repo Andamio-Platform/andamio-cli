@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -32,18 +34,56 @@ type Client struct {
 	onRetry func(attempt int, wait time.Duration, err error)
 }
 
+// expiredJWTWarnOnce dedupes the expired-JWT warning to one line per process
+// — a single command can construct several clients (tx run, course import).
+// It is a resettable package var, not an inline once, so in-package tests can
+// reassign it between cases and stay order-independent.
+var expiredJWTWarnOnce sync.Once
+
+// New builds a client from cfg. A user-slot JWT that is locally known to be
+// expired (config.TokenExpired) is dropped here — the request rides on the
+// API key alone — because the gateway fails closed on any invalid credential
+// and an expired JWT would otherwise 401 requests the API key alone
+// authorizes, including the login-session endpoint itself (issue #134). The
+// drop happens on the client's own field snapshot; cfg is never mutated, so
+// no later config.Save can persist the cleared slot (R7).
+//
+// Undecodable tokens are sent as-is (fail open) — the gateway is the
+// authority, and a decoder edge case must not lock users out.
+//
+// Dev-portal surfaces are unaffected by construction order: devKeysClient
+// fail-fasts on an expired dev JWT *before* promoting it into the UserJWT
+// slot, so a promoted token reaching this drop is known-fresh and the
+// user-flavored warning below can only fire on genuine user-slot JWTs.
 func New(cfg *config.Config) *Client {
+	userJWT := cfg.UserJWT
+	if userJWT != "" && config.TokenExpired(userJWT, time.Now()) {
+		userJWT = ""
+		expiredJWTWarnOnce.Do(func() {
+			hint := "Run 'andamio user login' to re-authenticate."
+			if cfg.UserJWTFromEnv() {
+				hint = "Update or unset ANDAMIO_JWT."
+			}
+			suffix := "continuing without it."
+			if cfg.APIKey != "" {
+				suffix = "continuing with API key only."
+			}
+			// Warnings ride on stderr in every output mode (same judgment as
+			// the `dev keys create` one-time-key warning) — scripts pipe
+			// 2>/dev/null; humans running --output json still deserve to know
+			// their session is dead.
+			if exp, ok := config.TokenExpiry(cfg.UserJWT); ok {
+				fmt.Fprintf(os.Stderr, "Warning: stored session expired %s; %s %s\n",
+					exp.Local().Format("2006-01-02 15:04 MST"), suffix, hint)
+			}
+		})
+	}
 	return &Client{
 		baseURL:    cfg.BaseURL,
 		apiKey:     cfg.APIKey,
-		userJWT:    cfg.UserJWT,
+		userJWT:    userJWT,
 		httpClient: &http.Client{Timeout: httpTimeout},
 	}
-}
-
-// SetUserJWT sets the user JWT for authenticated requests.
-func (c *Client) SetUserJWT(jwt string) {
-	c.userJWT = jwt
 }
 
 // SetOnRetry registers a callback fired between retry attempts by
