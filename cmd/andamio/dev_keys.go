@@ -143,6 +143,24 @@ func devKeysClient(cfg *config.Config) (*client.Client, error) {
 			Message: "developer authentication required. Run 'andamio dev login --skey <path> --alias <name> --address <bech32>' first",
 		}
 	}
+	// Fail fast on a locally-expired dev JWT BEFORE promoting it into the
+	// UserJWT slot. Ordering is load-bearing: client.New drops expired
+	// tokens from that slot with a user-login-flavored warning, and a
+	// silently-stripped dev JWT on this dual-credential surface is exactly
+	// the 0.12.x regression class documented in
+	// docs/solutions/integration-issues/cli-dev-portal-dual-credential-pattern.md.
+	// Gating here means any token that reaches promotion is known-fresh, so
+	// the client-level drop can only ever fire on genuine user-slot JWTs.
+	// Undecodable dev JWTs pass through (fail open, gateway decides).
+	if cfg.DevJWTExpired(time.Now()) {
+		exp, _ := config.TokenExpiry(cfg.DevJWT)
+		hint := "Run 'andamio dev refresh' (or 'andamio dev login')"
+		if cfg.DevJWTFromEnv() {
+			hint = "Update or unset ANDAMIO_DEV_JWT"
+		}
+		return nil, &apierr.AuthError{Message: fmt.Sprintf(
+			"developer session expired at %s. %s", exp.Local().Format(time.RFC1123), hint)}
+	}
 	devCfg := *cfg
 	// `devCfg := *cfg` is a shallow copy — `SubmitHeaders` is the only map
 	// field on Config and would otherwise share the underlying map pointer

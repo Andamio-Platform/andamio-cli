@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -646,4 +647,74 @@ func captureBoth(t *testing.T, fn func()) (stdout, stderr string) {
 	_ = stdoutW.Close()
 	_ = stderrW.Close()
 	return string(<-stdoutDone), string(<-stderrDone)
+}
+
+// An expired dev JWT must fail fast with the dev-slot recovery hint BEFORE
+// promotion into the UserJWT slot — never be silently dropped by the
+// client-level expiry check (the 0.12.x dual-credential regression class).
+func TestDevKeysClient_ExpiredDevJWTFailsFastWithRefreshHint(t *testing.T) {
+	cfg := &config.Config{
+		APIKey: "api-key",
+		DevJWT: jwtWithExp(time.Now().Add(-1 * time.Hour)),
+	}
+	c, err := devKeysClient(cfg)
+	if c != nil {
+		t.Error("expected nil client for expired dev JWT")
+	}
+	var authErr *apierr.AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("want *apierr.AuthError, got %T: %v", err, err)
+	}
+	if !strings.Contains(authErr.Message, "developer session expired at") {
+		t.Errorf("message does not name the expiry: %q", authErr.Message)
+	}
+	if !strings.Contains(authErr.Message, "dev refresh") {
+		t.Errorf("message does not name 'dev refresh': %q", authErr.Message)
+	}
+	if strings.Contains(authErr.Message, "user login") {
+		t.Errorf("dev-slot failure must not point at 'user login': %q", authErr.Message)
+	}
+}
+
+// A fresh dev JWT rides on the wire even when the user slot holds an expired
+// JWT — the two slots are independent, and the promoted (fresh) dev token
+// must not be judged by the user slot's state.
+func TestDevKeysClient_ExpiredUserJWTDoesNotAffectDevSurface(t *testing.T) {
+	freshDev := jwtWithExp(time.Now().Add(1 * time.Hour))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Header.Get("Authorization"), "Bearer "+freshDev; got != want {
+			t.Errorf("Authorization = %q, want fresh dev bearer", got)
+		}
+		if got := r.Header.Get("X-API-Key"); got != "api-key" {
+			t.Errorf("X-API-Key = %q, want api-key", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"keys":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{
+		BaseURL: srv.URL,
+		APIKey:  "api-key",
+		UserJWT: jwtWithExp(time.Now().Add(-1 * time.Hour)), // expired user slot
+		DevJWT:  freshDev,
+	}
+	c, err := devKeysClient(cfg)
+	if err != nil {
+		t.Fatalf("devKeysClient: %v", err)
+	}
+	var resp devKeysListResponse
+	if err := c.Get(context.Background(), devKeysListPath, &resp); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+}
+
+// Undecodable dev JWTs pass through unchanged (fail open) — pins the
+// contract that keeps this file's other fixtures ("dev-jwt-should-be-bearer")
+// meaningful.
+func TestDevKeysClient_UndecodableDevJWTFailsOpen(t *testing.T) {
+	cfg := &config.Config{APIKey: "k", DevJWT: "not-a-jwt"}
+	if _, err := devKeysClient(cfg); err != nil {
+		t.Fatalf("undecodable dev JWT must not fail fast: %v", err)
+	}
 }

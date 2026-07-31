@@ -93,6 +93,14 @@ func (c *Config) UserJWTFromEnv() bool {
 	return c.envInjected.UserJWT != "" && c.UserJWT == c.envInjected.UserJWT
 }
 
+// DevJWTFromEnv reports whether the current developer JWT value was injected
+// via ANDAMIO_DEV_JWT at Load time (and has not been rotated since). Same
+// rationale as UserJWTFromEnv: an env-shadowed slot needs an env-flavored
+// recovery hint, because a rotated token is re-shadowed on the next Load.
+func (c *Config) DevJWTFromEnv() bool {
+	return c.envInjected.DevJWT != "" && c.DevJWT == c.envInjected.DevJWT
+}
+
 // HasFreshUserAuth reports whether a user JWT is present and not locally
 // known to be expired. Endpoint-routing decisions (teacher-vs-user endpoint
 // selection) use this instead of HasUserAuth so a dead JWT doesn't route a
