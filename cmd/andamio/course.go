@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
@@ -227,8 +228,11 @@ func runCourseModules(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Use teacher endpoint for richer data when teacher auth is available
-	if cfg.HasUserAuth() {
+	// Use teacher endpoint for richer data when a fresh JWT is available. A
+	// locally-expired JWT must route to the user endpoint: the client layer
+	// drops dead tokens, so the teacher endpoint would 401 on the API key
+	// alone (#134, R1).
+	if cfg.HasFreshUserAuth(time.Now()) {
 		return runCourseModulesTeacher(ctx, cfg, courseID)
 	}
 
@@ -327,8 +331,10 @@ func runCourseSlts(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Use teacher endpoint for lesson presence data when JWT is available
-	if cfg.HasUserAuth() {
+	// Use teacher endpoint for lesson presence data when a fresh JWT is
+	// available — see runCourseModules on why expired JWTs route to the
+	// user endpoint.
+	if cfg.HasFreshUserAuth(time.Now()) {
 		return runCourseSltsTeacher(ctx, cfg, courseID, moduleCode)
 	}
 
@@ -434,7 +440,7 @@ func runCourseLesson(cmd *cobra.Command, args []string) error {
 
 	// Try teacher endpoint first for draft module support
 	cfg, err := config.Load()
-	if err == nil && cfg.HasUserAuth() {
+	if err == nil && cfg.HasFreshUserAuth(time.Now()) {
 		content, terr := fetchTeacherModuleContent(ctx, cfg, courseID, moduleCode)
 		if terr == nil {
 			slts, _ := content["slts"].([]interface{})
@@ -478,7 +484,7 @@ func runCourseIntro(cmd *cobra.Command, args []string) error {
 
 	// Try teacher endpoint first for draft module support
 	cfg, err := config.Load()
-	if err == nil && cfg.HasUserAuth() {
+	if err == nil && cfg.HasFreshUserAuth(time.Now()) {
 		content, terr := fetchTeacherModuleContent(ctx, cfg, courseID, moduleCode)
 		if terr == nil {
 			if intro, ok := content["introduction"].(map[string]interface{}); ok {
@@ -510,7 +516,7 @@ func runCourseAssignment(cmd *cobra.Command, args []string) error {
 
 	// Try teacher endpoint first for draft module support
 	cfg, err := config.Load()
-	if err == nil && cfg.HasUserAuth() {
+	if err == nil && cfg.HasFreshUserAuth(time.Now()) {
 		content, terr := fetchTeacherModuleContent(ctx, cfg, courseID, moduleCode)
 		if terr == nil {
 			if assign, ok := content["assignment"].(map[string]interface{}); ok {

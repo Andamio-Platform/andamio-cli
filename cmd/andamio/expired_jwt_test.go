@@ -201,3 +201,48 @@ func TestExpiredJWT_EitherAuthSucceedsOnAPIKeyAlone(t *testing.T) {
 		t.Errorf("expiry warning missing from stderr: %q", stderr)
 	}
 }
+
+// U8: either-auth course reads route by JWT freshness. An expired JWT (with
+// API key present) must select the user endpoint and succeed — a
+// presence-based route would send it to the teacher endpoint where the
+// dropped JWT guarantees a 401.
+func TestExpiredJWT_CourseModulesRoutesToUserEndpoint(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	cases := []struct {
+		name         string
+		jwt          string
+		wantPathPart string
+	}{
+		{"expired routes to user endpoint", jwtWithExp(time.Now().Add(-1 * time.Hour)), "/api/v2/course/user/modules/"},
+		{"fresh routes to teacher endpoint", jwtWithExp(time.Now().Add(1 * time.Hour)), "/api/v2/course/teacher/course-modules/list"},
+		{"undecodable keeps teacher routing (fail open)", "test-jwt", "/api/v2/course/teacher/course-modules/list"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var paths []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				paths = append(paths, r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			_, _, code := runCLIWithJWT(t, bin, srv.URL, tc.jwt, nil, "course", "modules", "course-1", "--output", "json")
+
+			if code != 0 {
+				t.Errorf("exit code = %d, want 0", code)
+			}
+			found := false
+			for _, p := range paths {
+				if strings.Contains(p, tc.wantPathPart) {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("no request hit %q; paths seen: %v", tc.wantPathPart, paths)
+			}
+		})
+	}
+}
