@@ -1075,15 +1075,15 @@ func runDevRefreshFlow(ctx context.Context, cfg *config.Config) error {
 // `*Expired` and `*RemainingSeconds` mirror the userStatusResult convention so
 // scripts can branch deterministically on JSON without parsing timestamps.
 type devStatusResult struct {
-	APIKeySet             bool   `json:"api_key_set"`
-	BaseURL               string `json:"base_url"`
-	DevAuthenticated      bool   `json:"dev_authenticated"`
-	DevAlias              string `json:"dev_alias,omitempty"`
-	DevID                 string `json:"dev_id,omitempty"`
-	DevTier               string `json:"dev_tier,omitempty"`
-	DevKeyHash            string `json:"dev_key_hash,omitempty"`
-	JWTExpiresAt          string `json:"jwt_expires_at,omitempty"`
-	JWTExpired            *bool  `json:"jwt_expired,omitempty"`
+	APIKeySet        bool   `json:"api_key_set"`
+	BaseURL          string `json:"base_url"`
+	DevAuthenticated bool   `json:"dev_authenticated"`
+	DevAlias         string `json:"dev_alias,omitempty"`
+	DevID            string `json:"dev_id,omitempty"`
+	DevTier          string `json:"dev_tier,omitempty"`
+	DevKeyHash       string `json:"dev_key_hash,omitempty"`
+	JWTExpiresAt     string `json:"jwt_expires_at,omitempty"`
+	JWTExpired       *bool  `json:"jwt_expired,omitempty"`
 	// JWTRemainingSeconds intentionally has NO omitempty: zero is a valid
 	// signal (sub-second remaining — agents need to refresh immediately).
 	// Suppressing zero would conflate "almost expired" with "no signal".

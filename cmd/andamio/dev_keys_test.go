@@ -113,13 +113,13 @@ func devKeysTestEnv(t *testing.T, stub *devKeysGatewayStub) *config.Config {
 	t.Setenv("HOME", t.TempDir())
 
 	cfg := &config.Config{
-		BaseURL:   srv.URL,
-		APIKey:    "expected-api-key-on-wire",
-		UserJWT:   "tripwire-user-jwt-MUST-NOT-LEAK",
-		DevJWT:    "dev.jwt.bearer.value",
-		DevAlias:  "myalias",
-		DevID:     "dev-1",
-		DevTier:   "pioneer",
+		BaseURL:  srv.URL,
+		APIKey:   "expected-api-key-on-wire",
+		UserJWT:  "tripwire-user-jwt-MUST-NOT-LEAK",
+		DevJWT:   "dev.jwt.bearer.value",
+		DevAlias: "myalias",
+		DevID:    "dev-1",
+		DevTier:  "pioneer",
 	}
 	if err := config.Save(cfg); err != nil {
 		t.Fatalf("seed config: %v", err)

@@ -412,14 +412,14 @@ func runUserLogout(cmd *cobra.Command, args []string) error {
 }
 
 type userStatusResult struct {
-	APIKeySet              bool   `json:"api_key_set"`
-	BaseURL                string `json:"base_url"`
-	UserAuthenticated      bool   `json:"user_authenticated"`
-	UserAlias              string `json:"user_alias,omitempty"`
-	UserID                 string `json:"user_id,omitempty"`
-	SessionExpiresAt       string `json:"session_expires_at,omitempty"`
-	SessionExpired         *bool  `json:"session_expired,omitempty"`
-	SessionRemainingSeconds int64 `json:"session_remaining_seconds,omitempty"`
+	APIKeySet               bool   `json:"api_key_set"`
+	BaseURL                 string `json:"base_url"`
+	UserAuthenticated       bool   `json:"user_authenticated"`
+	UserAlias               string `json:"user_alias,omitempty"`
+	UserID                  string `json:"user_id,omitempty"`
+	SessionExpiresAt        string `json:"session_expires_at,omitempty"`
+	SessionExpired          *bool  `json:"session_expired,omitempty"`
+	SessionRemainingSeconds int64  `json:"session_remaining_seconds,omitempty"`
 }
 
 // decodedExpiryRFC3339 renders a token's decoded exp claim in the RFC3339
