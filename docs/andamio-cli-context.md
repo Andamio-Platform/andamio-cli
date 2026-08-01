@@ -372,10 +372,17 @@ Empty lists return `{"data": []}`.
 ### Error responses (--output json)
 
 ```json
-{"error": "error message here"}
+{"error": "error message here", "kind": "not_found"}
 ```
 
-Combined with exit codes: `0` = success, `1` = generic, `2` = not found, `3` = auth.
+`kind` pairs with the exit code — both come from the same classification, so
+branch on whichever suits the caller. See
+[Exit Codes and Error Kinds](#exit-codes-and-error-kinds) for the full table:
+`0` success, `1` generic/`server`/`backpressure`/`canceled`, `2` `not_found`,
+`3` `auth`, `4` `removed_command`, `5` `unreachable`, `6` `conflict`.
+
+Note that `6` is new in 1.0: conflicts previously exited `1`. A caller that
+branches on exit `1` to detect a conflict needs updating.
 
 ### Common nested fields
 

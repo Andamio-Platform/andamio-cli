@@ -16,4 +16,7 @@ This is a Go CLI tool (Cobra-based) for the Andamio Protocol. Key conventions:
 - `--output json` is the scripting surface — must be stable
 - No interactive prompts, no stdin reads
 - Commands use `RunE` and return errors; `main.go` handles exit codes
-- Exit code contract: 0=success, 1=generic error, 2=not found, 3=auth required
+- Exit code contract: 0=success, 1=generic error, 2=not found, 3=auth required,
+  4=removed command, 5=unreachable, 6=conflict. Under `--output json` each
+  failure also carries a `kind`; both derive from `apierr.Kind`, so extend that
+  mapper rather than re-classifying at a call site
