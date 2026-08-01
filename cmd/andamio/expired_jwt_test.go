@@ -63,7 +63,7 @@ func runCLIWithJWT(t *testing.T, bin, baseURL, userJWT string, extraEnv []string
 	}
 
 	cmd := exec.Command(bin, args...)
-	cmd.Env = append(append(os.Environ(), "HOME="+home), extraEnv...)
+	cmd.Env = append(envWithHome(home), extraEnv...)
 
 	var outBuf, errBuf strings.Builder
 	cmd.Stdout = &outBuf
@@ -370,11 +370,9 @@ func TestExpiredJWT_FreshEnvJWTNotJudgedByStaleStoredExpiry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), cfg, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	env := []string{"HOME=" + home, "ANDAMIO_JWT=" + freshEnv}
-
 	run := func(args ...string) (string, int) {
 		cmd := exec.Command(bin, args...)
-		cmd.Env = append(os.Environ(), env...)
+		cmd.Env = append(envWithHome(home), "ANDAMIO_JWT="+freshEnv)
 		var outBuf, errBuf strings.Builder
 		cmd.Stdout = &outBuf
 		cmd.Stderr = &errBuf

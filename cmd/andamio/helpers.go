@@ -23,6 +23,17 @@ func jwtAuthPreRunE(cmd *cobra.Command, args []string) error {
 	if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
 		return err
 	}
+	// cmd is the command cobra resolved, not the one that owns this hook. When
+	// the two differ, a real subcommand is running and needs credentials. When
+	// cmd is a guard-owned group, the only thing about to happen is a help dump
+	// or an unknown-subcommand error — see guardUnknownSubcommands for why the
+	// hook reaches these invocations at all. Gating them on auth would mean
+	// `andamio teacher` refusing to list its own subcommands to a caller who
+	// has not logged in yet, and `andamio teacher assignmnts` reporting the
+	// login state instead of the typo.
+	if isGuardedGroup(cmd) {
+		return nil
+	}
 	return requireUserAuth()
 }
 

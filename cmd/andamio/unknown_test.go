@@ -98,6 +98,88 @@ func TestUnknownCommand_BareGroupStillShowsHelp(t *testing.T) {
 	}
 }
 
+// Groups that gate their subcommands on a user JWT must still describe
+// themselves to a caller who has not logged in.
+//
+// The guard works by installing a RunE, and that makes a group Runnable. Cobra
+// short-circuits non-runnable commands with flag.ErrHelp *before* it walks the
+// PersistentPreRunE chain, so making these groups runnable started routing them
+// through jwtAuthPreRunE for the first time. `andamio teacher` began answering
+// "not authenticated" instead of listing its subcommands — a regression against
+// pre-1.0, on the two role groups 1.0 is scoped to.
+//
+// runRetired supplies an empty HOME, so every case here runs with no
+// credentials at all. That is the condition the regression needed.
+func TestUnknownCommand_AuthGatedGroupsDescribeThemselvesUnauthenticated(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	// Every group carrying jwtAuthPreRunE, directly or by inheritance.
+	groups := [][]string{
+		{"teacher"},
+		{"manager"},
+		{"course", "owner"},
+		{"project", "owner"},
+		{"project", "manager"},
+		{"project", "task"},
+	}
+
+	for _, args := range groups {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stdout, stderr, code := runRetired(t, bin, args...)
+
+			if code != 0 {
+				t.Errorf("exit code = %d, want 0 — listing subcommands must not require login.\nstderr: %s", code, stderr)
+			}
+			if !strings.Contains(stdout, "Available Commands") {
+				t.Errorf("no help on stdout:\n%s", stdout)
+			}
+			if strings.Contains(stderr, "not authenticated") || strings.Contains(stderr, "session expired") {
+				t.Errorf("auth was enforced on a help-only invocation:\n%s", stderr)
+			}
+		})
+	}
+}
+
+// A typo under an auth-gated group must report the typo, not the login state.
+//
+// Same root cause as the test above, but the failure is worse: issue #126 exists
+// so a caller can tell outcomes apart, and reporting exit 3 "not authenticated"
+// for a misspelled subcommand sends them to re-authenticate over a problem that
+// logging in cannot fix.
+func TestUnknownCommand_TypoUnderAuthGatedGroupReportsTypo(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"teacher", "bogus"}, `unknown command "bogus"`},
+		{[]string{"teacher", "assignment"}, "teacher assignments"},
+		{[]string{"manager", "bogus"}, `unknown command "bogus"`},
+		{[]string{"course", "owner", "bogus"}, `unknown command "bogus"`},
+		{[]string{"project", "task", "bogus"}, `unknown command "bogus"`},
+	}
+
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			stdout, stderr, code := runRetired(t, bin, tc.args...)
+
+			if code == 0 {
+				t.Errorf("exit code = 0; an unrecognized command must not report success")
+			}
+			if stdout != "" {
+				t.Errorf("stdout was polluted with %d bytes; it must stay clean for the pipe:\n%s", len(stdout), stdout)
+			}
+			if !strings.Contains(stderr, tc.want) {
+				t.Errorf("stderr does not contain %q:\n%s", tc.want, stderr)
+			}
+			if strings.Contains(stderr, "not authenticated") {
+				t.Errorf("reported the login state instead of the typo:\n%s", stderr)
+			}
+		})
+	}
+}
+
 // Retired commands have their own RunE and must keep their own exit code —
 // the guard skips any command that already defines behavior.
 func TestUnknownCommand_GuardLeavesRetiredStubsAlone(t *testing.T) {

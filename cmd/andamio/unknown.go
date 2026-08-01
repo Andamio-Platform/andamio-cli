@@ -55,6 +55,26 @@ func guardUnknownSubcommands(cmd *cobra.Command) {
 		cmd.SuggestionsMinimumDistance = 2
 	}
 
+	// Installing RunE makes the group Runnable, and that has a consequence that
+	// is easy to miss: cobra's execute() short-circuits with
+	//
+	//	if !c.Runnable() { return flag.ErrHelp }
+	//
+	// BEFORE it walks the chain of PersistentPreRunE hooks. A non-runnable
+	// group therefore never ran its own auth hook — `andamio teacher` printed
+	// help without credentials because cobra bailed out first. Making the group
+	// runnable removes that short-circuit, so jwtAuthPreRunE starts firing on
+	// invocations that only ever print help or name a typo.
+	//
+	// The annotation marks a group as guard-owned so jwtAuthPreRunE can restore
+	// the old behavior for exactly these two cases. Neither reaches the network,
+	// so neither needs credentials — and a caller who typed `teacher assignmnts`
+	// has to hear about the typo, not about being logged out.
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[guardedGroupAnnotation] = "true"
+
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		if len(args) == 0 {
 			// Asking a group what it offers is a legitimate request. Help goes
@@ -63,6 +83,16 @@ func guardUnknownSubcommands(cmd *cobra.Command) {
 		}
 		return unknownSubcommandError(c, args[0])
 	}
+}
+
+// guardedGroupAnnotation marks a command whose RunE was installed by
+// guardUnknownSubcommands rather than by a real implementation.
+const guardedGroupAnnotation = "andamio.group_guard"
+
+// isGuardedGroup reports whether cmd is a group whose only behavior is the
+// guard's own — printing help, or reporting an unrecognized subcommand.
+func isGuardedGroup(cmd *cobra.Command) bool {
+	return cmd != nil && cmd.Annotations[guardedGroupAnnotation] == "true"
 }
 
 // unknownSubcommandError names what was not recognized and where to look, and

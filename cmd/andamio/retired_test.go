@@ -427,12 +427,51 @@ func TestRetiredRouteAllowances_AreStillNeeded(t *testing.T) {
 
 // --- end-to-end behavior through the real binary --------------------------
 
+// isolatedEnv builds the environment for a binary invocation so the result does
+// not depend on who is running the suite.
+//
+// These tests spawn the real binary, and the binary reads ~/.andamio/config.json
+// plus the ANDAMIO_* overrides. Inheriting the developer's environment made the
+// outcome a property of the machine: on a workstation holding an expired session
+// the auth-gated cases failed with "session expired", on a clean checkout they
+// failed with "not authenticated", and on a machine with a live session they
+// passed. Pinning HOME to a temp dir and dropping the ANDAMIO_* overrides makes
+// "no credentials" the deliberate fixture it should always have been.
+//
+// Tests that need credentials should set them explicitly on top of this.
+func isolatedEnv(t *testing.T) []string {
+	t.Helper()
+	return envWithHome(t.TempDir())
+}
+
+// envWithHome returns the ambient environment with HOME repointed and every
+// ANDAMIO_* override removed. The overrides matter as much as HOME: ANDAMIO_JWT
+// and ANDAMIO_DEV_JWT are read at config.Load and take precedence over the file
+// on disk, so a developer with either exported would otherwise hand credentials
+// to a test that wrote a config specifically to control them.
+func envWithHome(home string) []string {
+	ambient := os.Environ()
+	env := make([]string, 0, len(ambient)+1)
+	for _, kv := range ambient {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if name == "HOME" || strings.HasPrefix(name, "ANDAMIO_") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, "HOME="+home)
+}
+
 // runRetired invokes the built binary and returns stdout, stderr and the exit
 // code. A retired command is expected to fail, so a non-zero exit is the normal
 // path here rather than a test failure.
 func runRetired(t *testing.T, bin string, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
+	cmd.Env = isolatedEnv(t)
 	var outBuf, errBuf strings.Builder
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
