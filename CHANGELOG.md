@@ -12,6 +12,14 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 If you own, teach or manage on Andamio, **your workflows are unchanged.** Everything you do today — creating courses and projects, importing and publishing module content, minting tasks, reviewing submissions, signing transactions with a local `.skey` — works exactly as it did in 0.13, and this release adds to it.
 
+### Requires Andamio API 2.5 or later
+
+**1.0 is supported against Andamio API 2.5 and later only.** It was built and verified against 2.5, which carries a contract naming change and a new pagination convention; it has never been tested against the 2.4 line. Running 1.0 against a 2.4 gateway is unsupported, and the failures would not be limited to the new commands.
+
+**At release, this means preprod only.** Mainnet has not yet cut over to 2.5 — the pre-cutover work is tracked in `andamio-ops#189` — so **if you teach or manage on mainnet, stay on 0.13.x until that lands.** We are stating this plainly rather than leaving it to be discovered, because 1.0's headline addition is the Teacher assessment surface and mainnet Teachers are exactly the people who cannot use it yet.
+
+Supporting two gateway contracts from one CLI was the alternative, and we chose not to: it would mean every command carrying two code paths, with the version-detection logic itself untested against the older one. Declaring the requirement is the honest statement of what was actually verified.
+
 What 1.0 adds is a designed automation surface for assessment. Our own tooling has been driving the CLI with `--output json` for months; this release makes that a supported path rather than a happy accident.
 
 ### Added

@@ -12,6 +12,12 @@ Learners and contributors use the [Andamio app](https://app.andamio.io), which s
 
 The CLI is built to be driven by programs as well as people. Every list and get command takes `--output json`; progress goes to stderr and data to stdout; nothing reads stdin or prompts. See [Scripting](#scripting) below.
 
+## Which version you need
+
+> **1.0 requires Andamio API 2.5 or later.** It was built and verified against 2.5 and has never been tested against the 2.4 line.
+>
+> **Mainnet has not cut over to 2.5 yet** (tracked in `andamio-ops#189`). Until it does, use **1.0 on preprod** and **stay on 0.13.x for mainnet**. Check the [CHANGELOG](CHANGELOG.md#requires-andamio-api-25-or-later) before upgrading a mainnet workflow.
+
 ## Installation
 
 ### Homebrew (macOS)
