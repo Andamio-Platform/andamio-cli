@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -31,21 +30,9 @@ Examples:
   andamio tx build /v2/tx/instance/owner/course/create --body-file create-course.json --output json
   andamio tx build /v2/tx/global/user/access-token/mint \
     --body '{"alias":"dev1","initiator_data":{"change_address":"addr_test1...","used_addresses":["addr_test1..."]}}'`,
-	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
-			return err
-		}
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
-	},
-	RunE: runTxBuild,
+	Args:    cobra.ExactArgs(1),
+	PreRunE: jwtAuthPreRunE,
+	RunE:    runTxBuild,
 }
 
 func init() {

@@ -54,14 +54,56 @@ andamio course list --output markdown  # Markdown table
 
 **For agents: always use `--output json`**. This is the stable, machine-parseable interface.
 
-## Exit Codes
+## Exit Codes and Error Kinds
 
-| Code | Meaning | When |
-|------|---------|------|
-| 0 | Success | Command completed normally |
-| 1 | Generic error | Network, server, unexpected errors |
-| 2 | Not found | Resource doesn't exist (404) |
-| 3 | Auth required | No credentials or invalid credentials (401/403) |
+Every failure carries an exit code **and**, under `--output json`, a `kind`
+field. Both derive from the same classification, so they never disagree —
+branch on whichever is more convenient.
+
+| Code | `kind` | When |
+|------|--------|------|
+| 0 | — | Success, **including an empty but valid result set** |
+| 1 | `error` | Unexpected, or bad input |
+| 1 | `server` | 5xx response |
+| 1 | `backpressure` | 408 / 425 / 429 — retry later |
+| 1 | `canceled` | Interrupted, or a `--timeout` expired |
+| 2 | `not_found` | Resource doesn't exist (404) |
+| 3 | `auth` | No credentials, or 401 / 403 |
+| 4 | `removed_command` | Command was retired in 1.0 |
+| 5 | `unreachable` | The request never reached the service |
+| 6 | `conflict` | Conflicts with existing state (409) |
+
+**An empty result is not an error.** A list command that finds nothing emits an
+empty collection and exits 0:
+
+```bash
+andamio course list --output json   # {"data":[]}, exit 0
+```
+
+This is what keeps three different situations apart. Check them like this:
+
+```bash
+out=$(andamio teacher assignments list --course "$COURSE" --output json); code=$?
+case $code in
+  0) count=$(jq '.data | length' <<<"$out")    # 0 means nothing awaiting review
+     ;;
+  3) echo "not permitted — check your login" >&2 ;;
+  5) echo "service unreachable — retry later" >&2 ;;
+  *) jq -r '.kind + ": " + .error' <<<"$out" >&2 ;;
+esac
+```
+
+Error envelope shape under `--output json`:
+
+```json
+{"error": "API error 404: ...", "kind": "not_found"}
+```
+
+Text mode prints the message to stderr and carries no `kind`.
+
+**Stability.** Codes 0–3 predate 1.0 and are fixed. New kinds may be added; the
+existing ones are not renamed. Note that 1.0 moved `conflict` from exit 1 to
+exit 6 — see CHANGELOG.
 
 ## Composability Contract
 
@@ -133,9 +175,15 @@ andamio course modules "$COURSE_ID" --output json
 | Command | Auth | Description |
 |---------|------|-------------|
 | `teacher courses` | jwt | List courses where you are a teacher |
-| `teacher assignments list` | jwt | List pending assignment commitments |
-| `teacher assignments list --course <id>` | jwt | List commitments for a specific course (includes full submission) |
+| `teacher assignments list` | jwt | List pending assignment commitments (lightweight summary, no nested `content`) |
+| `teacher assignments list --course <id>` | jwt | List commitments for a course, including full submissions |
 | `teacher assignments get <course> <module> <student>` | jwt | Get a specific student's commitment |
+| `teacher assessment build --course-id <id> --alias <you> --decision <student>=<accept\|refuse>` | jwt | Build an assessment transaction **without signing or submitting it**. Repeat `--decision`, or pass `--decisions-file <path>` |
+
+Submissions carry two evidence fields:
+
+- `content.evidence_text` — the submission as Markdown. Read this for the prose.
+- `content.evidence` — the raw Tiptap document. This is the hash-bearing form; read it to verify an on-chain commitment hash.
 
 ### project — Project data
 
@@ -215,17 +263,38 @@ SLTS=$(andamio course slts "$COURSE" "$MODULE" --output json)
 # 2. Get the assignment prompt
 ASSIGNMENT=$(andamio course assignment "$COURSE" "$MODULE" --output json)
 
-# 3. List pending submissions
-SUBMISSIONS=$(andamio teacher assignments list --course "$COURSE" --output json)
+# 3. List submissions awaiting review
+andamio teacher assignments list --course "$COURSE" --output json \
+  | jq '.data[] | select(.content.commitment_status == "SUBMITTED")'
 
-# 4. Get a specific student's submission
-SUBMISSION=$(andamio teacher assignments get "$COURSE" "$MODULE" "$STUDENT" --output json)
-# The submission content is at: .content.evidence (Tiptap JSON)
+# 4. Read what a student submitted, as prose — no Tiptap traversal needed
+andamio teacher assignments get "$COURSE" "$MODULE" "$STUDENT" --output json \
+  | jq -r '.content.evidence_text'
+# .content.evidence holds the raw Tiptap document; read that to verify a hash.
 
-# 5. After evaluation, build assess transaction
-andamio tx build /v2/tx/course/teacher/assignments/assess \
-  --body '{"course_id":"...","assessments":[{"student_alias":"...","result":"pass"}]}'
+# 5. After evaluation, build the assessment transaction — nothing is signed
+#    or submitted. One transaction carries every decision, accepts AND refuses.
+andamio teacher assessment build \
+  --course-id "$COURSE" \
+  --alias "$TEACHER_ALIAS" \
+  --decision student-01=accept \
+  --decision student-02=refuse \
+  --output json
 ```
+
+The build envelope carries the decision set alongside `unsigned_tx`, so a human
+reviews both from one command rather than trusting a separate summary of what
+the CBOR encodes. **The echoed decisions are the request, not a decode of the
+returned transaction.**
+
+```bash
+# 6. A human approves, then signs and submits — separate steps by design
+andamio tx sign --tx "$UNSIGNED_TX" --skey ./payment.skey --output json
+andamio tx submit --tx "$SIGNED_TX" --output json
+```
+
+Never auto-sign. The separation exists so a person stands between an agent's
+recommendation and a credential landing on-chain.
 
 ### Manage project tasks
 
@@ -303,10 +372,17 @@ Empty lists return `{"data": []}`.
 ### Error responses (--output json)
 
 ```json
-{"error": "error message here"}
+{"error": "error message here", "kind": "not_found"}
 ```
 
-Combined with exit codes: `0` = success, `1` = generic, `2` = not found, `3` = auth.
+`kind` pairs with the exit code — both come from the same classification, so
+branch on whichever suits the caller. See
+[Exit Codes and Error Kinds](#exit-codes-and-error-kinds) for the full table:
+`0` success, `1` generic/`server`/`backpressure`/`canceled`, `2` `not_found`,
+`3` `auth`, `4` `removed_command`, `5` `unreachable`, `6` `conflict`.
+
+Note that `6` is new in 1.0: conflicts previously exited `1`. A caller that
+branches on exit `1` to detect a conflict needs updating.
 
 ### Common nested fields
 

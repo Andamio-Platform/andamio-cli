@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -52,6 +53,28 @@ Known commitment_status values: AWAITING_SUBMISSION, SUBMITTED, ACCEPTED,
 REFUSED, CREDENTIAL_CLAIMED, LEFT, PENDING_TX_* (transient). The CLI does
 not validate or alias — whatever string the gateway returns is what you see.
 
+Machine-readable output contract (--output json):
+
+  .data[]                         one row per commitment
+  .data[].student_alias           on-chain alias of the submitter
+  .data[].course_module_code      module the commitment belongs to
+  .data[].course_id               course the commitment belongs to
+  .data[].content                 present with --course; absent on the
+                                  no-filter summary
+  .data[].content.commitment_status  raw gateway enum (see above)
+  .data[].content.evidence        the submission as a Tiptap JSON document,
+                                  passed through verbatim — this is the
+                                  hash-bearing form
+  .data[].content.evidence_text   the same submission rendered as Markdown,
+                                  added by the CLI. Absent when there is no
+                                  evidence. Read this to get the prose; read
+                                  .content.evidence to verify a hash.
+
+Read a submission without walking the Tiptap tree:
+  andamio teacher assignments list --course <id> --output json \
+    | jq -r '.data[] | select(.content.commitment_status=="SUBMITTED")
+             | "\(.student_alias): \(.content.evidence_text)"'
+
 Examples:
   andamio teacher assignments list
   andamio teacher assignments list --course <course-id>
@@ -63,6 +86,15 @@ var teacherAssignmentsGetCmd = &cobra.Command{
 	Use:   "get <course-id> <module-code> <student-alias>",
 	Short: "Get a specific assignment commitment for review",
 	Long: `Get full details for a specific student's assignment commitment.
+
+Emits the matched row from 'teacher assignments list', including
+content.evidence_text — the submission rendered as Markdown alongside the
+raw Tiptap document in content.evidence. See 'teacher assignments list --help'
+for the full output contract.
+
+Read one submission:
+  andamio teacher assignments get <course-id> <module-code> <student-alias> \
+    --output json | jq -r '.content.evidence_text'
 
 Examples:
   andamio teacher assignments get <course-id> <module-code> <student-alias>
@@ -109,11 +141,12 @@ func runTeacherAssignmentsList(cmd *cobra.Command, args []string) error {
 }
 
 // fetchTeacherAssignmentsList POSTs to the assignment-commitments listing
-// endpoint and returns the raw decoded envelope. Split from the Cobra handler
-// so tests can drive it with an httptest stub without writing to disk config.
-// The envelope is returned as map[string]interface{} so the JSON pass-through
-// path in the caller emits the gateway response verbatim (no struct decoding
-// would silently drop unknown fields).
+// endpoint and returns the decoded envelope, with each row's evidence decoded
+// to Markdown (see enrichCommitmentRows). Split from the Cobra handler so tests
+// can drive it with an httptest stub without writing to disk config. The
+// envelope is returned as map[string]interface{} so the JSON pass-through path
+// in the caller emits the gateway response verbatim (no struct decoding would
+// silently drop unknown fields).
 func fetchTeacherAssignmentsList(ctx context.Context, c *client.Client, courseID string) (map[string]interface{}, error) {
 	var body interface{}
 	if courseID != "" {
@@ -123,7 +156,73 @@ func fetchTeacherAssignmentsList(ctx context.Context, c *client.Client, courseID
 	if err := c.Post(ctx, "/api/v2/course/teacher/assignment-commitments/list", body, &resp); err != nil {
 		return nil, err
 	}
+	enrichCommitmentRows(resp)
 	return resp, nil
+}
+
+// evidenceTextField is the sibling key carrying the learner's submission as
+// Markdown. Named as a constant because it is a documented output contract,
+// not an implementation detail — see enrichCommitmentEvidence.
+const evidenceTextField = "evidence_text"
+
+// enrichCommitmentRows adds decoded evidence to every row in a
+// assignment-commitments envelope. Missing, empty or non-array `data` is a
+// no-op: the no-`--course` summary response has a different shape and must
+// pass through untouched.
+func enrichCommitmentRows(resp map[string]interface{}) {
+	data, ok := resp["data"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, item := range data {
+		if row, ok := item.(map[string]interface{}); ok {
+			enrichCommitmentEvidence(row)
+		}
+	}
+}
+
+// enrichCommitmentEvidence sets content.evidence_text to the Markdown rendering
+// of content.evidence, leaving content.evidence itself untouched.
+//
+// Why a sibling field rather than a replacement: content.evidence is
+// hash-bearing. The on-chain commitment hash is computed over the normalized
+// Tiptap document, so the raw structure has to round-trip byte-for-byte for
+// hash verification to mean anything. Rewriting it in place would quietly break
+// that. Adding a sibling is also non-breaking for existing --output json
+// consumers.
+//
+// Why decode at all: the submission a teacher needs to read arrives as a Tiptap
+// document — nested nodes, marks, attrs. Before 1.0 every consumer walked that
+// tree itself; the repo's own assess-assignment skill instructed the agent to
+// "extract the text". That is CLI work, and it already existed for course
+// export (tiptapToMarkdown), so 1.0 wires it up rather than asking each caller
+// to reimplement it (issue #124).
+//
+// Output contract:
+//   - evidence_text is present only when content.evidence is a Tiptap document
+//     object. It is absent — not empty-string — otherwise.
+//   - Rows without a content object (the no-`--course` summary shape) are
+//     untouched, exactly as they already are for commitment_status.
+//   - content.evidence is never modified.
+//
+// The image-URL return from tiptapToMarkdown is discarded: evidence is prose,
+// and a caller wanting embedded image references can read them from the raw
+// document.
+func enrichCommitmentEvidence(row map[string]interface{}) {
+	content, ok := row["content"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	evidence, ok := content["evidence"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	text, _ := tiptapToMarkdown(evidence)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	content[evidenceTextField] = text
 }
 
 // renderTeacherAssignmentsListText writes the text-mode table for the
@@ -202,16 +301,26 @@ func runTeacherAssignmentsGet(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	// Fetch full commitment data for this course, then filter by module + student
-	body := map[string]string{"course_id": courseID}
-	var resp map[string]interface{}
-	if err := c.Post(cmd.Context(), "/api/v2/course/teacher/assignment-commitments/list", body, &resp); err != nil {
+	// Fetch full commitment data for this course, then filter by module + student.
+	// Routed through fetchTeacherAssignmentsList so `get` and `list` cannot
+	// diverge in how they decode evidence.
+	resp, err := fetchTeacherAssignmentsList(cmd.Context(), c, courseID)
+	if err != nil {
 		return err
 	}
 
+	// A missing or non-array data field means the course has no commitments to
+	// match against — the same outcome as searching the list and finding
+	// nothing, and it must classify the same way. This branch previously
+	// returned an untyped error and exited 1, so "this course has no
+	// commitments" was indistinguishable from a server failure, while the
+	// otherwise-identical branch at the bottom of this function exited 2.
 	data, ok := resp["data"].([]interface{})
 	if !ok {
-		return fmt.Errorf("no commitments found for course %s", courseID)
+		return &apierr.NotFoundError{
+			Message: fmt.Sprintf("no commitments found for course %s. Run 'andamio teacher assignments list --course %s' to check the course id",
+				courseID, courseID),
+		}
 	}
 
 	for _, item := range data {

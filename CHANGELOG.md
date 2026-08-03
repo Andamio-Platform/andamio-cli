@@ -2,9 +2,73 @@
 
 All notable changes to `andamio-cli` are documented in this file.
 
-The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). Dates use `YYYY-MM-DD`. Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) — but note that the CLI is pre-1.0 and small breaking changes may ship in minor versions. **Breaking changes to the `--output json` envelope shape are called out explicitly** so scripts and agents can audit their integrations before upgrading.
+The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/). Dates use `YYYY-MM-DD`. Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): from 1.0.0 onward, breaking changes ship only in major versions. **Breaking changes to the `--output json` envelope shape are called out explicitly** so scripts and agents can audit their integrations before upgrading.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-07-27
+
+**Andamio CLI 1.0 is a developer tool for the people who author work and assess it: course Owners and Teachers, and project Managers.**
+
+If you own, teach or manage on Andamio, **your workflows are unchanged.** Everything you do today — creating courses and projects, importing and publishing module content, minting tasks, reviewing submissions, signing transactions with a local `.skey` — works exactly as it did in 0.13, and this release adds to it.
+
+### Requires Andamio API 2.5 or later
+
+**1.0 is supported against Andamio API 2.5 and later only.** It was built and verified against 2.5, which carries a contract naming change and a new pagination convention; it has never been tested against the 2.4 line. Running 1.0 against a 2.4 gateway is unsupported, and the failures would not be limited to the new commands.
+
+**At release, this means preprod only.** Mainnet has not yet cut over to 2.5 — the pre-cutover work is tracked in `andamio-ops#189` — so **if you teach or manage on mainnet, stay on 0.13.x until that lands.** We are stating this plainly rather than leaving it to be discovered, because 1.0's headline addition is the Teacher assessment surface and mainnet Teachers are exactly the people who cannot use it yet.
+
+Supporting two gateway contracts from one CLI was the alternative, and we chose not to: it would mean every command carrying two code paths, with the version-detection logic itself untested against the older one. Declaring the requirement is the honest statement of what was actually verified.
+
+What 1.0 adds is a designed automation surface for assessment. Our own tooling has been driving the CLI with `--output json` for months; this release makes that a supported path rather than a happy accident.
+
+### Added
+
+- **`andamio teacher assessment build`** — builds a course assignment assessment transaction and stops. Nothing is signed, nothing is submitted. Pass decisions as `--decision <student-alias>=<accept|refuse>` (repeatable) or `--decisions-file <path>` for a cohort.
+
+  The point is the human gate. An assessment decision should not be automated end to end: a program can recommend one, but a person approves it — and that approval only means something if the person can see what they are approving. Previously an agent built the transaction with `tx build`, received opaque CBOR, and then described in its own prose what that CBOR supposedly encoded. The `--output json` envelope now carries the decision set alongside `unsigned_tx`, so both come from one command.
+
+  Stated plainly, in the help text and here: the echoed decisions are the request the CLI sent, **not** a decode of the transaction the gateway returned. It narrows the trust gap rather than closing it. Decoding the transaction requires Plutus datum interpretation and is deliberately out of scope for 1.0.
+
+  Duplicate aliases are rejected rather than last-wins. Two conflicting outcomes for one learner means the caller lost track of its own decision set, and silently picking one would put a credential decision on-chain that nobody made.
+
+- **`content.evidence_text` on `teacher assignments list` / `get`** — the learner's submission rendered as Markdown, alongside the raw Tiptap document that remains in `content.evidence`. Read the first for the prose; read the second to verify an on-chain commitment hash. Additive, so existing consumers are unaffected. Previously every caller walked the Tiptap tree itself.
+
+- **`andamio help exit-codes`** — a help topic documenting the exit-code and error-kind contract, reachable from the binary rather than only from the repo.
+
+- **`kind` field in the `--output json` error envelope** — a stable, machine-readable failure name (`not_found`, `auth`, `conflict`, `server`, `backpressure`, `removed_command`, `unreachable`, `canceled`, `error`). Exit code and `kind` derive from the same classification and cannot disagree. Text-mode output is unchanged.
+
+- **Exit code 5, `unreachable`** — the request never reached the service. Transport failures previously exited 1, indistinguishable from a malformed flag or a decode failure. Cancellation and `--timeout` expiry are deliberately *not* classified this way: an operator pressing Ctrl-C is not the service being down.
+
+### Removed
+
+- **`andamio course student ...` and `andamio project contributor ...`** — the learner and contributor command surface. Learners and contributors use the [Andamio app](https://app.andamio.io), which signs and submits their work in one flow.
+
+  Running a removed command tells you what happened and where the operation lives now, rather than showing a generic error. It exits 4 with `kind: removed_command`, so a script can detect it. This works for every retired command in every invocation shape, including with the flags a pre-1.0 tutorial would have told you to pass.
+
+  **This is a change to the CLI, not to the API.** The gateway routes these commands used are unaffected and remain available — what 1.0 removes is the CLI's decision to expose them. Removing part of the surface would have left a tool that has to explain itself: a learner who can read but not commit, submit but not create.
+
+  **Scoped out, not ruled out.** Learner support may return in a later release if there is a reason for it. Its absence from 1.0 is a scope decision.
+
+- **The `🎓 Learning` section and learner counts from `andamio user me`** (text output only). `--output json` still passes the gateway payload through verbatim, including `student.enrolled_courses` and the enrolled/completed/contributing counts — the CLI does not edit an API response it does not own.
+
+### Changed
+
+- **Behavior change: an expired stored session no longer poisons API-key access.** The CLI now decodes the stored JWT's `exp` claim locally (no signature check, 30-second early-expiry skew) and drops a known-expired token from outgoing requests, so either-auth commands (`course list`, `course get`, `course modules`, …) that previously exited 3 with an expired JWT now **succeed on the API key alone (exit 0)** with a one-line warning on stderr. **If a script used one of these commands as a session-liveness probe, switch it to `user status --output json` and branch on `session_expired`** — that field now uses the same skew-inclusive predicate as enforcement, so probe and behavior cannot disagree. (`user_authenticated` remains presence-based and expiry-blind.) Note for consumers of `course modules`/`slts`/`lesson`/`intro`/`assignment`: with a fresh JWT these prefer the richer teacher endpoints; once the JWT expires they return the plain user-endpoint shape (no draft modules, no lesson-presence fields) at exit 0 — scripts diffing that output should treat missing draft content as a session-expiry signal (`session_expired`), not as deletions. JWT-required commands (`course owner *`, `teacher *`, `project task *`, `course export/import`, `tx build/register/run`, …) still exit 3, but now fail fast client-side with the expiry time and recovery command in the message instead of a generic gateway 401. Undecodable tokens are sent as-is (fail open — the gateway stays the authority). `user status --output json` additionally gains `session_expires_at`/`session_expired`/`session_remaining_seconds` for headless-login and `ANDAMIO_JWT` sessions (derived from the token's `exp`) that previously reported no expiry fields at all, and headless `user login --output json` now includes `expires_at`.
+
+- **BREAKING: conflict errors now exit 6 instead of 1.** A 409 was already a typed error internally but shared exit 1 with every unclassified failure, so a script could not tell a genuine conflict from an unexpected error. **If you branch on exit 1 for conflicts, update to 6.** This is the only exit-code change to an existing path; codes 0–3 are unchanged and remain fixed.
+
+- `andamio --help` describes a three-role tool rather than "query courses, credentials, and more". README and the in-repo guides match.
+
+### Fixed
+
+- **An expired JWT no longer bricks the CLI until a manual logout** (#134). Previously the dead token rode on every request — including the headless login-session endpoint itself — and the gateway's fail-closed 401 blocked even re-login until the user thought to run `user logout` first. `user login` now works over an expired stored session in both flows — the browser flow's "already authenticated" guard treats an expired JWT as unauthenticated, and the headless flow never sends the stored token on the login request at all (which also makes headless re-login work over tokens the CLI cannot even decode). Headless logins also now persist the session expiry (decoded from the token), so `user status` can finally say `EXPIRED` instead of "active (no expiry info)" — and its recovery hint drops the obsolete `logout &&` step. Expired **developer** JWTs on dual-credential surfaces (`dev keys *`, `apikey usage/profile`) fail fast with a `dev refresh` hint and are never silently stripped.
+
+- **An unrecognized command now fails instead of reporting success.** `andamio bogus-command` — and any typo like `andamio course lst` — previously printed the help text to **stdout** and exited **0**. A script doing `andamio course lst --output json | jq '.data[]'` got help text in the pipe and a success code. Unrecognized commands now write to stderr, leave stdout clean, exit non-zero, and suggest a near match where there is one. Asking a group what it offers (`andamio course` with no arguments) still prints help and exits 0.
+
+- `andamio teacher assignments get` returned an untyped error (exit 1) when a course had no commitments, while the otherwise-identical "no matching student" branch a few lines later correctly exited 2. Both now exit 2 with `kind: not_found`, so "this course has nothing" is no longer indistinguishable from a server failure.
+
+- The assess-transaction example in `docs/andamio-cli-context.md` documented fields that do not exist (`assessments`, `student_alias`, `result: "pass"`). The real shape is `assignment_decisions`, `alias`, `outcome: "accept"`. An agent following the old example would have built a request the API rejects. `teacher assessment build` now owns that payload shape so it cannot be got wrong by hand.
 
 ## [0.13.3] - 2026-06-05
 

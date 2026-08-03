@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -24,20 +23,8 @@ List valid transaction types with: andamio tx types
 Examples:
   andamio tx register --tx-hash abc123... --tx-type access_token_mint
   andamio tx register --tx-hash abc123... --tx-type course_create --instance-id <course-id>`,
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
-			return err
-		}
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
-	},
-	RunE: runTxRegister,
+	PreRunE: jwtAuthPreRunE,
+	RunE:    runTxRegister,
 }
 
 func init() {

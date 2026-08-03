@@ -388,7 +388,13 @@ func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed2551
 		}
 	}
 
-	c := client.New(cfg)
+	// Build the login client from a copy with the user-slot JWT blanked
+	// (mirroring runHeadlessLogin): dev login never needs user auth, and an
+	// unrelated expired user JWT would otherwise trigger client.New's "run
+	// 'andamio user login'" warning in the middle of a dev-slot flow.
+	loginCfg := *cfg
+	loginCfg.UserJWT = ""
+	c := client.New(&loginCfg)
 
 	// Step 1: Open login session keyed to (alias, wallet_address). The gateway
 	// looks up the developer account, persists a 5-min nonce against the
@@ -992,7 +998,11 @@ func runDevRefresh(cmd *cobra.Command, args []string) error {
 func runDevRefreshFlow(ctx context.Context, cfg *config.Config) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
-	c := client.New(cfg)
+	// Same user-slot blanking as dev login above: refresh authenticates via
+	// the refresh token in the request body, never the user JWT.
+	refreshCfg := *cfg
+	refreshCfg.UserJWT = ""
+	c := client.New(&refreshCfg)
 
 	if !isJSON {
 		fmt.Fprintln(os.Stderr, "Rotating developer JWT...")
@@ -1065,15 +1075,15 @@ func runDevRefreshFlow(ctx context.Context, cfg *config.Config) error {
 // `*Expired` and `*RemainingSeconds` mirror the userStatusResult convention so
 // scripts can branch deterministically on JSON without parsing timestamps.
 type devStatusResult struct {
-	APIKeySet             bool   `json:"api_key_set"`
-	BaseURL               string `json:"base_url"`
-	DevAuthenticated      bool   `json:"dev_authenticated"`
-	DevAlias              string `json:"dev_alias,omitempty"`
-	DevID                 string `json:"dev_id,omitempty"`
-	DevTier               string `json:"dev_tier,omitempty"`
-	DevKeyHash            string `json:"dev_key_hash,omitempty"`
-	JWTExpiresAt          string `json:"jwt_expires_at,omitempty"`
-	JWTExpired            *bool  `json:"jwt_expired,omitempty"`
+	APIKeySet        bool   `json:"api_key_set"`
+	BaseURL          string `json:"base_url"`
+	DevAuthenticated bool   `json:"dev_authenticated"`
+	DevAlias         string `json:"dev_alias,omitempty"`
+	DevID            string `json:"dev_id,omitempty"`
+	DevTier          string `json:"dev_tier,omitempty"`
+	DevKeyHash       string `json:"dev_key_hash,omitempty"`
+	JWTExpiresAt     string `json:"jwt_expires_at,omitempty"`
+	JWTExpired       *bool  `json:"jwt_expired,omitempty"`
 	// JWTRemainingSeconds intentionally has NO omitempty: zero is a valid
 	// signal (sub-second remaining — agents need to refresh immediately).
 	// Suppressing zero would conflate "almost expired" with "no signal".
@@ -1105,7 +1115,21 @@ func runDevStatus(cmd *cobra.Command, args []string) error {
 			result.DevTier = cfg.DevTier
 			result.DevKeyHash = cfg.DevKeyHash
 			result.JWTExpiresAt = cfg.DevJWTExpiresAt
-			if expired, remaining, ok := timeUntil(cfg.DevJWTExpiresAt); ok {
+			// Prefer the token's own exp claim with the enforcement skew so
+			// this probe cannot disagree with devKeysClient's gate inside the
+			// 30s window (#134) — the same probe/enforcement alignment `user
+			// status` guarantees for the user slot. Stored expiry remains the
+			// fallback for undecodable tokens.
+			if exp, ok := config.TokenExpiry(cfg.DevJWT); ok {
+				if result.JWTExpiresAt == "" {
+					result.JWTExpiresAt = exp.UTC().Format(time.RFC3339)
+				}
+				expired := config.ExpiredAt(exp, time.Now())
+				result.JWTExpired = &expired
+				if !expired {
+					result.JWTRemainingSeconds = int64(time.Until(exp).Seconds())
+				}
+			} else if expired, remaining, ok := timeUntil(cfg.DevJWTExpiresAt); ok {
 				result.JWTExpired = &expired
 				if !expired {
 					result.JWTRemainingSeconds = int64(remaining.Seconds())
@@ -1149,7 +1173,13 @@ func runDevStatus(cmd *cobra.Command, args []string) error {
 	if cfg.DevID != "" {
 		fmt.Printf("Developer ID: %s\n", cfg.DevID)
 	}
-	printExpiryLine("JWT", cfg.DevJWTExpiresAt, "Run 'andamio dev refresh' to rotate without re-signing.")
+	// Mirror the JSON branch: judge the dev JWT by its own exp claim (with
+	// the enforcement skew) when decodable, stored string otherwise.
+	if exp, ok := config.TokenExpiry(cfg.DevJWT); ok {
+		printResolvedExpiryLine("JWT", exp, "Run 'andamio dev refresh' to rotate without re-signing.")
+	} else {
+		printExpiryLine("JWT", cfg.DevJWTExpiresAt, "Run 'andamio dev refresh' to rotate without re-signing.")
+	}
 	if cfg.DevRefreshToken != "" {
 		printExpiryLine("Refresh token", cfg.DevRefreshTokenExpiresAt, "Run 'andamio dev login ...' to re-authenticate.")
 	} else {
@@ -1227,4 +1257,21 @@ func printExpiryLine(label, rfc3339, expiredHint string) {
 		label,
 		expiresAt.Local().Format(time.RFC1123),
 		formatDuration(remaining))
+}
+
+// printResolvedExpiryLine is printExpiryLine for an already-resolved expiry
+// time, using the skew-inclusive config.ExpiredAt predicate so status lines
+// derived from a token's own exp claim agree with enforcement.
+func printResolvedExpiryLine(label string, expiresAt time.Time, expiredHint string) {
+	if config.ExpiredAt(expiresAt, time.Now()) {
+		fmt.Printf("%s: EXPIRED (at %s)\n", label, expiresAt.Local().Format(time.RFC1123))
+		if expiredHint != "" {
+			fmt.Printf("  → %s\n", expiredHint)
+		}
+		return
+	}
+	fmt.Printf("%s: valid until %s (%s remaining)\n",
+		label,
+		expiresAt.Local().Format(time.RFC1123),
+		formatDuration(time.Until(expiresAt)))
 }

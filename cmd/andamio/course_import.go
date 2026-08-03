@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -34,9 +33,9 @@ import (
 )
 
 var (
-	sltLineRe          = regexp.MustCompile(`^\d+[\.\)]\s+(.+)$`)
-	lessonNumRe        = regexp.MustCompile(`lesson-(\d+)\.md`)
-	errModuleNotFound  = errors.New("module not found")
+	sltLineRe         = regexp.MustCompile(`^\d+[\.\)]\s+(.+)$`)
+	lessonNumRe       = regexp.MustCompile(`lesson-(\d+)\.md`)
+	errModuleNotFound = errors.New("module not found")
 )
 
 func init() {
@@ -70,14 +69,7 @@ Previously uploaded images are preserved via .image-manifest.json.
 Requires user authentication via 'andamio user login'.`,
 	Args: cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		if !cfg.HasUserAuth() {
-			return &apierr.AuthError{Message: "not authenticated. Run 'andamio user login' first"}
-		}
-		return nil
+		return requireUserAuth()
 	},
 	RunE: runCourseImport,
 }
@@ -216,16 +208,16 @@ func importModule(p ImportParams) (*ImportResult, error) {
 					earlyHash = cardano.ComputeSltHash(data.SLTs)
 				}
 				return &ImportResult{
-					CourseID:   p.CourseID,
-					ModuleCode: data.ModuleCode,
-					Title:      data.Title,
-					DryRun:     true,
-					SLTCount:   len(data.SLTs),
-					SltHash:    earlyHash,
-					LessonCount: len(data.Lessons),
-					HasIntro:   data.Introduction != nil,
+					CourseID:      p.CourseID,
+					ModuleCode:    data.ModuleCode,
+					Title:         data.Title,
+					DryRun:        true,
+					SLTCount:      len(data.SLTs),
+					SltHash:       earlyHash,
+					LessonCount:   len(data.Lessons),
+					HasIntro:      data.Introduction != nil,
 					HasAssignment: data.Assignment != nil,
-					Changes:    map[string]interface{}{"would_create_module": true},
+					Changes:       map[string]interface{}{"would_create_module": true},
 				}, nil
 			}
 			if !p.Quiet {

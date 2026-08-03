@@ -1,0 +1,69 @@
+name: CI
+
+# Until this existed the only checks on a pull request were CodeQL and a
+# tag-triggered release, so "all checks passed" said nothing about whether the
+# tests ran. A red suite could — and did — sit on a PR looking merge-ready.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The gofmt step diffs against the PR base. checkout defaults to a
+          # depth-1 fetch, which leaves the base commit absent and the diff
+          # failing with "bad object".
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        # Scoped to files this branch touches. The tree carries pre-existing
+        # alignment drift from a toolchain bump, and failing the whole repo
+        # here would turn every PR red for something it did not do.
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$base" ]; then
+            echo "not a pull request — checking the whole tree is skipped"
+            exit 0
+          fi
+          changed=$(git diff --name-only --diff-filter=d "$base" HEAD -- '*.go')
+          if [ -z "$changed" ]; then
+            echo "no Go files changed"
+            exit 0
+          fi
+          unformatted=$(gofmt -l $changed)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed on:"
+            echo "$unformatted"
+            gofmt -d $changed
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # Several tests spawn the built binary, which reads ~/.andamio/config.json
+      # and the ANDAMIO_* overrides. The helpers pin HOME to a temp dir and drop
+      # those overrides so the result cannot depend on the runner's state; -count=1
+      # keeps a cached pass from standing in for a real run.
+      - name: go test
+        run: go test -count=1 ./...

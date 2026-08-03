@@ -2,6 +2,12 @@
 
 Walk a developer through installing and using the Andamio CLI.
 
+**What the tool is, if they ask:** a developer tool for the people who author
+work on Andamio and assess it — course Owners and Teachers, project Managers.
+Learners and contributors use the Andamio app, which signs and submits their
+work in one flow. Pitch it as a three-role tool, not as the full protocol minus
+something.
+
 ## Interactive Walkthrough
 
 Guide the user step-by-step. Pause after each section and ask if they want to continue or skip ahead.

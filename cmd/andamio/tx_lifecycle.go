@@ -259,6 +259,15 @@ func executeTxLifecycle(ctx context.Context, c *client.Client, cfg *config.Confi
 // project_credential_claim. For project_join, task_hash is in the request body.
 // For project_credential_claim, it's not — we look it up from the contributor's
 // active commitment via the API.
+//
+// This reads a contributor API route even though the `project contributor`
+// *command* surface was removed in 1.0. That is correct, and the distinction
+// matters: 1.0 retired the commands, not the gateway routes, which remain live.
+// `tx run` is generic by design — it accepts any endpoint and any tx type — and
+// project_credential_claim still runs through it. Dropping this lookup would
+// silently degrade that path to the task-list fallback below, which returns the
+// first task carrying a hash rather than the one actually claimed, and quietly
+// pick the wrong task on any multi-task project.
 func extractTaskHash(ctx context.Context, body interface{}, txType string, c *client.Client) string {
 	m, ok := body.(map[string]interface{})
 	if !ok {
@@ -289,7 +298,17 @@ func extractTaskHash(ctx context.Context, body interface{}, txType string, c *cl
 
 // lookupContributorTaskHash fetches the contributor's commitments and returns
 // the task_hash of the first ACCEPTED commitment for the given project.
-// Falls back to the contributor's on-chain commitments if DB records don't match.
+// Falls back to the project's task list if DB records don't match.
+//
+// Best-effort by design: the value feeds registration metadata, and returning
+// "" leaves the gateway to resolve it. Errors are swallowed rather than
+// surfaced so a metadata lookup can't fail a transaction that has already been
+// submitted on-chain.
+//
+// The commitments lookup is what makes this precise. The task-list fallback
+// returns whichever task happens to carry a hash first, which is only right on
+// a single-task project — it exists for the case where DB records are missing,
+// not as an equivalent path.
 func lookupContributorTaskHash(ctx context.Context, c *client.Client, projectID string) string {
 	// Try DB commitments first (merged records with status)
 	var resp []interface{}

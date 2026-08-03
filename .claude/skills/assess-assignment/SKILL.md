@@ -62,7 +62,21 @@ Filter to:
 - `course_module_code` matching the requested module
 - `commitment_status` is `"SUBMITTED"` (skip `PENDING_TX_COMMIT` — those aren't on-chain yet)
 
-Each commitment contains the student's submission in `content.evidence` (Tiptap JSON — extract the text). The student is identified by `student_alias`.
+```bash
+andamio teacher assignments list --course <course-id> --output json \
+  | jq --arg m "<module-code>" '.data[]
+      | select(.course_module_code == $m and .content.commitment_status == "SUBMITTED")
+      | {student: .student_alias, submission: .content.evidence_text}'
+```
+
+Read each submission from `content.evidence_text` — the CLI decodes the Tiptap
+document to Markdown for you. Do **not** walk `content.evidence` yourself; that
+field is the raw hash-bearing document and exists for hash verification, not
+for reading. The student is identified by `student_alias`.
+
+**If a command fails**, branch on the exit code rather than the message: 0 with
+an empty `.data` means nothing is awaiting review, 3 means not permitted, 5
+means the service is unreachable. Run `andamio help exit-codes` for the table.
 
 **Demo mode (`--demo`):** Use preloaded submissions:
 
@@ -145,51 +159,53 @@ Passing: 1  Failing: 2  Borderline: 1
 
 Build a **single transaction** containing ALL assignment decisions — both accepts and refuses. The API processes them as a batch.
 
-**API schema (`POST /v2/tx/course/teacher/assignments/assess`):**
-
-```json
-{
-  "alias": "<teacher-alias>",
-  "course_id": "<course-id>",
-  "assignment_decisions": [
-    {"alias": "<student-alias>", "outcome": "accept"},
-    {"alias": "<student-alias>", "outcome": "refuse"}
-  ]
-}
-```
-
-**Field reference:**
-- `alias` (top level): The teacher's on-chain alias (e.g., `"manager-001"`)
-- `course_id`: The course minting policy hash
-- `assignment_decisions`: Array of `AssignmentOutcome` objects — one per student
-- `assignment_decisions[].alias`: The student's on-chain alias (from `student_alias` in the commitment)
-- `assignment_decisions[].outcome`: `"accept"` (issue credential) or `"refuse"` (deny credential)
-
-**Note:** No `module_code` field — the protocol determines the module from the student's on-chain commitment.
+Use `teacher assessment build`. It composes the request, calls the assess
+endpoint, and stops — nothing is signed, nothing is submitted.
 
 ```bash
-andamio tx build /v2/tx/course/teacher/assignments/assess \
-  --body '{
-    "alias": "<teacher-alias>",
-    "course_id": "<course-id>",
-    "assignment_decisions": [
-      {"alias": "student-01", "outcome": "accept"},
-      {"alias": "student-02", "outcome": "refuse"},
-      {"alias": "student-03", "outcome": "refuse"},
-      {"alias": "student-04", "outcome": "accept"}
-    ]
-  }' \
+andamio teacher assessment build \
+  --course-id <course-id> \
+  --alias <teacher-alias> \
+  --decision student-01=accept \
+  --decision student-02=refuse \
+  --decision student-03=refuse \
+  --decision student-04=accept \
   --output json
 ```
 
-Capture the `unsigned_tx` CBOR from the response.
+For a large cohort, write the decisions to a file instead:
 
-Present the transaction for signing:
+```bash
+andamio teacher assessment build --course-id <course-id> --alias <teacher-alias> \
+  --decisions-file decisions.json --output json
+```
+
+```json
+[{"alias": "student-01", "outcome": "accept"}, {"alias": "student-02", "outcome": "refuse"}]
+```
+
+**Do not hand-build this payload with `tx build`.** The field naming is a trap:
+the top-level `alias` is the *teacher*, while `assignment_decisions[].alias` is
+the *student* — same key, two levels, two different people. Getting it backwards
+assigns every outcome to the wrong participant and lands it on-chain. The
+command owns that shape so you do not have to.
+
+The response envelope carries the decision set alongside the transaction:
+
+```
+.unsigned_tx     CBOR hex, ready for tx sign
+.decisions[]     the decision set, in the order given
+.decision_count  length of .decisions
+```
+
+Present **the envelope's own `.decisions`**, not your reconstruction of them —
+that is the point of the field. The human is checking what the CLI actually
+sent, not what you remember recommending.
 
 ```
 ## Transaction Ready
 
-Decisions:
+Decisions (as sent):
   - student-01: ACCEPT (credential will be issued)
   - student-02: REFUSE
   - student-03: REFUSE
@@ -203,6 +219,10 @@ To sign and submit:
 
 Or I can sign if you provide your .skey path.
 ```
+
+Say plainly, if asked, what this does and does not prove: the decisions shown
+are the request the CLI sent, not a decode of the transaction the gateway
+returned.
 
 If the human provides their skey path:
 
@@ -262,10 +282,11 @@ The Go course example is designed to be funny but illustrative:
 - **Never auto-approve.** Even clear passes get presented for human review.
 - **Be honest about borderlines.** If evidence is ambiguous, say "Insufficient Evidence" and explain why. Don't round up.
 - **Show your reasoning.** The human needs to understand WHY each SLT was scored. Quote the submission.
-- **One transaction for all decisions.** The API accepts a batch — include all accepts AND refuses in a single `assignment_decisions` array.
-- **Include all students in the TX.** Passing students get `"outcome": "accept"`, failing students get `"outcome": "refuse"`. The transaction records the teacher's decision for every submission.
+- **One transaction for all decisions.** `teacher assessment build` sends a single batch — pass every decision, accepts AND refuses, to one invocation.
+- **Include all students in the TX.** Passing students get `accept`, failing students get `refuse`. The transaction records the teacher's decision for every submission.
 - **Only assess SUBMITTED commitments.** Skip `PENDING_TX_COMMIT` (not yet on-chain) and any other non-submitted status.
-- **Use correct API terms.** The outcome field is `"outcome"` (not `"result"`), with values `"accept"` / `"refuse"` (not `"pass"` / `"fail"`). The student field in decisions is `"alias"` (not `"student_alias"`).
+- **Never give one student two decisions.** The command rejects a duplicate alias rather than taking the last one. If you find yourself with conflicting decisions for the same student, stop and ask the human — do not pick one.
+- **Read `evidence_text`, not `evidence`.** The first is the submission as Markdown; the second is the raw hash-bearing document. Do not walk the Tiptap tree yourself.
 - **The assessment is the demo.** Make it clear, readable, and fun. The Go course is designed to get a laugh — lean into it.
 
 ---
@@ -279,7 +300,7 @@ The Go course example is designed to be funny but illustrative:
 - Preloaded submissions (demo mode)
 
 **Writes:**
-- Assessment transactions via `andamio tx build /v2/tx/course/teacher/assignments/assess`
+- Assessment transactions via `andamio teacher assessment build` (builds only — never signs or submits)
 - Signed/submitted transactions via `andamio tx sign` and `andamio tx submit`
 
 **The architecture:**

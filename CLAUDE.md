@@ -34,7 +34,11 @@ No linter configuration. Tests exist for export/import conversion functions.
 
 The script runs preflight checks (clean tree, on main, synced with origin, CHANGELOG entry for the target version, build passes), then tags and pushes. GitHub Actions runs GoReleaser to cross-compile and publish binaries to GitHub Releases.
 
-`CHANGELOG.md` at the repo root is the source of truth for user-facing release notes. The `release.sh` preflight warns if no `## [$VERSION]` heading is found — maintainers should move content from `## [Unreleased]` into a new versioned heading before tagging.
+`CHANGELOG.md` at the repo root is the source of truth for user-facing release notes, and since 1.0 that is literally true rather than aspirational: `.github/workflows/release.yml` runs `scripts/changelog-section.sh <version>` to extract the `## [VERSION]` section into `release-notes.md` and passes it to `goreleaser release --release-notes`. Before this, GoReleaser generated the GitHub release body from commit subjects — which for a release whose headline change is a removal would lead with that removal, telling the people least affected that the tool is being wound down.
+
+The `release.sh` preflight checks that the section is **extractable**, not merely that the heading exists: a `## [$VERSION]` heading with nothing under it would otherwise publish a blank release body. Maintainers should move content from `## [Unreleased]` into a new versioned heading before tagging.
+
+The `changelog:` block in `.goreleaser.yml` remains as the fallback for a local `goreleaser release` run without the flag.
 
 Version is injected via ldflags: `-X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}`
 
@@ -79,7 +83,42 @@ Three auth slots coexist in config:
 - **User JWT** (`user login`) — browser-based wallet signing flow: starts ephemeral local HTTP server, opens browser to `{appURL}/auth/cli?redirect_uri=...&state=...`, user connects Cardano wallet and signs nonce, receives JWT via callback. CSRF protection via random state parameter. Required for edit operations on course/project commands. Headless variant: `user login --skey --alias --address`.
 - **Developer JWT** (`dev login`) — supports two modes. **Browser mode** (default, `dev login` with no args) opens `{appURL}/auth/dev-cli` and waits for a wallet-signed nonce from Eternl/Lace/Nami via an ephemeral localhost callback — the typical developer journey, since browser wallets don't expose `.skey` files. The browser-flow callback is **POST + JSON** (`Content-Type: application/json`) per `andamio-app-v2#699`'s `DevCliSuccessPayload` / `DevCliErrorPayload`, with an `OPTIONS` preflight serving CORS + `Access-Control-Allow-Private-Network: true` so Chrome's PNA spec permits the HTTPS-origin → 127.0.0.1 POST. The listener enforces an exact-string `Origin` allow-list (derived from `cfg.BaseURL` via `.api.`→`.app.` swap) on browser-originated POSTs; loopback diagnostics without an `Origin` header are still accepted. The user-login browser flow (`/auth/cli`) deliberately stays on **GET + query params** (lower-sensitivity payload, no 30-day refresh token); the two flows have intentionally different wire formats. **Headless mode** (`dev login --skey --alias --address`) signs locally for CI/CD, ops, and devkit. Both call andamio-api's CIP-30 signature-verified login endpoints (#410). Two-step flow: `POST /v2/auth/developer/login/session` opens a 5-min session keyed to `(alias, wallet_address)` and returns a nonce; the CLI signs the nonce locally with `internal/cardano.SignMessage`; `POST /v2/auth/developer/login/complete` submits the signature and receives a 60-minute RS256 JWT plus a 30-day single-use rotation refresh token. The dev JWT is required for `/v2/keys`, `/api/v2/apikey/developer/*`, and other developer-portal endpoints — the gateway's `developerJWTAuth` middleware does not accept wallet/user JWTs and vice versa. These surfaces are **dual-credential**: the gateway's `V2AuthMiddleware` requires `X-API-Key` and the inner `developerJWTAuth` requires `Authorization: Bearer <devJWT>`. The CLI's `devKeysClient` helper (`cmd/andamio/dev_keys.go`) is the shared routing for any dual-credential dev-portal surface — preserves `APIKey`, promotes `DevJWT` into the JWT slot, both headers ride on the wire. `dev keys` and `apikey usage`/`profile` both route through it; new dev-portal commands should too. Distinct config slot (`dev_jwt` + `dev_refresh_token`) so the two JWTs don't clobber each other. `dev refresh` rotates without re-signing (uses the refresh token); a 401 from refresh clears the dev slot and instructs re-login. `dev logout` clears the entire dev slot whenever **either** `dev_jwt` **or** `dev_refresh_token` is persisted (the durable 30-day refresh token gets cleared even when the 60-min JWT is empty). Override at runtime via `ANDAMIO_DEV_JWT` and/or `ANDAMIO_DEV_REFRESH_TOKEN` env vars (parallel to `ANDAMIO_JWT` for the user slot — the refresh-token override is the path for ephemeral CI/CD agents that want to rotate without committing tokens to the image). **Ephemeral by design:** env-sourced credentials (`ANDAMIO_JWT` / `ANDAMIO_DEV_JWT` / `ANDAMIO_DEV_REFRESH_TOKEN`) are NOT persisted to disk on `Save` — `Load` snapshots the env values and `Save` strips fields whose current value still matches the snapshot. Rotation works normally: `dev refresh` mutates the in-memory token to the gateway-rotated value (which differs from the snapshot) and that new value IS persisted, so subsequent CLI commands in the same job pick it up. The legacy lookup-only `/v2/auth/developer/account/login` is intentionally not used — it returns 410 Gone behind the gateway's kill-switch flag and does not prove wallet ownership.
 
+**Local JWT expiry handling (#134).** `internal/config/jwt.go` decodes a token's `exp` claim locally (payload base64 only, no signature verification — the decoded value drives a send/don't-send decision; the gateway stays the authority) with a conservative 30s skew: expired means `now >= exp - 30s`, so the CLI never sends a token the gateway might already reject. Four enforcement points, in request order: (1) `client.New` drops a locally-expired **user-slot** JWT from its own field snapshot (config is never mutated, so no `Save` can persist the clear) and prints one stderr warning per process — resettable `warnOnce`, emitted in every output mode, env-aware wording (`ANDAMIO_JWT` vs `user login`); (2) `requireUserAuth` (helpers.go) fails fast with exit 3 / `kind: auth` + expiry timestamp on all JWT-required commands — `jwtAuthPreRunE` parents AND the seven hand-rolled PreRunEs (`course export/import/import-all/create-module`, `tx build/register/run`); (3) `devKeysClient` fail-fasts on an expired **dev** JWT with a `dev refresh` hint *before* promoting it into the shared UserJWT slot — ordering is load-bearing: it guarantees the client-level drop can never silently strip a dev JWT on a dual-credential surface (the 0.12.x regression class); (4) either-auth course reads route teacher-vs-user endpoints via `HasFreshUserAuth`, not `HasUserAuth`, so an expired JWT + API key lands on the user endpoint and succeeds. **Fail open on undecodable tokens everywhere** — non-JWT strings (incl. the `"test-jwt"` test fixtures) are sent as-is, never treated as expired. Login flows are self-healing: the browser guard treats expired as unauthenticated, and headless login builds its client from a cfg copy with `UserJWT` blanked (login never needs prior user auth — this covers even tokens the CLI cannot decode). Headless login persists `jwt_expires_at` from the decoded `exp`; `user status` falls back to decoding `exp` when the stored field is empty and computes `session_expired` with the same skew predicate as enforcement (probe and enforcement must agree).
+
 The app URL is derived from the API URL by replacing `.api.` with `.app.` in the hostname.
+
+## The 1.0 Surface
+
+Andamio CLI 1.0 is scoped to the roles that **author work and assess it**: course Owners and Teachers, project Managers. The learner and contributor command surface (`course student *`, `project contributor *`) was removed in 1.0 — learners and contributors use the Andamio app, which signs and submits their work in one flow.
+
+Removed commands are not deleted from the routing table. `cmd/andamio/retired.go` holds a registry of retired paths, each registered as a **hidden** cobra stub that returns a typed `apierr.RemovedCommandError` (exit 4) naming the removal and the replacement. One registry drives stub registration, message text, and the regression guards. Adding a future retirement is one table entry.
+
+Two properties are load-bearing and easy to break:
+
+- Stubs use `FParseErrWhitelist{UnknownFlags: true}`, **not** `DisableFlagParsing`. The latter also skips the root's persistent `--output` flag, so `course student claim --output json` would emit plain text instead of a JSON error envelope.
+- Stubs must not inherit an auth `PersistentPreRunE`. Both retired groups gated on `jwtAuthPreRunE`; inheriting it would greet an unauthenticated caller with "not authenticated" instead of the removal notice.
+
+`TestNoSourceFileCallsARetiredRoute` walks the AST of every non-test source file and fails on a string literal referencing `/course/student/` or `/project/contributor/`. It inspects literals rather than raw text so comments explaining a removal stay legal.
+
+## Failure Contract
+
+Every failure carries an exit code **and**, under `--output json`, a `kind` field. Both derive from `apierr.Kind`, the single mapper, so they cannot drift apart. `Kind` unwraps through `fmt.Errorf("%w")` and `ReportedError` — the command layer wraps liberally, and a mapper that only inspected the top-level error would classify nearly everything as generic.
+
+| Exit | `kind` | When |
+|------|--------|------|
+| 0 | — | Success, including an empty but valid result set |
+| 1 | `error` / `server` / `backpressure` / `canceled` | Unexpected, 5xx, retry-later, interrupted |
+| 2 | `not_found` | 404 |
+| 3 | `auth` | No credentials, or 401/403 |
+| 4 | `removed_command` | Retired in 1.0 |
+| 5 | `unreachable` | Request never reached the service |
+| 6 | `conflict` | 409 |
+
+**An empty result is exit 0 with an empty collection, not an error.** This is what keeps "nothing found", "not permitted" (3) and "could not reach the service" (5) distinguishable. Do not "fix" `printList` to return an error on empty.
+
+`apierr.NetworkError` wraps transport failures in `internal/client`. It deliberately excludes context cancellation and deadline expiry — an operator pressing Ctrl-C is not the service being down. It implements `Unwrap()` so the retry classifier still reaches the underlying `net.Error`; removing that silently disables retries on connection failures.
+
+Exit codes 0–3 predate 1.0 and are fixed. `conflict` moved from 1 to 6 in 1.0.
 
 ## Complete Command Reference
 
@@ -87,6 +126,7 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 - `-o, --output` — Output format: text (default), json, csv, markdown
 - `-h, --help` — Help for any command
 - `--version` — Print version with commit hash and build date. With `--output json` emits `{version, commit, built}` as structured JSON; plain-text format is preserved when `--output` is absent or `text`.
+- `andamio help exit-codes` — Help topic documenting the exit-code and kind contract above (`cmd/andamio/exitcodes_help.go`).
 
 ### auth — API key management
 | Command | Endpoint | Auth | Description |
@@ -135,15 +175,6 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `course teacher update-module-status` | `/v2/course/teacher/course-module/update-status` | jwt | Update module status. `--course-id`, `--module-code`, `--status` |
 | `course teacher review` | `/v2/course/teacher/assignment-commitment/review` | jwt | Review commitment. `--course-id`, `--module-code`, `--participant-alias`, `--decision` (accept/refuse) |
 | `course teacher commitments` | `/v2/course/teacher/assignment-commitments/list` | jwt | List pending reviews. `--course-id` |
-| `course student courses` | `/v2/course/student/courses/list` | jwt | List enrolled courses |
-| `course student credentials` | `/v2/course/student/credentials/list` | jwt | List earned credentials |
-| `course student commitments` | `/v2/course/student/assignment-commitments/list` | jwt | List assignment commitments |
-| `course student commitment` | `/v2/course/student/assignment-commitment/get` | jwt | Get commitment. `--course-id`, `--slt-hash` (required), `--module-code` (optional) |
-| `course student create` | `/v2/course/student/commitment/create` | jwt | Enroll in module. `--course-id`, `--module-code` |
-| `course student submit` | `/v2/course/student/commitment/submit` | jwt | Submit evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
-| `course student update` | `/v2/course/student/commitment/update` | jwt | Update evidence. `--course-id`, `--module-code`, `--evidence` or `--evidence-file` (Markdown) |
-| `course student leave` | `/v2/course/student/commitment/leave` | jwt | Leave commitment. `--course-id`, `--module-code`, `--pending-tx-hash` |
-| `course student claim` | `/v2/course/student/commitment/claim` | jwt | Claim credential. `--course-id`, `--module-code`, `--pending-tx-hash` |
 | `course credential verify-hash <course-id>` | `/api/v2/course/user/modules/{id}` | either | Verify credential hashes match computed SLT hashes |
 | `course credential compute-hash` | local | none | Compute SLT hash from `--slt` flags or `--file` (outline.md). No auth required |
 
@@ -159,12 +190,6 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project tasks <project-id>` | `/v2/project/user/tasks/list` | either | List tasks (public view) |
 | `project manager commitments --project-id <id>` | `/v2/project/manager/commitments/list` | jwt | List task commitments — pending and assessed (with evidence). v2.3 returns the union; filter via `jq` on `--output json` |
 | `project manager qualified-contributors --project-id <id>` | `/v2/project/manager/contributors/get-qualified` | jwt | List aliases qualified to commit (holds every prerequisite SLT). Capped at 500; JSON surfaces `truncated`. |
-| `project contributor list` | `/v2/project/contributor/projects/list` | jwt | List contributor projects |
-| `project contributor commitments` | `/v2/project/contributor/commitments/list` | jwt | List task commitments |
-| `project contributor commitment` | `/v2/project/contributor/commitment/get` | jwt | Get commitment. `--project-id`, `--task-index` |
-| `project contributor commit` | `/v2/project/contributor/commitment/create` | jwt | Commit to task. `--project-id`, `--task-index` |
-| `project contributor update` | `/v2/project/contributor/commitment/update` | jwt | Update evidence. `--project-id`, `--task-index`, `--evidence` or `--evidence-file` (Markdown) |
-| `project contributor delete` | `/v2/project/contributor/commitment/delete` | jwt | Delete commitment. `--project-id`, `--task-index` |
 | `project task list <project-id>` | `/v2/project/manager/tasks/list` | jwt | List tasks (manager) |
 | `project task get <index> --project-id <id>` | `/v2/project/manager/tasks/list` | jwt | Get task by index (filters from list) |
 | `project task create <project-id>` | `/v2/project/manager/task/create` | jwt | Create task. Flags: --title, --lovelace, --expiration, --github-issue |
@@ -174,6 +199,24 @@ The app URL is derived from the API URL by replacing `.api.` with `.app.` in the
 | `project task import <project-id>` | `/v2/project/manager/task/create,update` | jwt | Import tasks from Markdown files. --dry-run supported |
 | `project task verify-hash <project-id>` | `/v2/project/user/tasks/list` | either | Verify task hashes match computed hashes (diagnostic) |
 | `project task compute-hash` | local | none | Compute task hash from `--content`, `--lovelace`, `--expiration`, `--token` flags or `--file`. No auth required |
+
+### teacher — Assessment (the agent-drivable path)
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `teacher courses` | `/v2/course/teacher/courses/list` | jwt | List courses where you are a teacher |
+| `teacher assignments list [--course <id>]` | `/api/v2/course/teacher/assignment-commitments/list` | jwt | List commitments awaiting review. Without `--course`, returns the lightweight summary (no nested `content`) |
+| `teacher assignments get <course-id> <module-code> <student-alias>` | same, filtered client-side | jwt | Read one submission |
+| `teacher assessment build` | `/api/v2/tx/course/teacher/assignments/assess` | jwt | Build an assessment transaction **without signing or submitting**. `--course-id`, `--alias` (teacher), `--decision <student>=<accept\|refuse>` (repeatable) or `--decisions-file` |
+
+**Evidence decoding.** `teacher assignments list`/`get` add `content.evidence_text` — the submission rendered as Markdown via `tiptapToMarkdown`, the same converter course export uses. It is a **sibling** of `content.evidence`, never a replacement: the raw Tiptap document is hash-bearing (the on-chain commitment hash is computed over the normalized form) and must round-trip byte-for-byte. `evidence_text` is *absent*, not empty-string, when there is no evidence. `get` routes through `fetchTeacherAssignmentsList` so the two commands cannot diverge.
+
+**No `--status` filter**, deliberately. `internal/client/testdata/v2-3-manager-commitments-list-response.md` records the decision to prefer `jq` on the JSON envelope over CLI-layer filtering, and to filter on `task_outcome` presence over enum-string matching since the enum grows new transient values. That decision applies here too.
+
+**Assessment payload naming is a trap.** Top-level `alias` is the **teacher**; `assignment_decisions[].alias` is the **student**. Two fields, same name, two different people. There is no `module_code` at any level — the protocol derives the module from the on-chain commitment. Schema reference: `.claude/skills/assess-assignment/SKILL.md`.
+
+**Inspection is a request-echo, not a CBOR decode.** `AssessmentBuildEnvelope` carries the decision set alongside the unsigned transaction so a reviewer sees both from one command, instead of trusting an agent's separate prose summary of what opaque CBOR encodes. It proves what was *asked for*, not what the gateway *built*. Decoding the transaction needs Plutus datum interpretation and is out of scope for 1.0 — the limitation is stated in the command help and the type doc, not papered over.
+
+Duplicate aliases are **rejected**, not last-wins: two conflicting outcomes for one learner means the caller lost track of its own decision set, and silently picking one would put a credential decision on-chain that nobody made.
 
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |
@@ -290,7 +333,7 @@ This CLI is part of the Andamio developer toolchain:
 
 | Repo | Relationship |
 |------|-------------|
-| **andamio-docs** (`andamio-docs`) | CLI docs live at `content/docs/guides/developers/cli/`. 6 pages covering install, auth, courses, import/export. |
+| **andamio-docs** (`andamio-docs`) | CLI docs live at `content/docs/apps-tooling/cli/` — `index.mdx` (the command reference) and `import-format.mdx`. Note the API transaction specs under `public/yaml/transactions/v2/course/student/**` and `.../project/contributor/**` are **not** stale: 1.0 retired the CLI commands, not the gateway routes. Post-1.0 update tracked in `Andamio-Platform/andamio-docs#64`. |
 | **andamio-lesson-coach-v2** (`andamio-lesson-coach-v2`) | Creates course content that this CLI reads and will eventually sync. Compiles modules to import-ready format. |
 | **andamio-app-template** (`andamio-app-template`) | Forkable Next.js starter. CLI and template are parallel developer entry points — CLI for terminal users, template for UI builders. |
 | **andamio-api** (`andamio-api`) | Go gateway that serves all endpoints this CLI consumes. Base URLs: preprod.api.andamio.io, mainnet.api.andamio.io. |

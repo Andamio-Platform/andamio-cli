@@ -2,12 +2,16 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -426,5 +430,159 @@ func TestClient_Delete_404_TypedError(t *testing.T) {
 	var nfErr *apierr.NotFoundError
 	if !errors.As(err, &nfErr) {
 		t.Errorf("expected *apierr.NotFoundError, got %T: %v", err, err)
+	}
+}
+
+// --- Expired-JWT drop at construction (issue #134) ---
+
+// testJWTWithExp builds a structurally valid unsigned JWT with the given exp.
+func testJWTWithExp(t *testing.T, exp time.Time) string {
+	t.Helper()
+	payload := fmt.Sprintf(`{"exp":%d}`, exp.Unix())
+	enc := func(s string) string {
+		return base64.RawURLEncoding.EncodeToString([]byte(s))
+	}
+	return enc(`{"alg":"HS256","typ":"JWT"}`) + "." + enc(payload) + ".sig"
+}
+
+// captureClientStderr redirects os.Stderr for the duration of fn and returns
+// what was written.
+func captureClientStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+
+	fn()
+
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+// headerEcho returns a server and a pointer to the headers of the last
+// request it served.
+func headerEcho(t *testing.T) (*httptest.Server, *http.Header) {
+	t.Helper()
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &got
+}
+
+func TestNew_DropsExpiredUserJWT(t *testing.T) {
+	expiredJWTWarnOnce = sync.Once{}
+	srv, got := headerEcho(t)
+	expired := testJWTWithExp(t, time.Now().Add(-1*time.Hour))
+	cfg := &config.Config{BaseURL: srv.URL, APIKey: "test-key", UserJWT: expired}
+
+	stderr := captureClientStderr(t, func() {
+		var out map[string]interface{}
+		if err := New(cfg).Get(context.Background(), "/x", &out); err != nil {
+			t.Errorf("Get: %v", err)
+		}
+	})
+
+	if h := got.Get("Authorization"); h != "" {
+		t.Errorf("Authorization header sent for expired JWT: %q", h)
+	}
+	if h := got.Get("X-API-Key"); h != "test-key" {
+		t.Errorf("X-API-Key = %q, want test-key", h)
+	}
+	if !strings.Contains(stderr, "stored session expired") || !strings.Contains(stderr, "andamio user login") {
+		t.Errorf("expected expiry warning naming user login, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "API key only") {
+		t.Errorf("expected API-key-only suffix, got %q", stderr)
+	}
+	// R7: the config itself is never mutated.
+	if cfg.UserJWT != expired {
+		t.Error("cfg.UserJWT was mutated by New")
+	}
+}
+
+func TestNew_SendsValidUserJWT(t *testing.T) {
+	expiredJWTWarnOnce = sync.Once{}
+	srv, got := headerEcho(t)
+	fresh := testJWTWithExp(t, time.Now().Add(1*time.Hour))
+	cfg := &config.Config{BaseURL: srv.URL, APIKey: "test-key", UserJWT: fresh}
+
+	stderr := captureClientStderr(t, func() {
+		var out map[string]interface{}
+		if err := New(cfg).Get(context.Background(), "/x", &out); err != nil {
+			t.Errorf("Get: %v", err)
+		}
+	})
+
+	if h := got.Get("Authorization"); h != "Bearer "+fresh {
+		t.Errorf("Authorization = %q, want fresh bearer", h)
+	}
+	if stderr != "" {
+		t.Errorf("unexpected stderr for fresh JWT: %q", stderr)
+	}
+}
+
+func TestNew_UndecodableJWTSentAsIs(t *testing.T) {
+	// Fail-open contract: non-JWT fixtures (exitcode_test.go uses "test-jwt")
+	// ride unchanged and produce no warning.
+	expiredJWTWarnOnce = sync.Once{}
+	srv, got := headerEcho(t)
+	cfg := &config.Config{BaseURL: srv.URL, APIKey: "test-key", UserJWT: "test-jwt"}
+
+	stderr := captureClientStderr(t, func() {
+		var out map[string]interface{}
+		if err := New(cfg).Get(context.Background(), "/x", &out); err != nil {
+			t.Errorf("Get: %v", err)
+		}
+	})
+
+	if h := got.Get("Authorization"); h != "Bearer test-jwt" {
+		t.Errorf("Authorization = %q, want undecodable token sent as-is", h)
+	}
+	if stderr != "" {
+		t.Errorf("unexpected warning for undecodable token: %q", stderr)
+	}
+}
+
+func TestNew_WarnsOncePerProcess(t *testing.T) {
+	expiredJWTWarnOnce = sync.Once{}
+	expired := testJWTWithExp(t, time.Now().Add(-1*time.Hour))
+	cfg := &config.Config{BaseURL: "http://localhost:9", APIKey: "k", UserJWT: expired}
+
+	stderr := captureClientStderr(t, func() {
+		New(cfg)
+		New(cfg)
+	})
+
+	if n := strings.Count(stderr, "stored session expired"); n != 1 {
+		t.Errorf("warning printed %d times, want 1; stderr: %q", n, stderr)
+	}
+}
+
+func TestNew_EnvSourcedExpiredJWT_NamesEnvVar(t *testing.T) {
+	expiredJWTWarnOnce = sync.Once{}
+	t.Setenv("HOME", t.TempDir())
+	expired := testJWTWithExp(t, time.Now().Add(-1*time.Hour))
+	t.Setenv("ANDAMIO_JWT", expired)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	stderr := captureClientStderr(t, func() { New(cfg) })
+
+	if !strings.Contains(stderr, "ANDAMIO_JWT") {
+		t.Errorf("expected env-variant warning naming ANDAMIO_JWT, got %q", stderr)
+	}
+	if strings.Contains(stderr, "user login") {
+		t.Errorf("env-sourced JWT must not point at 'user login', got %q", stderr)
 	}
 }

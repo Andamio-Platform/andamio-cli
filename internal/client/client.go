@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
@@ -32,18 +34,50 @@ type Client struct {
 	onRetry func(attempt int, wait time.Duration, err error)
 }
 
+// expiredJWTWarnOnce dedupes the expired-JWT warning to one line per process
+// — a single command can construct several clients (tx run, course import).
+// It is a resettable package var, not an inline once, so in-package tests can
+// reassign it between cases and stay order-independent.
+var expiredJWTWarnOnce sync.Once
+
+// New builds a client from cfg. A user-slot JWT that is locally known to be
+// expired (config.TokenExpired) is dropped here — the request rides on the
+// API key alone — because the gateway fails closed on any invalid credential
+// and an expired JWT would otherwise 401 requests the API key alone
+// authorizes, including the login-session endpoint itself (issue #134). The
+// drop happens on the client's own field snapshot; cfg is never mutated, so
+// no later config.Save can persist the cleared slot (R7).
+//
+// Undecodable tokens are sent as-is (fail open) — the gateway is the
+// authority, and a decoder edge case must not lock users out.
+//
+// Dev-portal surfaces are unaffected by construction order: devKeysClient
+// fail-fasts on an expired dev JWT *before* promoting it into the UserJWT
+// slot, so a promoted token reaching this drop is known-fresh and the
+// user-flavored warning below can only fire on genuine user-slot JWTs.
 func New(cfg *config.Config) *Client {
+	userJWT := cfg.UserJWT
+	if exp, ok := config.TokenExpiry(userJWT); ok && config.ExpiredAt(exp, time.Now()) {
+		userJWT = ""
+		expiredJWTWarnOnce.Do(func() {
+			suffix := "continuing without it."
+			if cfg.APIKey != "" {
+				suffix = "continuing with API key only."
+			}
+			// Warnings ride on stderr in every output mode (same judgment as
+			// the `dev keys create` one-time-key warning) — scripts pipe
+			// 2>/dev/null; humans running --output json still deserve to know
+			// their session is dead.
+			fmt.Fprintf(os.Stderr, "Warning: stored session expired %s; %s %s\n",
+				exp.Local().Format("2006-01-02 15:04 MST"), suffix, cfg.UserJWTRecoveryHint())
+		})
+	}
 	return &Client{
 		baseURL:    cfg.BaseURL,
 		apiKey:     cfg.APIKey,
-		userJWT:    cfg.UserJWT,
+		userJWT:    userJWT,
 		httpClient: &http.Client{Timeout: httpTimeout},
 	}
-}
-
-// SetUserJWT sets the user JWT for authenticated requests.
-func (c *Client) SetUserJWT(jwt string) {
-	c.userJWT = jwt
 }
 
 // SetOnRetry registers a callback fired between retry attempts by
@@ -70,7 +104,7 @@ func (c *Client) Get(ctx context.Context, path string, result interface{}) error
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return wrapTransportError(ctx, "GET", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -137,7 +171,7 @@ func (c *Client) Post(ctx context.Context, path string, body interface{}, result
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return wrapTransportError(ctx, "POST", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -178,7 +212,7 @@ func (c *Client) Put(ctx context.Context, path string, body interface{}, result 
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return wrapTransportError(ctx, "PUT", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -209,7 +243,7 @@ func (c *Client) Delete(ctx context.Context, path string, result interface{}) er
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return err
+		return wrapTransportError(ctx, "DELETE", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -221,6 +255,34 @@ func (c *Client) Delete(ctx context.Context, path string, result interface{}) er
 		return json.NewDecoder(resp.Body).Decode(result)
 	}
 	return nil
+}
+
+// wrapTransportError classifies an error from http.Client.Do.
+//
+// Context cancellation and deadline expiry are returned unchanged. An operator
+// pressing Ctrl-C, a --timeout expiring, and a service being unreachable are
+// three different outcomes; wrapping the first two as NetworkError would tell a
+// caller the network is down when the caller is the one who stopped. Everything
+// else that prevented the request from completing — DNS failure, connection
+// refused, TLS failure, a connection dropped mid-flight — is genuinely "could
+// not reach the service".
+//
+// Note this classifies transport failures only. A response that arrives and
+// carries an error status goes through statusError instead.
+func wrapTransportError(ctx context.Context, method, url string, err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	// A cancelled context can surface as an unrelated transport error depending
+	// on where in the request lifecycle the cancellation landed, so consult the
+	// context itself rather than trusting the error alone.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return &apierr.NetworkError{
+		Message: fmt.Sprintf("could not reach %s %s: %v", method, url, err),
+		Err:     err,
+	}
 }
 
 // statusError maps an HTTP error status to the typed error the CLI expects.

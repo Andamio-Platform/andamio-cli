@@ -180,84 +180,71 @@ Terminal states (no further transitions):
 
 Assessment outcomes: `accept` (leads to REWARDED via claim), `refuse` (can resubmit), `deny` (permanent expulsion, terminal).
 
-## Contributor Workflow
+## Assessing Contributions (Manager)
 
-Contributors discover projects, commit to tasks, submit evidence, and claim credentials.
+Contributors discover projects, commit to tasks, submit evidence and claim
+credentials in the [Andamio app](https://app.andamio.io), which signs and
+submits their work in one flow. From the CLI you observe those transitions and
+act on the one that is yours: **assessment**.
 
-### Discover and commit
+A commitment moves `COMMITTED` → evidence submitted → `ACCEPTED` / `REFUSED` /
+`DENIED` → `REWARDED`. Only the assessment step is yours.
 
-```bash
-# List projects you can contribute to
-andamio project contributor list
+### Plan who can do the work
 
-# View available tasks
-andamio project tasks <project-id>
-
-# Commit to a task (on-chain)
-andamio tx run /v2/tx/project/contributor/commit \
-  --body '{"alias":"<your-alias>","project_id":"<project-id>","task_index":1}' \
-  --skey ./payment.skey \
-  --tx-type project_join
-```
-
-### Submit evidence
+Before tasks go out, check who actually holds every prerequisite SLT:
 
 ```bash
-# Submit from a Markdown file
-andamio project contributor update \
-  --project-id <project-id> \
-  --task-index 1 \
-  --evidence-file work.md
-
-# Or submit inline
-andamio project contributor update \
-  --project-id <project-id> \
-  --task-index 1 \
-  --evidence "Completed the fix. PR: https://github.com/org/repo/pull/42"
-```
-
-### Check commitment status
-
-```bash
-# List all your commitments
-andamio project contributor commitments
-
-# Get a specific commitment
-andamio project contributor commitment \
-  --project-id <project-id> \
-  --task-index 1
-```
-
-### Manager assessment
-
-The project manager reviews submitted work and assesses tasks on-chain:
-
-```bash
-# List pending assessments
-andamio project manager commitments --project-id <project-id>
-
-# See who is qualified to commit (holds every prerequisite SLT).
-# Useful for pre-assigning tasks or planning outreach.
-# Capped at 500 aliases; --output json surfaces the truncated flag.
 andamio project manager qualified-contributors --project-id <project-id>
+```
 
-# Assess tasks (on-chain)
+Capped at 500 aliases; `--output json` surfaces a `truncated` flag when the cap
+was hit.
+
+### See what is waiting
+
+```bash
+andamio project manager commitments --project-id <project-id>
+```
+
+This returns pending **and** already-assessed commitments. Filter to the ones
+still needing your judgement — prefer the absence of a decision over matching
+status strings, since the status enum can grow new transient values:
+
+```bash
+andamio project manager commitments --project-id <project-id> --output json \
+  | jq '.data[] | select(.content.task_outcome == null)'
+```
+
+### Read what was submitted
+
+Evidence rides on each commitment as `content.evidence`, a Tiptap document,
+with `content.task_evidence_hash` alongside it for on-chain verification:
+
+```bash
+andamio project manager commitments --project-id <project-id> --output json \
+  | jq -r '.data[] | "\(.content.submitted_by): \(.content.evidence)"'
+```
+
+### Assess on-chain
+
+```bash
 andamio tx run /v2/tx/project/manager/tasks/assess \
   --body '{"alias":"<your-alias>","project_id":"<project-id>","assessment_decisions":[...]}' \
   --skey ./payment.skey \
   --tx-type task_assess
 ```
 
-### Claim credential
-
-After a task is assessed and approved, the contributor claims their credential on-chain:
+To keep a person between the recommendation and the signature, split it:
 
 ```bash
-andamio tx run /v2/tx/project/contributor/credential/claim \
-  --body '{"alias":"<your-alias>","project_id":"<project-id>"}' \
-  --skey ./payment.skey \
-  --tx-type project_credential_claim
+andamio tx build /v2/tx/project/manager/tasks/assess --body '<...>' --output json
+andamio tx sign --tx <unsigned-tx> --skey ./payment.skey
+andamio tx submit --tx <signed-tx>
 ```
+
+After you accept, the contributor claims their reward in the app. The
+commitment reaches `REWARDED` on its own; nothing further is required from you.
 
 ## Verifying Task Hashes
 

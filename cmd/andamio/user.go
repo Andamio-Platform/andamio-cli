@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -121,8 +122,10 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 		return runHeadlessLogin(cmd.Context(), cfg, skeyPath, alias, address)
 	}
 
-	// Check if already authenticated (browser flow only)
-	if cfg.HasUserAuth() {
+	// Check if already authenticated (browser flow only). An expired stored
+	// JWT counts as unauthenticated — refusing here would force the manual
+	// `user logout` two-step this fix removes (issue #134, R3).
+	if cfg.HasFreshUserAuth(time.Now()) {
 		fmt.Printf("Already authenticated as: %s\n", cfg.UserAlias)
 		fmt.Println("Run 'andamio user logout' first to re-authenticate.")
 		return nil
@@ -240,9 +243,14 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("authentication failed: %s", result.Error)
 	}
 
-	// Save JWT to config
+	// Save JWT to config. The app-provided expires_at keeps precedence; when
+	// the callback omits it, fall back to the token's own exp claim so the
+	// session never persists without expiry metadata it actually carries.
 	cfg.UserJWT = result.JWT
 	cfg.JWTExpiresAt = result.ExpiresAt
+	if cfg.JWTExpiresAt == "" {
+		cfg.JWTExpiresAt = decodedExpiryRFC3339(result.JWT)
+	}
 	cfg.UserAlias = result.Alias
 	cfg.UserID = result.UserID
 
@@ -271,7 +279,17 @@ func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, 
 		return fmt.Errorf("failed to load signing key: %w", err)
 	}
 
-	c := client.New(cfg)
+	// Build the login client from a copy with the user JWT blanked. Login
+	// never needs prior user auth, and the correctness of re-login must not
+	// depend on the stored token being locally decodable: client.New's
+	// expiry drop only catches tokens it can decode, while a corrupted or
+	// truncated token the gateway rejects would otherwise brick this exact
+	// recovery path (and a decodable-expired one would print a "run user
+	// login" warning while the user is literally running user login). cfg
+	// itself is untouched, so the eventual Save persists the fresh session.
+	loginCfg := *cfg
+	loginCfg.UserJWT = ""
+	c := client.New(&loginCfg)
 
 	// Step 1: Get login session with nonce
 	if !isJSON {
@@ -331,9 +349,11 @@ func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, 
 		return fmt.Errorf("authentication failed: no token received")
 	}
 
-	// Step 4: Store JWT in config
+	// Step 4: Store JWT in config. The validate response carries no expiry
+	// field, so decode the token's own exp claim — without this, `user
+	// status` can never report EXPIRED after a headless login (issue #134).
 	cfg.UserJWT = tokenResp.JWT
-	cfg.JWTExpiresAt = "" // headless flow does not return expiry; extract from JWT if needed
+	cfg.JWTExpiresAt = decodedExpiryRFC3339(tokenResp.JWT)
 	// Use alias from response if available, fall back to flag
 	if tokenResp.User.AccessTokenAlias != nil && *tokenResp.User.AccessTokenAlias != "" {
 		cfg.UserAlias = *tokenResp.User.AccessTokenAlias
@@ -348,16 +368,23 @@ func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, 
 	}
 
 	if isJSON {
-		return output.PrintJSON(map[string]interface{}{
+		envelope := map[string]interface{}{
 			"alias":    cfg.UserAlias,
 			"user_id":  cfg.UserID,
 			"key_hash": signResult.KeyHash,
-		})
+		}
+		if cfg.JWTExpiresAt != "" {
+			envelope["expires_at"] = cfg.JWTExpiresAt
+		}
+		return output.PrintJSON(envelope)
 	}
 
 	fmt.Fprintf(os.Stderr, "\nAuthenticated as: %s\n", cfg.UserAlias)
 	fmt.Fprintf(os.Stderr, "User ID: %s\n", cfg.UserID)
 	fmt.Fprintf(os.Stderr, "Key hash: %s\n", signResult.KeyHash)
+	if cfg.JWTExpiresAt != "" {
+		fmt.Fprintf(os.Stderr, "Session expires: %s\n", cfg.JWTExpiresAt)
+	}
 
 	return nil
 }
@@ -385,14 +412,82 @@ func runUserLogout(cmd *cobra.Command, args []string) error {
 }
 
 type userStatusResult struct {
-	APIKeySet              bool   `json:"api_key_set"`
-	BaseURL                string `json:"base_url"`
-	UserAuthenticated      bool   `json:"user_authenticated"`
-	UserAlias              string `json:"user_alias,omitempty"`
-	UserID                 string `json:"user_id,omitempty"`
-	SessionExpiresAt       string `json:"session_expires_at,omitempty"`
-	SessionExpired         *bool  `json:"session_expired,omitempty"`
-	SessionRemainingSeconds int64 `json:"session_remaining_seconds,omitempty"`
+	APIKeySet               bool   `json:"api_key_set"`
+	BaseURL                 string `json:"base_url"`
+	UserAuthenticated       bool   `json:"user_authenticated"`
+	UserAlias               string `json:"user_alias,omitempty"`
+	UserID                  string `json:"user_id,omitempty"`
+	SessionExpiresAt        string `json:"session_expires_at,omitempty"`
+	SessionExpired          *bool  `json:"session_expired,omitempty"`
+	SessionRemainingSeconds int64  `json:"session_remaining_seconds,omitempty"`
+}
+
+// decodedExpiryRFC3339 renders a token's decoded exp claim in the RFC3339
+// UTC form the config stores; empty string when the token is undecodable.
+func decodedExpiryRFC3339(token string) string {
+	if exp, ok := config.TokenExpiry(token); ok {
+		return exp.UTC().Format(time.RFC3339)
+	}
+	return ""
+}
+
+// resolveSessionExpiry owns the stored-vs-decoded precedence rule: a
+// non-empty JWTExpiresAt wins (raw carries it verbatim; ok=false when it is
+// unparseable, preserving the legacy raw-print shape), otherwise fall back
+// to the token's own exp claim so pre-fix headless-login configs and
+// ANDAMIO_JWT sessions still get truthful expiry. Both output modes of
+// `user status` route through this one resolver.
+func resolveSessionExpiry(cfg *config.Config) (exp time.Time, raw string, ok bool) {
+	// An env-injected token (ANDAMIO_JWT) is not the token the on-disk
+	// jwt_expires_at describes — judging one by the other makes the probe
+	// lie about the credential enforcement actually sees. For env tokens,
+	// the decoded exp claim is the only honest source.
+	if cfg.UserJWTFromEnv() {
+		if t, tok := config.TokenExpiry(cfg.UserJWT); tok {
+			return t, t.UTC().Format(time.RFC3339), true
+		}
+		return time.Time{}, "", false
+	}
+	if cfg.JWTExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt); err == nil {
+			return t, cfg.JWTExpiresAt, true
+		}
+		return time.Time{}, cfg.JWTExpiresAt, false
+	}
+	if exp, tok := config.TokenExpiry(cfg.UserJWT); tok {
+		return exp, exp.UTC().Format(time.RFC3339), true
+	}
+	return time.Time{}, "", false
+}
+
+// fillSessionExpiry populates the JSON envelope's expiry triplet from a
+// resolved expiry time, using the same config.ExpiredAt predicate as
+// enforcement — a probe that says "not expired" inside the skew window while
+// the very next command exits 3 would reproduce the flaky-probe problem the
+// session_expired field exists to solve.
+func fillSessionExpiry(result *userStatusResult, expiresAt time.Time) {
+	now := time.Now()
+	expired := config.ExpiredAt(expiresAt, now)
+	result.SessionExpired = &expired
+	if !expired {
+		result.SessionRemainingSeconds = int64(expiresAt.Sub(now).Seconds())
+	}
+}
+
+// printSessionExpiry renders the text-mode session line for a resolved
+// expiry time, with the recovery hint matched to where the credential lives
+// (stored session vs ANDAMIO_JWT).
+func printSessionExpiry(cfg *config.Config, expiresAt time.Time) {
+	now := time.Now()
+	if config.ExpiredAt(expiresAt, now) {
+		fmt.Printf("Session: EXPIRED (at %s)\n", expiresAt.Local().Format(time.RFC1123))
+		fmt.Println("\n" + cfg.UserJWTRecoveryHint())
+	} else {
+		remaining := expiresAt.Sub(now)
+		fmt.Printf("Session: valid until %s (%s remaining)\n",
+			expiresAt.Local().Format(time.RFC1123),
+			formatDuration(remaining))
+	}
 }
 
 func runUserStatus(cmd *cobra.Command, args []string) error {
@@ -412,16 +507,10 @@ func runUserStatus(cmd *cobra.Command, args []string) error {
 			// Drop "undefined"/"null" from historic configs so the JSON
 			// envelope doesn't carry the same bad value text mode hides.
 			result.UserID = sanitizeCallbackValue(cfg.UserID)
-			if cfg.JWTExpiresAt != "" {
-				result.SessionExpiresAt = cfg.JWTExpiresAt
-				if expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt); err == nil {
-					now := time.Now()
-					expired := now.After(expiresAt)
-					result.SessionExpired = &expired
-					if !expired {
-						result.SessionRemainingSeconds = int64(expiresAt.Sub(now).Seconds())
-					}
-				}
+			exp, raw, ok := resolveSessionExpiry(cfg)
+			result.SessionExpiresAt = raw
+			if ok {
+				fillSessionExpiry(&result, exp)
 			}
 		}
 		return output.PrintJSON(result)
@@ -451,23 +540,12 @@ func runUserStatus(cmd *cobra.Command, args []string) error {
 			fmt.Printf("User ID: %s\n", id)
 		}
 
-		if cfg.JWTExpiresAt != "" {
-			expiresAt, err := time.Parse(time.RFC3339, cfg.JWTExpiresAt)
-			if err == nil {
-				now := time.Now()
-				if now.After(expiresAt) {
-					fmt.Printf("Session: EXPIRED (at %s)\n", expiresAt.Local().Format(time.RFC1123))
-					fmt.Println("\nRun 'andamio user logout && andamio user login' to re-authenticate.")
-				} else {
-					remaining := expiresAt.Sub(now)
-					fmt.Printf("Session: valid until %s (%s remaining)\n",
-						expiresAt.Local().Format(time.RFC1123),
-						formatDuration(remaining))
-				}
-			} else {
-				fmt.Printf("Session expires: %s\n", cfg.JWTExpiresAt)
-			}
-		} else {
+		switch exp, raw, ok := resolveSessionExpiry(cfg); {
+		case ok:
+			printSessionExpiry(cfg, exp)
+		case raw != "":
+			fmt.Printf("Session expires: %s\n", raw)
+		default:
 			fmt.Println("Session: active (no expiry info)")
 		}
 	} else {
@@ -502,7 +580,7 @@ func runUserMe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print formatted dashboard
-	printDashboard(data)
+	printDashboard(os.Stdout, data)
 	return nil
 }
 
@@ -520,89 +598,87 @@ const (
 	cBrightCyan = "\033[96m"
 )
 
-func printDashboard(data map[string]interface{}) {
-	fmt.Println()
+// printDashboard renders the text-mode `user me` dashboard.
+//
+// Scoped to the 1.0 roles: what you teach, what you manage, and what is waiting
+// on your judgement. The gateway payload also carries learner and contributor
+// state — a "student" section with enrolled courses, and enrolled / completed /
+// contributing counts — which 1.0 deliberately does not render. Learner and
+// contributor work happens in the Andamio app (issue #129), and surfacing it in
+// the tool's most-run command would put the retired surface straight back
+// (issue #127).
+//
+// That is a rendering decision, not a data one. runUserMe returns the gateway
+// payload verbatim under --output json, so a script that wants enrollment data
+// still gets it — the CLI does not edit an API response it does not own.
+//
+// Takes an io.Writer rather than printing directly so the layout is testable
+// without capturing os.Stdout, matching renderTeacherAssignmentsListText and
+// renderQualifiedContributorsText.
+func printDashboard(w io.Writer, data map[string]interface{}) {
+	fmt.Fprintln(w)
 
 	// User info
 	if user, ok := data["user"].(map[string]interface{}); ok {
 		alias := getStr(user, "alias")
-		fmt.Printf("%s%s◆ %s%s\n", cBold, cGreen, alias, cReset)
-		fmt.Printf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", cDim, cCyan, cReset)
+		fmt.Fprintf(w, "%s%s◆ %s%s\n", cBold, cGreen, alias, cReset)
+		fmt.Fprintf(w, "%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", cDim, cCyan, cReset)
 	}
 
 	// Counts summary
 	if counts, ok := data["counts"].(map[string]interface{}); ok {
-		fmt.Printf("\n%s%s📊 Summary%s\n", cBold, cYellow, cReset)
-		enrolled := getInt(counts, "enrolled_courses")
-		completed := getInt(counts, "completed_courses")
+		fmt.Fprintf(w, "\n%s%s📊 Summary%s\n", cBold, cYellow, cReset)
 		teaching := getInt(counts, "teaching_courses")
 		managing := getInt(counts, "managing_projects")
-		contributing := getInt(counts, "contributing_projects")
 		credentials := getInt(counts, "total_credentials")
 
-		fmt.Printf("   %sCourses%s     %s%d%s enrolled  %s%d%s completed  %s%d%s teaching\n",
-			cDim, cReset, cBold, enrolled, cReset, cBold, completed, cReset, cBold, teaching, cReset)
-		fmt.Printf("   %sProjects%s    %s%d%s managing  %s%d%s contributing\n",
-			cDim, cReset, cBold, managing, cReset, cBold, contributing, cReset)
-		fmt.Printf("   %sCredentials%s %s%d%s earned\n",
+		fmt.Fprintf(w, "   %sCourses%s     %s%d%s teaching\n",
+			cDim, cReset, cBold, teaching, cReset)
+		fmt.Fprintf(w, "   %sProjects%s    %s%d%s managing\n",
+			cDim, cReset, cBold, managing, cReset)
+		fmt.Fprintf(w, "   %sCredentials%s %s%d%s earned\n",
 			cDim, cReset, cBold, credentials, cReset)
 	}
 
 	// Teacher section
 	if teacher, ok := data["teacher"].(map[string]interface{}); ok {
 		if courses, ok := teacher["courses"].([]interface{}); ok && len(courses) > 0 {
-			fmt.Printf("\n%s%s📚 Teaching%s\n", cBold, cMagenta, cReset)
+			fmt.Fprintf(w, "\n%s%s📚 Teaching%s\n", cBold, cMagenta, cReset)
 			for _, c := range courses {
 				if course, ok := c.(map[string]interface{}); ok {
 					title := getStr(course, "title")
 					if title == "" {
 						title = "(untitled)"
 					}
-					fmt.Printf("   %s▸%s %s\n", cMagenta, cReset, title)
+					fmt.Fprintf(w, "   %s▸%s %s\n", cMagenta, cReset, title)
 				}
 			}
 		}
 		if pending := getInt(teacher, "total_pending_reviews"); pending > 0 {
-			fmt.Printf("   %s%s⚠ %d pending reviews%s\n", cBold, cYellow, pending, cReset)
-		}
-	}
-
-	// Student section
-	if student, ok := data["student"].(map[string]interface{}); ok {
-		if enrolled, ok := student["enrolled_courses"].([]interface{}); ok && len(enrolled) > 0 {
-			fmt.Printf("\n%s%s🎓 Learning%s\n", cBold, cGreen, cReset)
-			for _, c := range enrolled {
-				if course, ok := c.(map[string]interface{}); ok {
-					title := getStr(course, "title")
-					if title == "" {
-						title = "(untitled)"
-					}
-					fmt.Printf("   %s▸%s %s\n", cGreen, cReset, title)
-				}
-			}
+			fmt.Fprintf(w, "   %s%s⚠ %d pending reviews%s\n", cBold, cYellow, pending, cReset)
 		}
 	}
 
 	// Projects section
 	if projects, ok := data["projects"].(map[string]interface{}); ok {
 		if managing, ok := projects["managing"].([]interface{}); ok && len(managing) > 0 {
-			fmt.Printf("\n%s%s🔧 Managing%s\n", cBold, cBlue, cReset)
+			fmt.Fprintf(w, "\n%s%s🔧 Managing%s\n", cBold, cBlue, cReset)
 			for _, p := range managing {
 				if proj, ok := p.(map[string]interface{}); ok {
 					title := getStr(proj, "title")
 					if title == "" {
 						title = "(untitled)"
 					}
-					fmt.Printf("   %s▸%s %s\n", cBlue, cReset, title)
+					fmt.Fprintf(w, "   %s▸%s %s\n", cBlue, cReset, title)
 				}
 			}
 		}
 		if pending := getInt(projects, "total_pending_assessments"); pending > 0 {
-			fmt.Printf("   %s%s⚠ %d pending assessments%s\n", cBold, cYellow, pending, cReset)
+			fmt.Fprintf(w, "   %s%s⚠ %d pending assessments%s\n", cBold, cYellow, pending, cReset)
 		}
 	}
 
-	fmt.Println()
+	fmt.Fprintln(w)
 }
 
 func getStr(m map[string]interface{}, key string) string {

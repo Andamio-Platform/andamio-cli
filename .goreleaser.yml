@@ -31,6 +31,10 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# The release workflow passes --release-notes=release-notes.md, extracted from
+# CHANGELOG.md, and that takes precedence over this block. Kept as the fallback
+# for a local `goreleaser release` run without the flag; disabling it entirely
+# would leave such a run with no notes at all.
 changelog:
   sort: asc
   filters:
