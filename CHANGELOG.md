@@ -6,7 +6,19 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-07-27
+### Fixed
+
+- **`course owner teachers` works again (#140).** The command was POSTing to `/api/v2/course/owner/teachers/update`, a route `andamio-api#689` removed on 2026-07-28 — so it was broken against API 2.5, the only version 1.0 supports. Since Owner teacher management is in 1.0's declared scope, this was a release blocker.
+
+  It now runs the canonical transaction path (`POST /v2/tx/course/owner/teachers/manage`, tx type `teachers_update`) through the same build→sign→submit→register→poll lifecycle as `tx run`.
+
+### Changed
+
+- **BREAKING: `course owner teachers` now requires `--skey`, `--alias`, and a configured submit URL.** Appointing a teacher is an on-chain action, not a database write, and the retired route was a DB proxy that wrote the role with no originating transaction. The command therefore signs and submits like every other state-changing operation.
+
+  **If you script this command, add `--alias <your-owner-alias>` and `--skey <path>`, and make sure `andamio config set-submit-url` has been run.** `--add` and `--remove` keep their names and behavior. New: `--no-wait`, `--timeout`, `--submit-url`, `--submit-header`, `--metadata`, matching `tx run`.
+
+  Under `--output json` the command now emits the transaction `RunResult` envelope (`state`, `tx_hash`, and step progress) rather than the gateway's former write response. Text mode still ends with `Teachers updated.`
 
 **Andamio CLI 1.0 is a developer tool for the people who author work and assess it: course Owners and Teachers, and project Managers.**
 

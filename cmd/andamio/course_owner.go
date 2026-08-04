@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -79,13 +80,21 @@ Examples:
 
 var courseOwnerTeachersCmd = &cobra.Command{
 	Use:   "teachers",
-	Short: "Update the teacher list for a course",
+	Short: "Update the teacher list for a course (on-chain transaction)",
 	Long: `Add or remove teachers from a course. Use --add and --remove flags with user aliases.
 
+Teacher management is an on-chain transaction, not a database write. This command
+runs the full lifecycle — build, sign with your local .skey, submit, register,
+and poll for confirmation — so it requires --skey and --alias (your Owner alias)
+in addition to the aliases being changed.
+
+Progress lines go to stderr. Use --output json for scripted consumption, and
+--no-wait to exit after registration without polling.
+
 Examples:
-  andamio course owner teachers --course-id <id> --add alice --add bob
-  andamio course owner teachers --course-id <id> --remove charlie
-  andamio course owner teachers --course-id <id> --add alice --remove charlie`,
+  andamio course owner teachers --course-id <id> --alias owner-01 --skey ./payment.skey --add alice --add bob
+  andamio course owner teachers --course-id <id> --alias owner-01 --skey ./payment.skey --remove charlie
+  andamio course owner teachers --course-id <id> --alias owner-01 --skey ./payment.skey --add alice --remove charlie --no-wait`,
 	RunE: runCourseOwnerTeachers,
 }
 
@@ -136,6 +145,17 @@ func init() {
 	courseOwnerTeachersCmd.MarkFlagRequired("course-id")
 	courseOwnerTeachersCmd.Flags().StringArray("add", nil, "Teacher alias to add (repeatable)")
 	courseOwnerTeachersCmd.Flags().StringArray("remove", nil, "Teacher alias to remove (repeatable)")
+	// Transaction flags. Teacher management is an on-chain action (tx type
+	// teachers_update), so this command owns the same lifecycle as 'tx run'.
+	courseOwnerTeachersCmd.Flags().String("alias", "", "Your Owner alias (required)")
+	courseOwnerTeachersCmd.MarkFlagRequired("alias")
+	courseOwnerTeachersCmd.Flags().String("skey", "", "Path to Cardano .skey file for signing (required)")
+	courseOwnerTeachersCmd.MarkFlagRequired("skey")
+	courseOwnerTeachersCmd.Flags().String("submit-url", "", "Override submit API URL (falls back to config)")
+	courseOwnerTeachersCmd.Flags().StringArray("submit-header", nil, "Additional submit headers (repeatable, format: \"Key: Value\")")
+	courseOwnerTeachersCmd.Flags().StringArray("metadata", nil, "Metadata for registration (repeatable, format: key=value)")
+	courseOwnerTeachersCmd.Flags().Bool("no-wait", false, "Exit after registration without polling for confirmation")
+	courseOwnerTeachersCmd.Flags().Duration("timeout", 10*time.Minute, "Max time to wait for confirmation")
 }
 
 func runCourseOwnerCreate(cmd *cobra.Command, args []string) error {
@@ -317,8 +337,15 @@ func runCourseOwnerRegister(cmd *cobra.Command, args []string) error {
 
 func runCourseOwnerTeachers(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
+	alias, _ := cmd.Flags().GetString("alias")
 	addTeachers, _ := cmd.Flags().GetStringArray("add")
 	removeTeachers, _ := cmd.Flags().GetStringArray("remove")
+	skeyPath, _ := cmd.Flags().GetString("skey")
+	submitURL, _ := cmd.Flags().GetString("submit-url")
+	headers, _ := cmd.Flags().GetStringArray("submit-header")
+	metadataFlags, _ := cmd.Flags().GetStringArray("metadata")
+	noWait, _ := cmd.Flags().GetBool("no-wait")
+	timeout, _ := cmd.Flags().GetDuration("timeout")
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	if len(addTeachers) == 0 && len(removeTeachers) == 0 {
@@ -332,17 +359,31 @@ func runCourseOwnerTeachers(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("all provided aliases are empty")
 	}
 
+	// The gateway's ManageTeachersTxRequest names these teachers_to_add /
+	// teachers_to_remove, and carries the *Owner's* alias at the top level.
+	// The CLI keeps --add/--remove/--alias at its own surface; the mapping to
+	// wire names happens here and nowhere else.
+	//
+	// Both arrays are always sent, empty rather than omitted: the transaction
+	// describes the full requested change, and an absent key is not the same
+	// claim as an empty one.
 	payload := map[string]interface{}{
-		"course_id": courseID,
-	}
-	if len(addTeachers) > 0 {
-		payload["add"] = addTeachers
-	}
-	if len(removeTeachers) > 0 {
-		payload["remove"] = removeTeachers
+		"alias":              alias,
+		"course_id":          courseID,
+		"teachers_to_add":    addTeachers,
+		"teachers_to_remove": removeTeachers,
 	}
 
 	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if err := checkJWTExpiry(cfg, isJSON); err != nil {
+		return err
+	}
+
+	metadata, err := parseMetadataFlags(metadataFlags)
 	if err != nil {
 		return err
 	}
@@ -352,16 +393,29 @@ func runCourseOwnerTeachers(cmd *cobra.Command, args []string) error {
 	}
 
 	c := client.New(cfg)
-	var resp map[string]interface{}
-	if err := c.Post(cmd.Context(), "/api/v2/course/owner/teachers/update", payload, &resp); err != nil {
-		return fmt.Errorf("failed to update teachers: %w", err)
+
+	result, err := executeTxLifecycle(cmd.Context(), c, cfg, TxLifecycleParams{
+		Endpoint:   "/v2/tx/course/owner/teachers/manage",
+		Body:       payload,
+		SkeyPath:   skeyPath,
+		TxType:     "teachers_update",
+		InstanceID: courseID,
+		Metadata:   metadata,
+		NoWait:     noWait,
+		Timeout:    timeout,
+		SubmitURL:  submitURL,
+		Headers:    headers,
+	})
+	if err != nil {
+		return err
 	}
 
-	if isJSON {
-		return output.PrintJSON(resp)
+	if isJSON && result.State != "registered" {
+		return output.PrintJSON(result)
 	}
-
-	fmt.Fprintf(os.Stderr, "Teachers updated.\n")
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Teachers updated.\n")
+	}
 	return nil
 }
 

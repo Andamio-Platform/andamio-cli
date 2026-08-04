@@ -201,7 +201,7 @@ Author:
 - `course export <course-id> <module-code>` — Export module to local directory
 - `course import <path> --course-id <id>` — Import module from local directory
 - `course owner create|update|register` — Create and register a course
-- `course owner teachers --course-id <id> --add <alias>` — Manage teachers
+- `course owner teachers --course-id <id> --alias <you> --skey <path> --add <alias>` — Manage teachers (on-chain transaction)
 - `course teacher register-module|publish-module|update-module-status` — Module lifecycle
 - `course credential verify-hash <course-id>` — Verify credential hashes
 - `course credential compute-hash` — Compute an SLT hash locally (no auth needed)
