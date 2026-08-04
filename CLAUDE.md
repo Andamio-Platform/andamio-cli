@@ -20,7 +20,28 @@ Install to PATH:
 cp andamio /usr/local/bin/andamio
 ```
 
-No linter configuration. Tests exist for export/import conversion functions.
+No linter configuration.
+
+## Testing
+
+```bash
+go test ./...          # full suite
+go test ./cmd/andamio  # command layer, where the contract guards live
+```
+
+**The test suite is the contract.** There are ~375 test functions. Most of the guarantees described in this file are enforced by a specific test, not by convention — before changing behavior in these areas, read the guard first:
+
+| Invariant | Guarded by |
+|-----------|-----------|
+| Exit-code / `kind` mapping (see [Failure Contract](#failure-contract)) | `cmd/andamio/exitcode_test.go` |
+| Retired 1.0 commands: exit 4, hidden, message text, every invocation shape | `cmd/andamio/retired_test.go` |
+| No source file calls a retired route | `TestNoSourceFileCallsARetiredRoute` in `retired_test.go` |
+| Unknown command exits non-zero with clean stdout | `cmd/andamio/unknown_test.go` |
+| Local JWT expiry handling at all four enforcement points | `cmd/andamio/expired_jwt_test.go` |
+| Export/import Markdown ↔ Tiptap conversion | `course_export_test.go`, `course_import_test.go` |
+| Commitment hash parity with the protocol | `commitment_hash_parity_test.go` |
+
+If you are adding a rule that must not regress, add a case to the relevant file above rather than building a separate mechanism.
 
 ## Release
 
@@ -100,7 +121,15 @@ Two properties are load-bearing and easy to break:
 
 `TestNoSourceFileCallsARetiredRoute` walks the AST of every non-test source file and fails on a string literal referencing `/course/student/` or `/project/contributor/`. It inspects literals rather than raw text so comments explaining a removal stay legal.
 
+**Enforcement lives in `cmd/andamio/retired_test.go`** — all of the above, including the two load-bearing properties, plus every retired path in every invocation shape. Both properties are silent failures if broken: nothing else in the build notices. Note that the retired stubs are `Hidden: true`, so any tooling built on `cobra/doc.GenMarkdownTree` cannot see them and cannot guard them.
+
+### 1.0 release status
+
+**1.0 is merged to `main` but not tagged.** The latest release is `v0.13.3`, which still ships the learner/contributor surface. 1.0 declares a hard requirement on **Andamio API 2.5 or later** and mainnet has not cut over (`andamio-ops#189`), so the tag is gated on that cutover. See the `## [1.0.0]` CHANGELOG entry and README for the supported-version statement. Two consequences worth holding onto: the published contract today is 0.13.x, not what is on `main`; and because 2.5 carries a contract naming change, the cutover is the moment this CLI meets renamed gateway fields (see `todos/031`).
+
 ## Failure Contract
+
+*Enforced by `cmd/andamio/exitcode_test.go`. The `kind` strings below are a public API — scripts branch on them. Changing one is a breaking change and will fail that test.*
 
 Every failure carries an exit code **and**, under `--output json`, a `kind` field. Both derive from `apierr.Kind`, the single mapper, so they cannot drift apart. `Kind` unwraps through `fmt.Errorf("%w")` and `ReportedError` — the command layer wraps liberally, and a mapper that only inspected the top-level error would classify nearly everything as generic.
 
@@ -217,6 +246,20 @@ Exit codes 0–3 predate 1.0 and are fixed. `conflict` moved from 1 to 6 in 1.0.
 **Inspection is a request-echo, not a CBOR decode.** `AssessmentBuildEnvelope` carries the decision set alongside the unsigned transaction so a reviewer sees both from one command, instead of trusting an agent's separate prose summary of what opaque CBOR encodes. It proves what was *asked for*, not what the gateway *built*. Decoding the transaction needs Plutus datum interpretation and is out of scope for 1.0 — the limitation is stated in the command help and the type doc, not papered over.
 
 Duplicate aliases are **rejected**, not last-wins: two conflicting outcomes for one learner means the caller lost track of its own decision set, and silently picking one would put a credential decision on-chain that nobody made.
+
+### manager — Project manager role group
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `manager projects` | `/api/v2/project/manager/projects/list` | jwt | List projects where you are a manager |
+
+**Top-level `manager` is deliberate, not a stray.** It parallels top-level `teacher`: both answer "what do I hold this role on?" and are the entry point to a role's workflow. The nested `project manager *` subgroup (commitments, qualified-contributors) operates *within* one project you already know the ID of. `cmd/andamio/project_manager_ops.go` records the decision — "the existing top-level `manager` command stays as-is" — so don't consolidate them without revisiting that. There is no `project manager list`; `manager projects` is the only way to discover the projects you manage.
+
+### token — Native asset token registry
+| Command | Endpoint | Auth | Description |
+|---------|----------|------|-------------|
+| `token list` | `/api/v2/token/user/tokens/list` | either | List registered tokens available as task rewards |
+
+Supplies the `policy_id` / `asset_name` values for `project task create --token "<policy_id>,<asset_name>,<quantity>"`. Text output is a ticker/policy/asset/decimals table; `--output json` passes the gateway envelope through. Tolerates both `{data: [...]}` and a bare array from the gateway.
 
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |
