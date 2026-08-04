@@ -16,6 +16,10 @@ Run 'andamio auth login --api-key <key>' AND 'andamio dev login --skey
 <path> --alias <name> --address <bech32>' first if you have not yet
 configured both credentials.
 
+```
+andamio dev keys [flags]
+```
+
 ### Options
 
 ```

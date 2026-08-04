@@ -2,6 +2,10 @@
 
 Credential verification commands
 
+```
+andamio course credential [flags]
+```
+
 ### Options
 
 ```

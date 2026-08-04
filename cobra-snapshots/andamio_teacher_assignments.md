@@ -2,6 +2,10 @@
 
 Manage assignment reviews (teacher role)
 
+```
+andamio teacher assignments [flags]
+```
+
 ### Options
 
 ```

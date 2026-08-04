@@ -28,6 +28,10 @@ Environment:
                               runs, point HOME at a tmpfs or remove the
                               .andamio directory on exit.
 
+```
+andamio dev [flags]
+```
+
 ### Options
 
 ```
@@ -42,7 +46,7 @@ Environment:
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio dev keys](andamio_dev_keys.md)	 - Manage developer API keys (mainnet + preprod)
 * [andamio dev login](andamio_dev_login.md)	 - Authenticate as a developer (browser wallet, or headless CIP-8 with --skey)
 * [andamio dev logout](andamio_dev_logout.md)	 - Clear stored developer JWT and refresh token

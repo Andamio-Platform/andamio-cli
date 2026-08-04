@@ -2,6 +2,10 @@
 
 Native asset token registry
 
+```
+andamio token [flags]
+```
+
 ### Options
 
 ```
@@ -16,6 +20,6 @@ Native asset token registry
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio token list](andamio_token_list.md)	 - List registered tokens available as task rewards
 

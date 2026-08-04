@@ -22,7 +22,7 @@ See each sub-command's help for details on how to use the generated script.
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio completion bash](andamio_completion_bash.md)	 - Generate the autocompletion script for bash
 * [andamio completion fish](andamio_completion_fish.md)	 - Generate the autocompletion script for fish
 * [andamio completion powershell](andamio_completion_powershell.md)	 - Generate the autocompletion script for powershell

@@ -2,6 +2,10 @@
 
 Course teacher operations (requires user login)
 
+```
+andamio course teacher [flags]
+```
+
 ### Options
 
 ```

@@ -2,6 +2,10 @@
 
 Manage OpenAPI spec
 
+```
+andamio spec [flags]
+```
+
 ### Options
 
 ```
@@ -16,7 +20,7 @@ Manage OpenAPI spec
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio spec fetch](andamio_spec_fetch.md)	 - Fetch OpenAPI spec from the API
 * [andamio spec paths](andamio_spec_paths.md)	 - List available API paths
 

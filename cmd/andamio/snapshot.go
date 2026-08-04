@@ -13,6 +13,9 @@ import (
 
 func callSnapshot(cmd *cobra.Command, args []string) error {
 
+	if err := os.RemoveAll("./cobra-snapshots"); err != nil {
+		return fmt.Errorf("could not clear existing snapshot directory: %w", err)
+	}
 	os.MkdirAll("./cobra-snapshots", 0755)
 	rootCmd.DisableAutoGenTag = true
 	err := doc.GenMarkdownTree(rootCmd, "./cobra-snapshots")

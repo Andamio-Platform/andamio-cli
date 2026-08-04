@@ -2,6 +2,10 @@
 
 Project manager operations (requires user login)
 
+```
+andamio project manager [flags]
+```
+
 ### Options
 
 ```

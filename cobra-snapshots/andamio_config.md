@@ -2,6 +2,10 @@
 
 Manage CLI configuration
 
+```
+andamio config [flags]
+```
+
 ### Options
 
 ```
@@ -16,7 +20,7 @@ Manage CLI configuration
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio config remove-submit-header](andamio_config_remove-submit-header.md)	 - Remove a submit API header
 * [andamio config set-submit-header](andamio_config_set-submit-header.md)	 - Set a submit API header (e.g., Blockfrost project_id)
 * [andamio config set-submit-url](andamio_config_set-submit-url.md)	 - Set the Cardano submit API URL

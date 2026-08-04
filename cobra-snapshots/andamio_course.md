@@ -2,6 +2,10 @@
 
 Manage courses
 
+```
+andamio course [flags]
+```
+
 ### Options
 
 ```
@@ -16,7 +20,7 @@ Manage courses
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio course assignment](andamio_course_assignment.md)	 - Get assignment for a course module
 * [andamio course create-module](andamio_course_create-module.md)	 - Create a new course module
 * [andamio course credential](andamio_course_credential.md)	 - Credential verification commands
@@ -30,6 +34,5 @@ Manage courses
 * [andamio course modules](andamio_course_modules.md)	 - List modules for a course
 * [andamio course owner](andamio_course_owner.md)	 - Course owner operations (requires user login)
 * [andamio course slts](andamio_course_slts.md)	 - List SLTs for a course module
-* [andamio course student](andamio_course_student.md)	 - Course student operations (requires user login)
 * [andamio course teacher](andamio_course_teacher.md)	 - Course teacher operations (requires user login)
 

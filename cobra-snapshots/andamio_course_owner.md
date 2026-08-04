@@ -2,6 +2,10 @@
 
 Course owner operations (requires user login)
 
+```
+andamio course owner [flags]
+```
+
 ### Options
 
 ```

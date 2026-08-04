@@ -2,6 +2,10 @@
 
 Project manager operations (requires user login)
 
+```
+andamio manager [flags]
+```
+
 ### Options
 
 ```
@@ -16,6 +20,6 @@ Project manager operations (requires user login)
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio manager projects](andamio_manager_projects.md)	 - List projects where you are a manager
 

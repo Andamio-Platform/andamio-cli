@@ -21,6 +21,28 @@ Known commitment_status values: AWAITING_SUBMISSION, SUBMITTED, ACCEPTED,
 REFUSED, CREDENTIAL_CLAIMED, LEFT, PENDING_TX_* (transient). The CLI does
 not validate or alias — whatever string the gateway returns is what you see.
 
+Machine-readable output contract (--output json):
+
+  .data[]                         one row per commitment
+  .data[].student_alias           on-chain alias of the submitter
+  .data[].course_module_code      module the commitment belongs to
+  .data[].course_id               course the commitment belongs to
+  .data[].content                 present with --course; absent on the
+                                  no-filter summary
+  .data[].content.commitment_status  raw gateway enum (see above)
+  .data[].content.evidence        the submission as a Tiptap JSON document,
+                                  passed through verbatim — this is the
+                                  hash-bearing form
+  .data[].content.evidence_text   the same submission rendered as Markdown,
+                                  added by the CLI. Absent when there is no
+                                  evidence. Read this to get the prose; read
+                                  .content.evidence to verify a hash.
+
+Read a submission without walking the Tiptap tree:
+  andamio teacher assignments list --course <id> --output json \
+    | jq -r '.data[] | select(.content.commitment_status=="SUBMITTED")
+             | "\(.student_alias): \(.content.evidence_text)"'
+
 Examples:
   andamio teacher assignments list
   andamio teacher assignments list --course <course-id>

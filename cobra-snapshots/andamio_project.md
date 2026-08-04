@@ -2,6 +2,10 @@
 
 Manage projects
 
+```
+andamio project [flags]
+```
+
 ### Options
 
 ```
@@ -16,8 +20,7 @@ Manage projects
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
-* [andamio project contributor](andamio_project_contributor.md)	 - Project contributor operations (requires user login)
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio project get](andamio_project_get.md)	 - Get project details
 * [andamio project list](andamio_project_list.md)	 - List available projects
 * [andamio project manager](andamio_project_manager.md)	 - Project manager operations (requires user login)

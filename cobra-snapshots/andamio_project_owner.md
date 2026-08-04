@@ -2,6 +2,10 @@
 
 Project owner operations (requires user login)
 
+```
+andamio project owner [flags]
+```
+
 ### Options
 
 ```

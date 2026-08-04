@@ -2,6 +2,10 @@
 
 Transaction operations
 
+```
+andamio tx [flags]
+```
+
 ### Options
 
 ```
@@ -16,7 +20,7 @@ Transaction operations
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio tx build](andamio_tx_build.md)	 - Build an unsigned transaction via the API
 * [andamio tx pending](andamio_tx_pending.md)	 - List pending transactions
 * [andamio tx register](andamio_tx_register.md)	 - Register a submitted transaction for tracking

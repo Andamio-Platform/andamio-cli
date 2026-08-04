@@ -2,6 +2,10 @@
 
 Manage project tasks (manager role)
 
+```
+andamio project task [flags]
+```
+
 ### Options
 
 ```

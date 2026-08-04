@@ -17,6 +17,10 @@ The wallet/user JWT slot (`user login`) is NOT accepted on this surface
 before invoking apikey subcommands; an empty slot short-circuits with an
 actionable hint pointing at the missing command.
 
+```
+andamio apikey [flags]
+```
+
 ### Options
 
 ```
@@ -31,7 +35,7 @@ actionable hint pointing at the missing command.
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio apikey profile](andamio_apikey_profile.md)	 - Get API key profile
 * [andamio apikey usage](andamio_apikey_usage.md)	 - Get API key usage stats
 

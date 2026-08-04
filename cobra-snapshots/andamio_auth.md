@@ -6,6 +6,10 @@ Authenticate with the Andamio API
 
 Store your API key for authenticating with Andamio endpoints.
 
+```
+andamio auth [flags]
+```
+
 ### Options
 
 ```
@@ -20,7 +24,7 @@ Store your API key for authenticating with Andamio endpoints.
 
 ### SEE ALSO
 
-* [andamio](andamio.md)	 - CLI for interacting with the Andamio Protocol
+* [andamio](andamio.md)	 - Developer CLI for authoring and assessing on the Andamio Protocol
 * [andamio auth login](andamio_auth_login.md)	 - Store API key
 * [andamio auth status](andamio_auth_status.md)	 - Check authentication status
 

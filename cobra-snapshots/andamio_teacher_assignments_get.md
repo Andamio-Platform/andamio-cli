@@ -6,6 +6,15 @@ Get a specific assignment commitment for review
 
 Get full details for a specific student's assignment commitment.
 
+Emits the matched row from 'teacher assignments list', including
+content.evidence_text — the submission rendered as Markdown alongside the
+raw Tiptap document in content.evidence. See 'teacher assignments list --help'
+for the full output contract.
+
+Read one submission:
+  andamio teacher assignments get <course-id> <module-code> <student-alias> \
+    --output json | jq -r '.content.evidence_text'
+
 Examples:
   andamio teacher assignments get <course-id> <module-code> <student-alias>
   andamio teacher assignments get <course-id> <module-code> <student-alias> --output json
