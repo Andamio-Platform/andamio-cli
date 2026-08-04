@@ -19,6 +19,11 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
   **If you script this command, add `--alias <your-owner-alias>` and `--skey <path>`, and make sure `andamio config set-submit-url` has been run.** `--add` and `--remove` keep their names and behavior. New: `--no-wait`, `--timeout`, `--submit-url`, `--submit-header`, `--metadata`, matching `tx run`.
 
   Under `--output json` the command now emits the transaction `RunResult` envelope (`state`, `tx_hash`, and step progress) rather than the gateway's former write response. Text mode still ends with `Teachers updated.`
+### Added
+
+- **CI: breaking-change surface check** — a new PR workflow (`pr-surface-check.yml`) regenerates a snapshot of the CLI's command/flag surface and `--output json` struct shapes and diffs it against a committed baseline (`cobra-snapshots/`), failing the PR if either drifted without an update, or if `CHANGELOG.md` wasn't touched. Internal tooling only — adds three hidden subcommands (`snapshot`, `compare`, `changelog-check`); no user-facing CLI behavior changes.
+
+## [1.0.0] - 2026-07-27
 
 **Andamio CLI 1.0 is a developer tool for the people who author work and assess it: course Owners and Teachers, and project Managers.**
 
