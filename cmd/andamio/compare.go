@@ -29,7 +29,21 @@ func Compare(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not generate schema snapshot @ %s, %w ", tempDir, err)
 	}
 
-	return nil
+	fileDifferences, err := diffDirs("./cobra-snapshots", tempDir)
+	if err != nil {
+		return fmt.Errorf("could not compare different directories, %w", err)
+	}
+
+	if len(fileDifferences) > 0 {
+		for _, l := range fileDifferences {
+			fmt.Println(l)
+		}
+		return fmt.Errorf("breaking changes found as per list above")
+	} else {
+		fmt.Println("No breaking changes found")
+		return nil
+	}
+
 }
 
 var compareCmd = &cobra.Command{
@@ -85,7 +99,7 @@ func diffDirs(baselineDir, tempDir string) ([]string, error) {
 			}
 
 			if !bytes.Equal(baselineContents, tempContents) {
-				differences = append(differences, "changed"+name)
+				differences = append(differences, "changed "+name)
 			}
 
 		}
