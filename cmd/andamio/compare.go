@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,11 +65,29 @@ func diffDirs(baselineDir, tempDir string) ([]string, error) {
 
 	for _, t := range tempDirectories {
 		tempFiles[t.Name()] = true
+
 	}
 
 	for name := range baselineFiles {
 		if !tempFiles[name] {
 			differences = append(differences, "removed "+name)
+		} else {
+			baselineFilePath := filepath.Join(baselineDir, name)
+			tempFilePath := filepath.Join(tempDir, name)
+			baselineContents, err := os.ReadFile(baselineFilePath)
+			if err != nil {
+				return nil, fmt.Errorf("could not read file %s, error ... %w", baselineFilePath, err)
+			}
+
+			tempContents, err := os.ReadFile(tempFilePath)
+			if err != nil {
+				return nil, fmt.Errorf("could not read file %s, error ... %w", tempFilePath, err)
+			}
+
+			if !bytes.Equal(baselineContents, tempContents) {
+				differences = append(differences, "changed"+name)
+			}
+
 		}
 	}
 
