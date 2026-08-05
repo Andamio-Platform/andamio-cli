@@ -21,5 +21,3 @@ compiled/
 
 # Compound-engineering review artifacts (per-run scratch)
 .context/
-
-DEVNOTES.md

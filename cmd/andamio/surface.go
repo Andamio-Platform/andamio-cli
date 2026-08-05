@@ -14,12 +14,12 @@ func CommandSurface(cmd *cobra.Command) string {
 	commands := cmd.Commands()
 	sort.Slice(commands, func(i, j int) bool { return commands[i].Name() < commands[j].Name() })
 
-	line := cmd.CommandPath() + " - " + "<flag list (if any)> ... \n"
+	line := cmd.CommandPath() + "\n"
 
 	builder.WriteString(line)
 
 	cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
-		flagline := "name: " + f.Name + " | type: " + f.Value.Type() + "\n"
+		flagline := "name: " + f.Name + " | shorthand: " + f.Shorthand + " | type: " + f.Value.Type() + "\n"
 		builder.WriteString(flagline)
 	})
 

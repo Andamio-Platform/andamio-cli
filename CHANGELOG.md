@@ -19,11 +19,6 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
   **If you script this command, add `--alias <your-owner-alias>` and `--skey <path>`, and make sure `andamio config set-submit-url` has been run.** `--add` and `--remove` keep their names and behavior. New: `--no-wait`, `--timeout`, `--submit-url`, `--submit-header`, `--metadata`, matching `tx run`.
 
   Under `--output json` the command now emits the transaction `RunResult` envelope (`state`, `tx_hash`, and step progress) rather than the gateway's former write response. Text mode still ends with `Teachers updated.`
-### Added
-
-- **CI: breaking-change surface check** — a new PR workflow (`pr-surface-check.yml`) regenerates a snapshot of the CLI's command/flag surface and `--output json` struct shapes and diffs it against a committed baseline (`cobra-snapshots/`), failing the PR if either drifted without an update, or if `CHANGELOG.md` wasn't touched. Internal tooling only — adds three hidden subcommands (`snapshot`, `compare`, `changelog-check`); no user-facing CLI behavior changes.
-
-## [1.0.0] - 2026-07-27
 
 **Andamio CLI 1.0 is a developer tool for the people who author work and assess it: course Owners and Teachers, and project Managers.**
 
@@ -56,6 +51,8 @@ What 1.0 adds is a designed automation surface for assessment. Our own tooling h
 - **`kind` field in the `--output json` error envelope** — a stable, machine-readable failure name (`not_found`, `auth`, `conflict`, `server`, `backpressure`, `removed_command`, `unreachable`, `canceled`, `error`). Exit code and `kind` derive from the same classification and cannot disagree. Text-mode output is unchanged.
 
 - **Exit code 5, `unreachable`** — the request never reached the service. Transport failures previously exited 1, indistinguishable from a malformed flag or a decode failure. Cancellation and `--timeout` expiry are deliberately *not* classified this way: an operator pressing Ctrl-C is not the service being down.
+
+- **CI: breaking-change surface check** — `cmd/andamio/surface_test.go`, a golden test that regenerates the CLI's command/flag surface and `--output json` struct shapes and compares them against committed baselines under `cmd/andamio/testdata/golden/`, failing on drift (`go test ./cmd/andamio -run TestCommandSurfaceGolden -update` to intentionally update). Runs under the existing `go test ./...` CI step — no separate workflow. Internal tooling only; no user-facing CLI behavior changes.
 
 ### Removed
 

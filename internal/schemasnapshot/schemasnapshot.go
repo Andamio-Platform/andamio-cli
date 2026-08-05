@@ -22,6 +22,7 @@ type fieldSnapshot struct {
 
 type structSnapshot struct {
 	Name   string
+	Source string
 	Fields []fieldSnapshot
 }
 
@@ -57,9 +58,13 @@ func Generate(srcDirs []string, outPath string) error {
 		return err
 	}
 
-	// struct names are unique within a package, so sorting by name alone
-	// is enough to make the output byte-identical across reruns
+	// Struct names can collide across the packages now being scanned, and
+	// sort.Slice isn't stable — sorting on Source too gives every entry a
+	// unique key so tie-breaking can't depend on sort-algorithm internals.
 	sort.Slice(structs, func(i, j int) bool {
+		if structs[i].Source != structs[j].Source {
+			return structs[i].Source < structs[j].Source
+		}
 		return structs[i].Name < structs[j].Name
 	})
 
@@ -115,6 +120,7 @@ func parseFiles(files []string) ([]structSnapshot, error) {
 
 				allStructs = append(allStructs, structSnapshot{
 					Name:   typeSpec.Name.Name,
+					Source: f,
 					Fields: fields,
 				})
 			}
