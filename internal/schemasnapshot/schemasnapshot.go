@@ -25,31 +25,31 @@ type structSnapshot struct {
 	Fields []fieldSnapshot
 }
 
-func Generate(srcDir, outPath string) error {
-
-	directories, err := os.ReadDir(srcDir)
-	if err != nil {
-		return fmt.Errorf("cannot find any files %w", err)
-	}
+func Generate(srcDirs []string, outPath string) error {
 
 	var filteredFilePaths []string
 
-	for _, d := range directories {
+	for _, root := range srcDirs {
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(d.Name(), ".go") {
+				return nil
+			}
+			if strings.Contains(d.Name(), "_test") {
+				return nil
+			}
 
-		if d.IsDir() {
-			continue
-		}
-
-		if !strings.HasSuffix(d.Name(), ".go") {
-			continue
-		}
-
-		if !strings.Contains(d.Name(), "_test") {
-
-			path := filepath.Join(srcDir, d.Name())
 			filteredFilePaths = append(filteredFilePaths, path)
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("walking %s: %w", root, err)
 		}
-
 	}
 
 	structs, err := parseFiles(filteredFilePaths)
