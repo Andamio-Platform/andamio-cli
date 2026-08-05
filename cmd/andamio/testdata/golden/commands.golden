@@ -74,8 +74,15 @@ name: tx-hash | type: string
 name: video-url | type: string
 andamio course owner teachers - <flag list (if any)> ... 
 name: add | type: stringArray
+name: alias | type: string
 name: course-id | type: string
+name: metadata | type: stringArray
+name: no-wait | type: bool
 name: remove | type: stringArray
+name: skey | type: string
+name: submit-header | type: stringArray
+name: submit-url | type: string
+name: timeout | type: duration
 andamio course owner update - <flag list (if any)> ... 
 name: course-id | type: string
 name: description | type: string
