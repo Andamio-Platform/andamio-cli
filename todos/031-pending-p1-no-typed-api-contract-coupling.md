@@ -37,9 +37,14 @@ in either repo's CI catching it.
   `runCredentialVerifyHash`, ~line 116) — reads `m["slt_hash"]` and
   `m["on_chain_slts"]` out of an untyped map, republishes under a
   differently-named `verifyResult` struct mixed with locally-computed
-  fields (`match`, `computed_hash`). If `on_chain_slts` were renamed
-  upstream, this command would report `"no SLT texts found"` for every
-  module instead of erroring.
+  fields (`match`, `computed_hash`). Two independently confirmed failure
+  modes if either field is renamed upstream:
+  - `on_chain_slts` renamed — reports `"no SLT texts found"` and a mismatch
+    count for every module, exit 0.
+  - `slt_hash` renamed — worse: hits the `apiHash == ""` check and silently
+    `continue`s past every module, so the command exits 0 with empty
+    results and **no error text at all**. Nothing in the output signals
+    that anything went wrong.
 - **Pure local construction, API response discarded** (`cmd/andamio/course_create_module.go`,
   `CreateModuleResult`) — built entirely from user input flags; the API's
   response body (`createResp map[string]interface{}`) isn't read at all.
@@ -122,6 +127,7 @@ the one example already using a typed, API-shape-mirroring struct.
 | Date | Action | Learnings |
 |------|--------|-----------|
 | 2026-07-28 | Identified while scoping the breaking-change-detection CI plan | Raised as a separate architecture question — the original plan (CI snapshot/diff) treats a symptom; this TODO names the cause. Out of scope for the current maintainer task. |
+| 2026-08-05 | james diffed `docs/swagger.public.json` between v2.4.2 (prod) and v2.5.0-rc4 (cutover candidate) | The "scheduled 2.5 cutover will trigger this" framing from round-1 review doesn't hold — `slt_hash`/`on_chain_slts` and the endpoint behind `course_credential.go:116` are byte-identical across both versions; zero renames or removals across every endpoint this CLI calls (rc5/rc6 could still change that — recheck at cut time). Priority now rests on severity, not a scheduled trigger: james independently verified both silent-degrade failure modes, including the `slt_hash`-rename full-silence mode that produces zero error text (added to Findings above). Kept at P1 on that basis. |
 
 ## Resources
 
