@@ -11,11 +11,13 @@ import (
 
 var update = flag.Bool("update", false, "update golden files instead of comparing against them")
 
+// internal/apierr, internal/output, and internal/client are deliberately not
+// scanned here: their exported names are untyped string constants (e.g.
+// apierr.Kind*), and schemasnapshot only sees json-tagged struct fields, so
+// including them would contribute nothing while implying they're covered.
+// The kind contract is guarded separately by exitcode_test.go.
 var schemaSrcDirs = []string{
 	".",
-	"../../internal/apierr",
-	"../../internal/output",
-	"../../internal/client",
 	"../../internal/config",
 }
 

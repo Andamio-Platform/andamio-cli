@@ -52,8 +52,6 @@ What 1.0 adds is a designed automation surface for assessment. Our own tooling h
 
 - **Exit code 5, `unreachable`** — the request never reached the service. Transport failures previously exited 1, indistinguishable from a malformed flag or a decode failure. Cancellation and `--timeout` expiry are deliberately *not* classified this way: an operator pressing Ctrl-C is not the service being down.
 
-- **CI: breaking-change surface check** — `cmd/andamio/surface_test.go`, a golden test that regenerates the CLI's command/flag surface and `--output json` struct shapes and compares them against committed baselines under `cmd/andamio/testdata/golden/`, failing on drift (`go test ./cmd/andamio -run TestCommandSurfaceGolden -update` to intentionally update). Runs under the existing `go test ./...` CI step — no separate workflow. Internal tooling only; no user-facing CLI behavior changes.
-
 ### Removed
 
 - **`andamio course student ...` and `andamio project contributor ...`** — the learner and contributor command surface. Learners and contributors use the [Andamio app](https://app.andamio.io), which signs and submits their work in one flow.
