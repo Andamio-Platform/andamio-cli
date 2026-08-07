@@ -87,7 +87,30 @@ if grep -qF "## [${VERSION}]" CHANGELOG.md; then
     echo "    The release workflow publishes this section as the release body."
     exit 1
   fi
+  # A populated '## [VERSION]' heading is still not enough. When the versioned
+  # heading is written *before* the release ships — as '## [1.0.0]' was, months
+  # ahead of its tag — every PR merged in the meantime lands its notes under
+  # '## [Unreleased]'. changelog-section.sh extracts only the versioned section,
+  # so those notes are dropped from the published body without a word.
+  #
+  # The equivalent guard below only runs when the heading is *absent*, which is
+  # the "forgot to promote" case. This is the mirror: heading present, entries
+  # stranded above it. Same outcome — release notes that omit a breaking change.
+  STRANDED=$(awk '/^## \[Unreleased\]/{flag=1; next} /^## \[/{flag=0} flag' CHANGELOG.md)
+  if echo "$STRANDED" | grep -qE '^[[:space:]]*[-*]'; then
+    echo "  ✗ '## [Unreleased]' has entries and '## [$VERSION]' already exists"
+    echo "    Only the '## [$VERSION]' section is published as the release body,"
+    echo "    so these entries would ship silently omitted:"
+    echo ""
+    echo "$STRANDED" | grep -E '^[[:space:]]*[-*]' | cut -c1-96 | sed 's/^/      /'
+    echo ""
+    echo "    Fold them into '## [$VERSION]' (or promote them to their own"
+    echo "    version) before tagging. No bypass prompt — a dropped breaking"
+    echo "    change is exactly what these notes exist to prevent."
+    exit 1
+  fi
   echo "  ✓ CHANGELOG entry found for $VERSION ($(printf '%s' "$NOTES" | wc -l | tr -d ' ') lines of release notes)"
+  echo "  ✓ '## [Unreleased]' is empty — nothing stranded above the release"
 else
   # Extract the body of [Unreleased] (lines after the heading, stopping at the next
   # '## [' heading). Match a non-whitespace bullet ('-' or '*') to determine "has content".
