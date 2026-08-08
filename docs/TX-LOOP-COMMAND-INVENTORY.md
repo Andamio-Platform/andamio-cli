@@ -7,7 +7,9 @@
 
 [`andamio-app-template`](https://github.com/Andamio-Platform/andamio-app-template)'s `src/config/transaction-ui.ts` defines the canonical `TransactionType` union — 18 transaction types, each mapped to a fixed gateway endpoint in `TRANSACTION_ENDPOINTS`. Two skills in that repo describe the state machines these transactions move through: `.skills/transactions` (the general `BUILD → SIGN → SUBMIT → REGISTER → WATCH` pipeline, see [TX-LIFECYCLE.md](TX-LIFECYCLE.md)) and `.skills/task-lifecycle` (the contributor `COMMIT → SUBMIT → REVIEW → ASSESS` flow).
 
-Each of the 18 endpoint paths was grepped for across `cmd/andamio/*.go`, then every apparent gap was checked against the actual command implementation rather than trusting the grep alone — two cases turned out to be miscategorized on a first pass (commands that exist but call the wrong endpoint, not commands that are missing). The 5 "true gap" endpoints, and the 3 endpoints behind the `COURSE_STUDENT_*`/`PROJECT_CONTRIBUTOR_*` types, were separately confirmed as real, live, registered routes against a fresh `andamio-api` pull (`internal/router/v2/tx_router.go`, `internal/router/v2/claim_access_token_router.go`) — none of this is dead or planned-but-unbuilt API surface.
+`TRANSACTION_ENDPOINTS`'s paths all start with `/api` (e.g. `/api/v2/tx/project/manager/tasks/manage`). `tx build`/`tx run` add `/api` themselves, so pass the path without it — `/v2/tx/project/manager/tasks/manage` — or the request doubles up to `/api/api/v2/tx/...` and fails. Every command example in this doc already uses the stripped form.
+
+Each of the 18 endpoint paths was cross-referenced against `cmd/andamio/*.go`'s command implementations and, where relevant, against `COURSE-LIFECYCLE.md`/`PROJECT-LIFECYCLE.md`. `COURSE_TEACHER_MODULES_MANAGE` and `PROJECT_MANAGER_TASKS_MANAGE` are each a two-step workflow: a dedicated command handles the draft/status half over REST, then a separate, undedicated `tx run` call handles the on-chain half. `PROJECT_MANAGER_TASKS_ASSESS` has no draft step and no dedicated command, but has a fully documented `tx run` example, plus a `tx build`/`sign`/`submit` split for a human-review gate before signing. The 4 true-gap endpoints, and the 3 endpoints behind the `COURSE_STUDENT_*`/`PROJECT_CONTRIBUTOR_*` types, are registered in `andamio-api`'s `main` branch (`internal/router/v2/tx_router.go`, `internal/router/v2/claim_access_token_router.go`) as of this doc's last update. This confirms the routes exist in source, not that preprod or mainnet are currently running that code — an unmatched gateway path returns 401 the same as a matched-but-unauthorized one, so an HTTP probe can't tell the two apart.
 
 **"No mention anywhere" does not mean "impossible via the CLI."** `andamio tx build <endpoint> --body <json>` (`cmd/andamio/tx_build.go`) is a fully generic passthrough with no endpoint allowlist — any of the 18 paths can be hit today by hand-typing the exact URL and constructing the JSON body from scratch, with no flags, validation, or help text to guide it. "True gap" below means *no dedicated, documented, discoverable command* — not that the transaction is unreachable.
 
@@ -15,43 +17,42 @@ Each of the 18 endpoint paths was grepped for across `cmd/andamio/*.go`, then ev
 
 | Transaction Type | CLI Status |
 |---|---|
-| `GLOBAL_GENERAL_ACCESS_TOKEN_MINT` | Generic only (`tx build`), documented in help text — low priority |
+| `GLOBAL_GENERAL_ACCESS_TOKEN_MINT` | No dedicated command — hand-build the body and call `tx build /v2/tx/global/user/access-token/mint` (then `sign`/`submit`/`register`, or `tx run` for all of it at once). Only appears as an example in `tx build --help`, no worked walkthrough in a lifecycle doc — low priority |
 | `GLOBAL_USER_ACCESS_TOKEN_CLAIM` | **True gap** — no mention anywhere |
-| `INSTANCE_COURSE_CREATE` | Generic only, documented in help text — low priority |
-| `INSTANCE_PROJECT_CREATE` | Generic only, documented in help text — low priority |
+| `INSTANCE_COURSE_CREATE` | No dedicated command — full worked example using `tx run /v2/tx/instance/owner/course/create` in `COURSE-LIFECYCLE.md` — low priority |
+| `INSTANCE_PROJECT_CREATE` | No dedicated command — full worked example using `tx run /v2/tx/instance/owner/project/create` in `PROJECT-LIFECYCLE.md` — low priority |
 | `COURSE_OWNER_TEACHERS_MANAGE` | Dedicated (`course owner teachers`, fixed in #140) |
-| `COURSE_TEACHER_MODULES_MANAGE` | **Wrong endpoint, not missing** — `register/publish/delete/update-module-status` all exist but POST to `/api/v2/course/teacher/course-module/*` (REST proxy), not the tx path. Same bug class `#140` already fixed for `course owner teachers`. |
+| `COURSE_TEACHER_MODULES_MANAGE` | Draft step dedicated (`course teacher update-module-status`), on-chain mint only reachable via generic `tx run /v2/tx/course/teacher/modules/manage` — body must be hand-retyped to match the draft exactly (e.g. SLT text) or the gateway can't link the two records; no command chains them |
 | `COURSE_TEACHER_ASSIGNMENTS_ASSESS` | Dedicated (`teacher assessment build`) |
-| `COURSE_STUDENT_ASSIGNMENT_COMMIT` | Out of CLI scope, not retired from the product — handled by the [Andamio app](https://app.andamio.io). 1.0 removed the `course student` command surface; the gateway route is unaffected and live |
+| `COURSE_STUDENT_ASSIGNMENT_COMMIT` | Out of CLI scope — handled by the [Andamio app](https://app.andamio.io). 1.0 removed the `course student` command surface; the gateway route is unaffected and live |
 | `COURSE_STUDENT_ASSIGNMENT_UPDATE` | Out of CLI scope, same as above |
 | `COURSE_STUDENT_CREDENTIAL_CLAIM` | Out of CLI scope, same as above |
-| `PROJECT_OWNER_MANAGERS_MANAGE` | **True gap** — `project owner` has list/create/update/register, nothing for managers |
-| `PROJECT_OWNER_BLACKLIST_MANAGE` | **True gap** — no mention anywhere |
-| `PROJECT_MANAGER_TASKS_MANAGE` | **Wrong endpoint, not missing** — `project task create/update/delete` exist but POST to `/api/v2/project/manager/task/*` (REST proxy), same bug class as above |
-| `PROJECT_MANAGER_TASKS_ASSESS` | **True gap** — `project manager` only has read-only `commitments`/`qualified-contributors` |
-| `PROJECT_CONTRIBUTOR_TASK_COMMIT` | Out of CLI scope, not retired from the product — handled by the [Andamio app](https://app.andamio.io). 1.0 removed the `project contributor` command surface; the gateway route is unaffected and live |
+| `PROJECT_OWNER_MANAGERS_MANAGE` | **True gap** — `project owner` has list/create/update/register, nothing for managers. Endpoint appears in an internal wallet-signing brainstorm doc, not in any user-facing docs or help text |
+| `PROJECT_OWNER_BLACKLIST_MANAGE` | **True gap** — no CLI command. Endpoint appears in the same internal brainstorm doc, not in any user-facing docs or help text |
+| `PROJECT_MANAGER_TASKS_MANAGE` | Same shape as `COURSE_TEACHER_MODULES_MANAGE` — draft step dedicated (`project task create/update/delete`), mint only via generic `tx run /v2/tx/project/manager/tasks/manage`, same hand-duplication risk, no chaining command |
+| `PROJECT_MANAGER_TASKS_ASSESS` | No dedicated command — `project manager` only has read-only `commitments`/`qualified-contributors`. Documented via `tx run /v2/tx/project/manager/tasks/assess`, plus a `tx build`/`sign`/`submit` split to keep a human between the recommendation and the signature |
+| `PROJECT_CONTRIBUTOR_TASK_COMMIT` | Out of CLI scope — handled by the [Andamio app](https://app.andamio.io). 1.0 removed the `project contributor` command surface; the gateway route is unaffected and live |
 | `PROJECT_CONTRIBUTOR_TASK_ACTION` | Out of CLI scope, same as above |
-| `PROJECT_CONTRIBUTOR_CREDENTIAL_CLAIM` | Out of CLI scope, same as above |
-| `PROJECT_USER_TREASURY_ADD_FUNDS` | **True gap** — no mention anywhere |
-
-**Tally:** 2 dedicated · 6 out of CLI scope by design (learner/contributor roles served by the app, not retired — intentional 1.0 CLI scope cut, per `CHANGELOG.md`: "a change to the CLI, not the API... scoped out, not ruled out") · 3 generic-but-low-priority · 2 wrong-endpoint (same class as `#140` — existing commands need porting to the tx lifecycle, not new builds) · 5 true gaps (`GLOBAL_USER_ACCESS_TOKEN_CLAIM`, `PROJECT_OWNER_MANAGERS_MANAGE`, `PROJECT_OWNER_BLACKLIST_MANAGE`, `PROJECT_MANAGER_TASKS_ASSESS`, `PROJECT_USER_TREASURY_ADD_FUNDS`)
+| `PROJECT_CONTRIBUTOR_CREDENTIAL_CLAIM` | Out of CLI scope — handled by the [Andamio app](https://app.andamio.io). Unlike the other two `project contributor` rows, this one has no retired stub in `retired.go`; the pre-1.0 `project contributor` command group never had a `claim` subcommand, so this was never CLI-shaped to begin with, not removed in 1.0 |
+| `PROJECT_USER_TREASURY_ADD_FUNDS` | **True gap** — no CLI command, no endpoint path, no example anywhere. Listed by name only as row 17 ("Fund Treasury") in `TX-LIFECYCLE.md`'s transaction table, role `User` — same role tag as `GLOBAL_GENERAL_ACCESS_TOKEN_MINT`, not restricted to the Andamio app |
 
 ## Finding
 
-Every Manager-role transaction and every Owner-role project-management transaction has either no dedicated CLI support or hits the wrong (REST-proxy) endpoint — despite 1.0's own `CHANGELOG.md` describing the CLI as being "for the people who author work and assess it: course Owners and Teachers, and project Managers." Managers are the stated primary audience, and most of their transaction surface is either broken in the same way `#140` was, or doesn't exist yet. The 6 "out of scope" rows above are not part of this problem — those are a deliberate 1.0 decision affecting a different audience (learners/contributors), not a gap in the CLI's own stated audience.
+Every Manager-role transaction and every Owner-role project-management transaction is either missing a dedicated command entirely, or reachable only through a generic, hand-typed `tx run`/`tx build` call — despite 1.0's own `CHANGELOG.md` describing the CLI as being "for the people who author work and assess it: course Owners and Teachers, and project Managers." Managers are the stated primary audience, and most of their transaction surface has no dedicated on-chain command (`PROJECT_MANAGER_TASKS_MANAGE`'s mint step, `PROJECT_MANAGER_TASKS_ASSESS`) or none at all (`PROJECT_OWNER_MANAGERS_MANAGE`, `PROJECT_OWNER_BLACKLIST_MANAGE`). Two of these — `COURSE_TEACHER_MODULES_MANAGE` and `PROJECT_MANAGER_TASKS_MANAGE` — carry a specific risk worth calling out on their own: the on-chain body has to be hand-retyped to exactly match data the draft command already saved, with nothing chaining the two calls or validating that they match. The 6 "out of scope" rows above are not part of this problem — those are a deliberate 1.0 decision affecting a different audience (learners/contributors), not a gap in the CLI's own stated audience.
 
 ## Command surface, in context
 
-The CLI has **98 executable commands** in total (every `cobra.Command` with a `RunE`). Of those:
+The CLI has **118 commands** in total, per `cmd/andamio/testdata/golden/commands.golden` (a snapshot of the live `cobra.Command` tree). Of those:
 
-- **~10 are purely local** — no network call at all (`config *` x5, `tx sign`, the bare `manager`/`teacher` group commands, the root command, the removed-command handler).
-- **~88 call the API**, but the overwhelming majority of that is ordinary REST CRUD — list/get/create/update/delete on courses, projects, modules, tasks, dev keys, users, auth.
-- **Only 2 of those ~88 POST to one of the 18 canonical tx-building endpoints** (`course owner teachers`, `teacher assessment build`). The rest of the tx-building surface is either the 3 generic-passthrough examples above or entirely absent from dedicated commands.
+- **53 make no network call**: 17 retired stubs (`course student *`, `project contributor *`), 22 group commands (`andamio course`, `andamio config`, etc. — print help or an unknown-subcommand error), and 14 local leaf commands (`config` ×5, `auth login`, `auth status`, `tx sign`, `user logout`, `user status`, `dev logout`, `dev status`, `course credential compute-hash`, `project task compute-hash`).
+- **65 call the Andamio API**, the overwhelming majority of it ordinary REST CRUD — list/get/create/update/delete on courses, projects, modules, tasks, dev keys, users, auth.
+- **`tx submit` is a separate category** — it posts to the Cardano network's submit endpoint, not the Andamio API.
+- **Only 2 of the 65 API-calling commands POST to one of the 18 canonical tx-building endpoints** (`course owner teachers`, `teacher assessment build`). The rest of the tx-building surface is either the 4 generic-passthrough examples above or entirely absent from dedicated commands.
 
 In other words: the CLI is structurally a REST client with a thin, mostly-generic transaction-building layer bolted on, not a transaction-first tool — which tracks with the coverage gaps above.
 
-**No hot-wallet integration.** `tx sign` (`cmd/andamio/tx_sign.go`, `internal/cardano/sign.go`) requires `--skey <path>`, a local `cardano-cli` JSON key-envelope file. There is no CIP-30 / browser-wallet connect flow anywhere in the CLI — that only exists in the app. A developer has to generate and hold a raw signing key on disk to drive any transaction through the CLI at all, which raises the bar for using the tx-building commands that do exist independent of the coverage gaps above.
+**No hot-wallet integration for transaction signing.** `tx sign` (`cmd/andamio/tx_sign.go`, `internal/cardano/sign.go`) requires `--skey <path>`, a local `cardano-cli` JSON key-envelope file — there's no CIP-30 flow for signing a transaction. `user login` and `dev login` do open a browser to a wallet-connect page (`/auth/cli`, `/auth/dev-cli`) — but that's for authentication, a separate flow from transaction signing. A developer still has to generate and hold a raw signing key on disk to drive any transaction through the CLI, which raises the bar for using the tx-building commands that do exist independent of the coverage gaps above.
 
 ## Scope
 
-This inventory is the deliverable itself — capturing where the CLI's transaction coverage stands today. Closing the 7 gaps found here (2 endpoint migrations + 5 new commands), and the separate no-hot-wallet finding above, are unscoped future work that this inventory surfaces but does not include.
+This inventory is the deliverable itself — capturing where the CLI's transaction coverage stands today. Closing the 6 gaps found here (2 commands to chain the existing draft step to its `tx run` mint call, + 4 new commands for the true gaps), and the separate no-hot-wallet finding above, are unscoped future work that this inventory surfaces but does not include.
