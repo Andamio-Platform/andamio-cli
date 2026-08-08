@@ -15,8 +15,6 @@ tags:
   - blake2b-256
   - commit-tx-removal
 modules:
-  - cmd/andamio/course_student.go
-  - cmd/andamio/project_contributor.go
   - cmd/andamio/tx_lifecycle.go
   - cmd/andamio/project_task.go
   - cmd/andamio/helpers.go
@@ -97,6 +95,8 @@ All 7 on-chain test vectors from `@andamio/core` pass.
 
 Same pattern as `--slt-hash` from #42. Chain-only tasks have no `task_index`, so contributor commands now accept `--task-hash` as alternative. Both flags validate as 64-char hex strings.
 
+> **No longer current.** The `--task-hash` flag and the `resolveTaskHashFromFlags` / `resolveTaskData` helpers described here were removed with the `project contributor` command surface in the 1.0 retirement (`cmd/andamio/retired.go`). `ComputeTaskHash` itself and `project task verify-hash` are unaffected and still current. Retained as a record of the decision, not as a live command reference.
+
 ## Prevention Strategies
 
 ### The TX State Machine Rule
@@ -116,7 +116,9 @@ Same pattern as `--slt-hash` from #42. Chain-only tasks have no `task_index`, so
 
 When the CLI sends a hash to a build endpoint, verify it matches a locally-computed hash before signing. This catches API-side bugs where the datum construction omits fields (like native assets).
 
-The `ComputeTaskHash` function provides this for tasks. A similar `ComputeSltHash` could be added for course modules if needed.
+The `ComputeTaskHash` function provides this for tasks. `ComputeSltHash` (`internal/cardano/slt_hash.go`) provides the equivalent for course modules — added two days after this doc was written, so the "could be added if needed" this line used to say went stale almost immediately.
+
+Both functions turned out to do more than verification: they are the *linkage key* binding a draft record to its on-chain counterpart. See `docs/solutions/architecture/content-hash-vs-pending-tx-hash-linking-mechanisms.md` for that framing, which this doc predates.
 
 ### Flag Validation Prevents Panics
 
@@ -129,12 +131,13 @@ Always validate `--*-hash` flags as 64-char hex before using them. A short strin
 | `internal/cardano/task_hash.go` | `ComputeTaskHash` — Plutus Data CBOR + Blake2b-256 |
 | `internal/cardano/task_hash_test.go` | 7 on-chain vectors + CBOR encoding tests |
 | `cmd/andamio/project_task.go` | `verify-hash` diagnostic command |
-| `cmd/andamio/helpers.go` | `resolveTaskHashFromFlags`, `resolveTaskData` |
-| `cmd/andamio/tx_lifecycle.go` | `executeTxLifecycle` (used only by `tx run`) |
+| `cmd/andamio/helpers.go` | `resolveTaskHashFromFlags`, `resolveTaskData` — both removed in the 1.0 retirement |
+| `cmd/andamio/tx_lifecycle.go` | `executeTxLifecycle` (now also used by `course owner teachers`) |
 
 ## Related Documentation
 
-- `docs/solutions/feature-implementations/cli-onchain-commitment-commands-and-address-derivation.md` — the earlier solution doc (pre-removal)
+- `docs/solutions/architecture/content-hash-vs-pending-tx-hash-linking-mechanisms.md` — reframes `ComputeTaskHash` / `ComputeSltHash` as the *linkage key* between a draft and its on-chain record, not merely a verification check, and covers the `ComputeSltHash` / `modules_manage` half this doc does not
+- `cli-onchain-commitment-commands-and-address-derivation.md` — the earlier solution doc (pre-removal); deleted 2026-08-08 once every mechanism it described was gone from the CLI. In git history if needed.
 - `docs/brainstorms/2026-03-20-tx-run-full-lifecycle-command-brainstorm.md` — tx run design
 - `@andamio/core/src/utils/hashing/task-hash.ts` — reference TypeScript implementation
 - Issue #44: task hash mismatch due to missing assets

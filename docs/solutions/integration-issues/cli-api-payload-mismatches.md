@@ -27,6 +27,10 @@ tags:
 
 # Fix CLI command payloads to match current gateway API contracts
 
+> **Two mechanisms here, not one bug class.** This doc catalogues `pending_tx_hash` (items 1 and 5) and `slt_hash` (item 3) as instances of the same "missing required field" drift. They are not interchangeable: they belong to two structurally different draft-to-on-chain linking mechanisms — correlation by transaction hash, and content-hash equality. A search that lands here looking for "how does a draft link to its on-chain record" will over-weight `pending_tx_hash`, which appears more often. Read `docs/solutions/architecture/content-hash-vs-pending-tx-hash-linking-mechanisms.md` before treating either as a template for a new command's payload.
+>
+> **Some commands below no longer exist.** The `course student` surface (items 5 and 6) was retired in 1.0; those commands are now hidden stubs returning exit 4 (`cmd/andamio/retired.go`). The fixes are preserved as a record of the drift class, not as live command references.
+
 ## Problem
 
 The Andamio CLI sent payloads that did not match the gateway API's actual request schemas — wrong required fields, wrong JSON keys, and wrong payload shapes — causing API errors across course/project owner, teacher, and student commands. This is the third instance of the same class of bug (payload drift from API spec) documented in this codebase.
@@ -72,6 +76,8 @@ payload := map[string]interface{}{"course_id": courseID}
 if len(addTeachers) > 0 { payload["add"] = addTeachers }
 if len(removeTeachers) > 0 { payload["remove"] = removeTeachers }
 ```
+
+> **Superseded — the wire names changed again.** As of `cmd/andamio/course_owner.go:370-375` the keys are `teachers_to_add` / `teachers_to_remove`, the owner's `alias` rides at the top level, and both arrays are always sent (empty rather than omitted, because an absent key is not the same claim as an empty one). The command also moved off the REST proxy onto the tx path in #144. The `--add` / `--remove` CLI surface described above is unchanged; only the mapping to wire names moved. This block is the record of the 2026-03-31 fix, not current code.
 
 ### 3. Register-module: added missing slt_hash
 
@@ -147,6 +153,7 @@ Each fix aligns the CLI's outbound payload with the actual OpenAPI `requestBody`
 
 ## Related Issues
 
+- `docs/solutions/architecture/content-hash-vs-pending-tx-hash-linking-mechanisms.md` — Distinguishes the two linking mechanisms this doc's fixes span. Read before generalizing from either `slt_hash` or `pending_tx_hash`.
 - `docs/solutions/integration-issues/evidence-submission-payload-format-and-field-alignment.md` — Same class of bug, different commands (evidence submission fields). Root cause identical.
 - `docs/solutions/integration-issues/cli-course-import-app-parity-and-payload-alignment.md` — Same API contract mismatch pattern in export/import commands.
 - `docs/solutions/feature-implementations/cli-api-coverage-completion-phases-3-7.md` — Original implementation of the commands fixed here. Now partially stale (register-module factory, review decision values).

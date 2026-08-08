@@ -365,6 +365,7 @@ andamio project task create "$PROJECT_ID" --title "..." --lovelace 5000000 --exp
 | Course Lifecycle | `docs/COURSE-LIFECYCLE.md` | Course creation, module import, SLT hashes, publishing, student enrollment |
 | Project Lifecycle | `docs/PROJECT-LIFECYCLE.md` | Project creation, task management, contributor workflow, assessments |
 | Solutions Index | `docs/solutions/` | Documented solutions to past problems (bugs, patterns, workflow learnings), organized by category with YAML frontmatter (`tags`, `problem_type`). Relevant when implementing or debugging in documented areas. |
+| Concepts | `CONCEPTS.md` | Shared domain vocabulary — SLTs, course modules, module status, content-derived identity. Relevant when orienting to the codebase or discussing domain concepts. |
 
 ## Planned Features
 
