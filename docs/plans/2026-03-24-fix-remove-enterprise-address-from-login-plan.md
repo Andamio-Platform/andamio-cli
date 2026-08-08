@@ -84,4 +84,4 @@ Existing `~/.andamio/config.json` files with a `"user_address"` key: Go's `json.
 - Related brainstorm: [docs/brainstorms/2026-03-18-cli-wallet-signing-brainstorm.md](../brainstorms/2026-03-18-cli-wallet-signing-brainstorm.md) — established that address is the user's concern, not the CLI's
 - Original implementation: PR #41 (issue #40) — added address derivation
 - Subsequent removal of consumer: PR #47 — removed `commit-tx` commands that were the only motivation for storing address
-- Solution doc: [docs/solutions/feature-implementations/cli-onchain-commitment-commands-and-address-derivation.md](../solutions/feature-implementations/cli-onchain-commitment-commands-and-address-derivation.md) — Section 5 documents the feature being removed
+- Solution doc: `docs/solutions/feature-implementations/cli-onchain-commitment-commands-and-address-derivation.md` — Section 5 documented the feature being removed. That doc was itself deleted on 2026-08-08, once every mechanism it described was gone from the CLI; it is in git history.
