@@ -280,11 +280,20 @@ no-credentials case proves the stubs did not inherit an auth `PersistentPreRunE`
 Wallet `andamio-preprod-001` holds **three** access tokens under policy
 `aa1cbea2524d369768283d7c8300755880fd071194a347cf0a4e274f`, all signable with the same `payment.skey`:
 
-| Alias | Teacher courses | Commitments awaiting review |
+| Alias | Teacher courses | Pending reviews |
 |---|---|---|
-| `qa-1778157478` | `beebcdee…`, `9d1682d2…` (broken DB state) | **1 — `SUBMITTED`** |
-| `tester_0001` | `b9baa6ba…`, `9f437601…`, `4ef42f85…` | **0** |
-| `andamio-preprod-001` | `f2298842…` | not surveyed |
+| `qa-1778157478` | 2 — `beebcdee…`, `9d1682d2…` (broken DB state) | **1** |
+| `tester_0001` | 3 — `b9baa6ba…`, `9f437601…`, `4ef42f85…` | **0** |
+| `andamio-preprod-001` | **5** | **1** |
+
+Counts from `user me` (`counts.teaching_courses` / `counts.pending_reviews`), queried per alias on 2026-08-24.
+
+**Correction:** an earlier revision of this table listed `andamio-preprod-001` as teaching one course
+(`f2298842…`) with its commitments "not surveyed". That course count came from the public `course list`, which
+omits non-public courses — the alias actually teaches **5** and has **1** pending review. Two consequences: it
+could have served the assessment leg as well, so the claim that `qa-1778157478` held the *only* `SUBMITTED`
+commitment was too strong (it held the only one verified at the time); and a public-list-derived role count is
+not a safe way to survey an alias, which is itself part of why this failure mode is easy to walk into.
 
 **Why this is dangerous rather than merely wrong:** headless login succeeds for *any* of the three, with no
 error and no warning. Verified both wrong-alias failure modes:
@@ -296,6 +305,11 @@ An operator following #152 literally lands on the first case: a green-looking ru
 assessment leg — 1.0's headline feature — would report success having assessed nothing.
 
 **Recommended action:** correct #152's step 3 to name `qa-1778157478` before anyone re-runs this sweep.
+
+**Cheap detection for any future run:** `andamio user me --output json | jq '.data.counts'` returns
+`teaching_courses`, `managing_projects` and `pending_reviews` for the authenticated alias in one call.
+`pending_reviews` is the field that discriminates — it reads **0** for `tester_0001`. Surfacing this at login
+is filed as #153.
 
 *(Aside: the 422 surfaces as exit 1 / `kind: error`. 422 is not enumerated in the failure contract, so falling
 through to generic is conformant, not a defect.)*

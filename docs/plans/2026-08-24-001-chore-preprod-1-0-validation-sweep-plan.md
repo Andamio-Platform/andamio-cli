@@ -39,7 +39,7 @@ Wallet `andamio-preprod-001` holds **three** access tokens under policy `aa1cbea
 |---|---|---|
 | `qa-1778157478` | `beebcdee…`, `9d1682d2…` (broken DB state — do not use) | **1 — `SUBMITTED`** |
 | `tester_0001` | `b9baa6ba…`, `9f437601…`, `4ef42f85…` | **0** |
-| `andamio-preprod-001` | `f2298842…` "Acceptance Test Course v2.2.0-rc1" | not surveyed |
+| `andamio-preprod-001` | 5 (per `user me`; the public list shows only `f2298842…`) | **1** |
 
 **Decision: the assessment leg (U4) runs under `qa-1778157478`.** The report must state which alias each step ran under, and must record the issue's wrong precondition as a finding needing a follow-up correction to #152.
 
