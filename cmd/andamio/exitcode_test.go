@@ -326,3 +326,46 @@ func TestAgentPaths_EmptyListIsSuccessNotError(t *testing.T) {
 		}
 	})
 }
+
+// A bare top-level JSON array is a real gateway shape, not a hypothetical:
+// /api/v2/tx/pending returns `[]` when nothing is pending, and the 2.5 gateway
+// serves several list routes unwrapped. getJSON used to decode into
+// map[string]interface{}, which turned those responses into a hard unmarshal
+// failure — exit 1, kind "error", and a Go-internals message on stdout — in
+// direct violation of the empty-set contract pinned above. The output layer
+// already handled top-level arrays; only the decode target did not.
+func TestGetJSON_BareArrayResponseIsSuccessNotDecodeError(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	for _, tc := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{"empty array", `[]`, 0},
+		{"populated array", `[{"tx_hash":"abc","tx_type":"teachers_update"}]`, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(srv.Close)
+
+			stdout, _, code := runCLI(t, bin, srv.URL, "tx", "pending", "--output", "json")
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0 — a bare array is a valid response, not a failure.\nstdout: %q", code, stdout)
+			}
+			var parsed []interface{}
+			if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+				t.Fatalf("stdout is not a JSON array: %v\nraw: %q", err, stdout)
+			}
+			if len(parsed) != tc.want {
+				t.Errorf("got %d entries, want %d", len(parsed), tc.want)
+			}
+			if strings.Contains(stdout, "cannot unmarshal") {
+				t.Errorf("Go-internals decode error leaked to stdout: %q", stdout)
+			}
+		})
+	}
+}

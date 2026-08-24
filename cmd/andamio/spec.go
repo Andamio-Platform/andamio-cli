@@ -18,6 +18,13 @@ import (
 // specHTTPClient is a dedicated client for spec fetching with proper timeout
 var specHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
+// specDocPath is the gateway route serving the rendered OpenAPI document.
+// andamio-api#652 removed the previous /api/v1/docs/doc.json on 2026-07-28;
+// the gateway has served /openapi/swagger.json since. Keep this in one place —
+// spec fetch and spec paths' network fallback both used to hardcode the dead
+// route separately, so fixing one still left the other pointed at a 404.
+const specDocPath = "/openapi/swagger.json"
+
 var specCmd = &cobra.Command{
 	Use:   "spec",
 	Short: "Manage OpenAPI spec",
@@ -34,7 +41,7 @@ var specFetchCmd = &cobra.Command{
 			return err
 		}
 
-		specURL := cfg.BaseURL + "/api/v1/docs/doc.json"
+		specURL := cfg.BaseURL + specDocPath
 		if !isJSON {
 			fmt.Fprintf(os.Stderr, "Fetching spec from %s...\n", specURL)
 		}
@@ -101,6 +108,33 @@ var specPathsCmd = &cobra.Command{
 		// Try local file first
 		specPath := "openapi.json"
 		data, err := os.ReadFile(specPath)
+		if err == nil {
+			// A stale local spec is worse than no spec: it lists routes the
+			// gateway has since removed, and silently sent the #133 dry run
+			// down a dead path. Say where the data came from and how old it is
+			// so the caller can judge it. stderr only — stdout stays parseable.
+			//
+			// Deliberately NOT gated on !isJSON. The `if !isJSON` convention
+			// suppresses *progress* chatter, and it is safe there because the
+			// JSON output carries an equivalent structural signal. Staleness
+			// has no structural equivalent — a bare `[]specPathEntry` looks
+			// identical whether it came from a fresh gateway fetch or a
+			// year-old file — so gating it would leave the scripting surface,
+			// the consumer least able to notice, with no signal at all. This
+			// follows the same all-modes rule as `dev keys create`'s
+			// one-time-key warning and the expired-JWT warning in client.New.
+			if info, statErr := os.Stat(specPath); statErr == nil {
+				// Wall-clock hours, floored. Clamp at zero so a future mtime
+				// (clock skew, NFS, mtime-restoring checkout) reports "0 days"
+				// rather than a nonsense negative count.
+				days := int(time.Since(info.ModTime()).Hours() / 24)
+				if days < 0 {
+					days = 0
+				}
+				fmt.Fprintf(os.Stderr, "using local %s from %s (%d days old) — run 'andamio spec fetch' to refresh\n",
+					specPath, info.ModTime().Format("2006-01-02"), days)
+			}
+		}
 		if err != nil {
 			if os.IsNotExist(err) {
 				// Fetch from API
@@ -109,12 +143,21 @@ var specPathsCmd = &cobra.Command{
 					return err
 				}
 
-				specURL := cfg.BaseURL + "/api/v1/docs/doc.json"
+				specURL := cfg.BaseURL + specDocPath
 				resp, err := specHTTPClient.Get(specURL)
 				if err != nil {
 					return fmt.Errorf("failed to fetch spec: %w", err)
 				}
 				defer resp.Body.Close()
+
+				// Check the status before parsing. Without this, a 404 envelope
+				// parses as valid JSON, fails the spec["paths"] assertion below,
+				// and surfaces as a bare "no paths found in spec" — naming
+				// neither the status nor the URL. Anyone on a pre-2.5 gateway
+				// lands here, so the message has to say what actually happened.
+				if resp.StatusCode != http.StatusOK {
+					return fmt.Errorf("API error %d fetching spec from %s", resp.StatusCode, specURL)
+				}
 
 				data, err = io.ReadAll(resp.Body)
 				if err != nil {
