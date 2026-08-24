@@ -105,6 +105,26 @@ What 1.0 adds is a designed automation surface for assessment. Our own tooling h
 
 - **`course owner teachers` works again** (#140). The command POSTed to `/api/v2/course/owner/teachers/update`, a route `andamio-api#689` removed on 2026-07-28 — so it was broken against API 2.5, the only version 1.0 supports, with no fallback. Since Owner teacher management is in 1.0's declared scope, this was a release blocker rather than a latent issue. It now runs the canonical transaction path (`POST /v2/tx/course/owner/teachers/manage`, tx type `teachers_update`) through the same build→sign→submit→register→poll lifecycle as `tx run`. See the BREAKING note under **Changed** for the new required flags.
 
+### Security
+
+- Updated `golang.org/x/crypto` from v0.49.0 to v0.52.0, clearing 13 advisories
+  (7 critical, 2 high, 4 moderate) reported against the previous version. The CLI
+  uses only `blake2b` from that module — for transaction-body hashing in
+  `internal/cardano` — and every advisory is in the SSH surface (agent constraint
+  forwarding, `VerifiedPublicKeyCallback` permission skipping, a channel-write
+  infinite loop, RSA/DSA parameter handling, certificate restriction bypass), none
+  of which this binary reaches. **No known exploit path existed in the CLI**; the
+  bump is so that a supply-chain scan of a 1.0 binary comes back clean rather than
+  requiring that explanation each time.
+
+  Signing behaviour is unchanged and verified byte-for-byte: the same unsigned
+  preprod transaction signed with pre- and post-bump builds produces an identical
+  2732-character signed transaction and an identical Blake2b transaction hash. The
+  on-chain hash vectors in `internal/cardano` (`TestComputeSltHash_OnChainVector`,
+  `TestComputeTaskHash_OnChainVectors`) pass unchanged. `golang.org/x/text`
+  (v0.35.0 → v0.37.0) and `golang.org/x/sys` (v0.42.0 → v0.45.0) moved as
+  transitive requirements of the new `x/crypto`.
+
 ## [0.13.3] - 2026-06-05
 
 ### Fixed
