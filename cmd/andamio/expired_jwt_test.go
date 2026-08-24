@@ -44,6 +44,16 @@ func countingStub(t *testing.T) (string, *int64) {
 // extra environment variables.
 func runCLIWithJWT(t *testing.T, bin, baseURL, userJWT string, extraEnv []string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
+	return runCLIInDir(t, bin, baseURL, userJWT, "", extraEnv, args...)
+}
+
+// runCLIInDir is the shared body behind every runCLI* helper: build an isolated
+// $HOME with a config pointing at baseURL, run the binary, capture both streams
+// and the exit code. workdir sets the child's cwd — needed by commands that read
+// or write files relative to it (spec fetch/paths and openapi.json); pass "" to
+// inherit the test process's cwd.
+func runCLIInDir(t *testing.T, bin, baseURL, userJWT, workdir string, extraEnv []string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
 
 	home := t.TempDir()
 	dir := filepath.Join(home, ".andamio")
@@ -64,6 +74,7 @@ func runCLIWithJWT(t *testing.T, bin, baseURL, userJWT string, extraEnv []string
 
 	cmd := exec.Command(bin, args...)
 	cmd.Env = append(envWithHome(home), extraEnv...)
+	cmd.Dir = workdir
 
 	var outBuf, errBuf strings.Builder
 	cmd.Stdout = &outBuf

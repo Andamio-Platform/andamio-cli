@@ -100,7 +100,8 @@ Three things were wrong at once:
 - It violated the failure contract's load-bearing rule that **an empty result is exit 0 with an empty
   collection, not an error** — the exact rule `CLAUDE.md` warns not to "fix" away.
 - It leaked a Go-internals message as the user-facing error.
-- It was silently latent for every `getJSON` caller, not just `tx pending`.
+- It was silently latent for every `getJSON` caller, not just `tx pending` — 11 routes, counting the
+  three `getJSONWithHint` wrappers (course lesson/assignment/intro).
 
 Root cause: `getJSON` decoded every response into `map[string]interface{}`, so any top-level array was a hard
 unmarshal failure. The output layer already handled top-level arrays (`printAsCSV` switches on
@@ -110,8 +111,14 @@ unmarshal failure. The output layer already handled top-level arrays (`printAsCS
 `cmd/andamio/exitcode_test.go` — the file that already owns the empty-set contract — and verified to fail
 before the fix. Confirmed against live preprod: `tx pending` now exits 0 and prints `[]`.
 
-**Note:** `postJSON` has the identical latent shape. It is left alone deliberately — no POST route was observed
-returning a bare array, and speculatively widening it was out of scope.
+**Note:** `postJSON` has the identical latent shape and is left alone deliberately. Post-review it turned out
+to have **zero callers anywhere in the codebase** — it is pre-existing dead code, so "no POST route returns a
+bare array" is true only because nothing calls it. Removing it is a separate cleanup, not this branch's job.
+
+**Framing worth carrying forward:** this is a second-order recurrence of
+`docs/solutions/architecture/cli-composability-audit-and-fix.md`. That 2026-03-18 audit established the
+"empty is not an error" rule and fixed it in the *output* layer, but never audited the *decode* layer — which
+is where it sat latent for five months. The rule has two halves and only one was closed.
 
 ### Finding 3 — `spec fetch`/`spec paths` (#137) (CLI-side, **FIXED**)
 
@@ -314,7 +321,9 @@ Stated plainly, because a report that reads as blanket coverage is worse than on
 | `spec fetch` bypasses `internal/client`, so 404 → exit 1 instead of exit 2 / `not_found` | this repo | medium |
 | `--output json` envelope shape is inconsistent across list commands | this repo | low |
 | `teachers_update` locks ~10.5 ADA that removal does not return — record alongside the fee estimate | `andamio-dev`, `reference/tx-loops.yaml` loop 12 | medium |
-| `postJSON` shares `getJSON`'s old latent array-decode failure | this repo | low |
+| `postJSON` shares `getJSON`'s old latent array-decode failure — and has zero callers (dead code) | this repo | low |
+| `schemasnapshot` has no visibility into raw-passthrough `getJSON` routes | this repo, `todos/037` | medium |
+| `--output json` envelope shape inconsistent across list commands | this repo, `todos/038` | low |
 
 ## Environment restored
 
