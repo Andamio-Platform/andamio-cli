@@ -96,22 +96,6 @@ func getJSON(ctx context.Context, path string) error {
 	return output.PrintJSON(result)
 }
 
-// postJSON is a helper for simple POST endpoints that return JSON (no body)
-func postJSON(ctx context.Context, path string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
-	c := client.New(cfg)
-	var result map[string]interface{}
-	if err := c.Post(ctx, path, nil, &result); err != nil {
-		return err
-	}
-
-	return output.PrintJSON(result)
-}
-
 // getJSONWithHint wraps getJSON and replaces NotFoundError messages with a contextual hint.
 func getJSONWithHint(ctx context.Context, path, notFoundHint string) error {
 	err := getJSON(ctx, path)

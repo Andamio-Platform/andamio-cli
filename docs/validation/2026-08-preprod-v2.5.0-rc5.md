@@ -140,7 +140,7 @@ sweep should carry — and is recorded below as follow-up work.
 
 **Fixed:** both call sites now use one `specDocPath` const (they had hardcoded the dead route separately, so
 fixing one would have left the other broken), and `spec paths` announces the local file's date and age on
-stderr, suppressed under `--output json`. Three tests added in `cmd/andamio/spec_test.go`.
+stderr, in every output mode including `--output json` (stderr only, so stdout stays parseable). Three tests added in `cmd/andamio/spec_test.go`.
 
 Verified against live preprod: `spec fetch` exits 0 and reports `Andamio API Gateway v2.5.0` — which is also
 this sweep's programmatic confirmation that the gateway under test really is 2.5.
