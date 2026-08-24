@@ -81,7 +81,14 @@ func getJSON(ctx context.Context, path string) error {
 	}
 
 	c := client.New(cfg)
-	var result map[string]interface{}
+	// Decode into interface{}, not map[string]interface{}: the gateway returns a
+	// bare JSON array for some endpoints (/api/v2/tx/pending returns [] when
+	// nothing is pending). A map target makes those a hard unmarshal failure —
+	// exit 1 with a Go-internals message — which violates the failure contract's
+	// rule that an empty result is exit 0 with an empty collection. The output
+	// layer already handles top-level arrays (printAsCSV switches on
+	// []interface{}); only this decode target blocked them.
+	var result interface{}
 	if err := c.Get(ctx, path, &result); err != nil {
 		return err
 	}
