@@ -209,27 +209,48 @@ warranted care on: that doc records the gateway returning 400 where the CLI expe
 Here the status is a true 409 and the CLI's typed-error path fired correctly. No body-token fallback warning
 was emitted.
 
-### Finding 5 — `tx-loops.yaml` understates the cost of `teachers_update` (docs defect, sibling repo)
+### Finding 5 — `teachers_update` charges an undocumented 10 ADA service fee (docs defect, sibling repo)
 
 Measured on-chain, both transactions `valid_contract: true`, `deposit: 0`:
 
-| | Fee | Wallet payment-address net |
+| | Network fee | Wallet payment-address net |
 |---|---|---|
-| ADD | 0.302351 ADA | **−10.846388 ADA** |
-| REMOVE | 0.287247 ADA | −0.627608 ADA |
-| **Total fees** | **0.589598 ADA** | |
+| ADD teacher | 0.302351 ADA | **−10.846388 ADA** |
+| REMOVE teacher | 0.287247 ADA | −0.627608 ADA |
+| **Total network fees** | **0.589598 ADA** | |
 
 **The fee estimate is accurate.** tx-loops loop 12 says "~0.28 ADA per tx (network fee only)" and the measured
-fees were 0.30 and 0.29. No complaint there.
+network fees were 0.30 and 0.29.
 
-**But the wallet cost is not the fee.** Adding a teacher moved ~10.5 ADA out of the wallet into script UTxOs,
-and removing that teacher did **not** return it. Wallet balance across the whole sweep went
-5198.613506 → 5188.239080 tADA, a net **−10.374426** against ~0.59 in fees.
+**But the parenthetical "no service fee" is wrong for the add direction.** Tracing the ADD transaction's
+outputs by destination:
 
-Loop 12's `cost_estimate` is labelled "network fee only, no service fee", so it is not *wrong* — but a reader
-sizing a wallet for teacher rotation would under-provision by roughly 18×. **Recommend a follow-up in
-`andamio-dev` to record the locked-ADA figure alongside the fee.** Not a CLI defect, not a gateway defect, and
-not a blocker for the tag.
+| Destination | Value | |
+|---|---|---|
+| `addr_test1qz32rd2uja0jhd…` | **10.000000 ADA** | plain Shelley payment address, no native assets |
+| `addr_test1xq97cv2n74lw44…` | 1.271450 ADA | script address, 1 native asset (state NFT min-ADA) |
+| `addr_test1xr0czj3r4j0d4e…` | 1.439540 ADA | script address, 1 native asset (state NFT min-ADA) |
+| wallet (change, 6 outputs) | remainder | |
+
+The 10 ADA goes to a **plain payment address** — not a script, not min-ADA, not recoverable by reversing the
+operation. That address currently holds ~18,115 tADA, consistent with an accumulating fee or treasury
+address. The REMOVE transaction pays it nothing: its only non-wallet outputs are the same two script UTxOs.
+
+So the real shape of the operation is:
+
+- **Adding a teacher: ~10.85 ADA** — 0.30 network fee + a flat **10 ADA service fee** + ~0.5 net into script min-ADA.
+- **Removing a teacher: ~0.63 ADA** — network fee only.
+
+A reader sizing a wallet from loop 12's "~0.28 ADA per tx, no service fee" would under-provision an
+add-a-teacher operation by roughly **38×**, and would not know a per-add charge exists at all.
+
+**Recommend a correction in `andamio-dev`** to `reference/tx-loops.yaml` loop 12 (and an audit of the other 16
+loops, since any of them may carry the same undocumented charge). Not a CLI defect, not a gateway defect, and
+not a blocker for the tag — the CLI faithfully built and submitted what the gateway returned.
+
+**Correction note:** an earlier revision of this report attributed the ~10.5 ADA gap to "value moved into
+script UTxOs that the remove did not return." That was wrong — it is a flat payment to a non-script address.
+The per-destination trace above is the corrected finding.
 
 ---
 
@@ -320,7 +341,7 @@ Stated plainly, because a report that reads as blanket coverage is worse than on
 | Close #151 as not-a-defect, citing § Finding 4 | this repo, issue #151 | low |
 | `spec fetch` bypasses `internal/client`, so 404 → exit 1 instead of exit 2 / `not_found` | this repo | medium |
 | `--output json` envelope shape is inconsistent across list commands | this repo | low |
-| `teachers_update` locks ~10.5 ADA that removal does not return — record alongside the fee estimate | `andamio-dev`, `reference/tx-loops.yaml` loop 12 | medium |
+| `teachers_update` add charges an undocumented flat 10 ADA service fee; loop 12 says "no service fee" | `andamio-dev`, `reference/tx-loops.yaml` loop 12 | medium |
 | `postJSON` shares `getJSON`'s old latent array-decode failure — and has zero callers (dead code) | this repo | low |
 | `schemasnapshot` has no visibility into raw-passthrough `getJSON` routes | this repo, `todos/037` | medium |
 | `--output json` envelope shape inconsistent across list commands | this repo, `todos/038` | low |
@@ -330,4 +351,4 @@ Stated plainly, because a report that reads as blanket coverage is worse than on
 - `~/.andamio/config.json` restored from the pre-sweep backup.
 - Course `beebcdee…` teacher set restored to `["qa-1778157478"]`.
 - No CLI binary was installed to `PATH`; the sweep build lives in a scratch directory.
-- Wallet 001: 5198.613506 → 5188.239080 tADA (0.589598 in fees; remainder in script UTxOs, § Finding 5).
+- Wallet 001: 5198.613506 → 5188.239080 tADA (0.589598 network fees + a 10 ADA service fee on the add, § Finding 5).
