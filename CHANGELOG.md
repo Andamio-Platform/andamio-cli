@@ -6,33 +6,6 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
-### Fixed
-
-- `tx pending` no longer exits 1 when nothing is pending. The gateway returns a
-  bare `[]` on HTTP 200 for an empty result, and the shared `getJSON` helper
-  decoded every response into a map, so an empty pending list surfaced as
-  `json: cannot unmarshal array into Go value of type map[string]interface {}`
-  — a Go-internals message, and a violation of the documented rule that an empty
-  result is exit 0 with an empty collection. All 11 routes sharing that helper
-  were affected. **No `--output json` envelope shape changed**: responses that
-  were already objects are byte-identical.
-- `spec fetch` works again. It requested `/api/v1/docs/doc.json`, which
-  andamio-api#652 removed on 2026-07-28, so it returned `API error 404` against
-  every current gateway. Both `spec fetch` and `spec paths`' network fallback
-  now use `/openapi/swagger.json`. A non-200 on that fallback also reports the
-  status and URL instead of the downstream symptom `no paths found in spec`.
-
-### Changed
-
-- `spec paths` announces when it is serving a local `openapi.json` instead of
-  fetching, printing the file's date and age to stderr. It previously used
-  whatever was in the working directory silently, however old — which is how a
-  months-old spec listing removed routes sent an earlier debugging session down
-  a dead path. The notice fires in **every** output mode, including
-  `--output json`: a bare `[]specPathEntry` looks identical whether it came from
-  a fresh fetch or a year-old file, so scripts had no signal at all. stdout is
-  unchanged and stays parseable; pipe `2>/dev/null` to silence it.
-
 ## [1.0.0] - 2026-07-27
 
 **Andamio CLI 1.0 is a developer tool for the people who author work and assess it: course Owners and Teachers, and project Managers.**
@@ -92,6 +65,14 @@ What 1.0 adds is a designed automation surface for assessment. Our own tooling h
   Under `--output json` the command now emits the transaction `RunResult` envelope (`state`, `tx_hash`, and step progress) rather than the gateway's former write response. Text mode still ends with `Teachers updated.`
 
 - `andamio --help` describes a three-role tool rather than "query courses, credentials, and more". README and the in-repo guides match.
+- `spec paths` announces when it is serving a local `openapi.json` instead of
+  fetching, printing the file's date and age to stderr. It previously used
+  whatever was in the working directory silently, however old — which is how a
+  months-old spec listing removed routes sent an earlier debugging session down
+  a dead path. The notice fires in **every** output mode, including
+  `--output json`: a bare `[]specPathEntry` looks identical whether it came from
+  a fresh fetch or a year-old file, so scripts had no signal at all. stdout is
+  unchanged and stays parseable; pipe `2>/dev/null` to silence it.
 
 ### Fixed
 
@@ -104,6 +85,19 @@ What 1.0 adds is a designed automation surface for assessment. Our own tooling h
 - The assess-transaction example in `docs/andamio-cli-context.md` documented fields that do not exist (`assessments`, `student_alias`, `result: "pass"`). The real shape is `assignment_decisions`, `alias`, `outcome: "accept"`. An agent following the old example would have built a request the API rejects. `teacher assessment build` now owns that payload shape so it cannot be got wrong by hand.
 
 - **`course owner teachers` works again** (#140). The command POSTed to `/api/v2/course/owner/teachers/update`, a route `andamio-api#689` removed on 2026-07-28 — so it was broken against API 2.5, the only version 1.0 supports, with no fallback. Since Owner teacher management is in 1.0's declared scope, this was a release blocker rather than a latent issue. It now runs the canonical transaction path (`POST /v2/tx/course/owner/teachers/manage`, tx type `teachers_update`) through the same build→sign→submit→register→poll lifecycle as `tx run`. See the BREAKING note under **Changed** for the new required flags.
+- `tx pending` no longer exits 1 when nothing is pending. The gateway returns a
+  bare `[]` on HTTP 200 for an empty result, and the shared `getJSON` helper
+  decoded every response into a map, so an empty pending list surfaced as
+  `json: cannot unmarshal array into Go value of type map[string]interface {}`
+  — a Go-internals message, and a violation of the documented rule that an empty
+  result is exit 0 with an empty collection. All 11 routes sharing that helper
+  were affected. **No `--output json` envelope shape changed**: responses that
+  were already objects are byte-identical.
+- `spec fetch` works again. It requested `/api/v1/docs/doc.json`, which
+  andamio-api#652 removed on 2026-07-28, so it returned `API error 404` against
+  every current gateway. Both `spec fetch` and `spec paths`' network fallback
+  now use `/openapi/swagger.json`. A non-200 on that fallback also reports the
+  status and URL instead of the downstream symptom `no paths found in spec`.
 
 ### Security
 
