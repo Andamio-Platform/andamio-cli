@@ -18,6 +18,13 @@ import (
 // specHTTPClient is a dedicated client for spec fetching with proper timeout
 var specHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
+// specDocPath is the gateway route serving the rendered OpenAPI document.
+// andamio-api#652 removed the previous /api/v1/docs/doc.json on 2026-07-28;
+// the gateway has served /openapi/swagger.json since. Keep this in one place —
+// spec fetch and spec paths' network fallback both used to hardcode the dead
+// route separately, so fixing one still left the other pointed at a 404.
+const specDocPath = "/openapi/swagger.json"
+
 var specCmd = &cobra.Command{
 	Use:   "spec",
 	Short: "Manage OpenAPI spec",
@@ -34,7 +41,7 @@ var specFetchCmd = &cobra.Command{
 			return err
 		}
 
-		specURL := cfg.BaseURL + "/api/v1/docs/doc.json"
+		specURL := cfg.BaseURL + specDocPath
 		if !isJSON {
 			fmt.Fprintf(os.Stderr, "Fetching spec from %s...\n", specURL)
 		}
@@ -101,6 +108,17 @@ var specPathsCmd = &cobra.Command{
 		// Try local file first
 		specPath := "openapi.json"
 		data, err := os.ReadFile(specPath)
+		if err == nil {
+			// A stale local spec is worse than no spec: it lists routes the
+			// gateway has since removed, and silently sent the #133 dry run
+			// down a dead path. Say where the data came from and how old it is
+			// so the caller can judge it. stderr only — stdout stays parseable.
+			if info, statErr := os.Stat(specPath); statErr == nil && output.GetFormat() != output.FormatJSON {
+				age := time.Since(info.ModTime())
+				fmt.Fprintf(os.Stderr, "using local %s from %s (%d days old) — run 'andamio spec fetch' to refresh\n",
+					specPath, info.ModTime().Format("2006-01-02"), int(age.Hours()/24))
+			}
+		}
 		if err != nil {
 			if os.IsNotExist(err) {
 				// Fetch from API
@@ -109,7 +127,7 @@ var specPathsCmd = &cobra.Command{
 					return err
 				}
 
-				specURL := cfg.BaseURL + "/api/v1/docs/doc.json"
+				specURL := cfg.BaseURL + specDocPath
 				resp, err := specHTTPClient.Get(specURL)
 				if err != nil {
 					return fmt.Errorf("failed to fetch spec: %w", err)
