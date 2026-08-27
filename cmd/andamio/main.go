@@ -122,6 +122,8 @@ func init() {
 //	4  removed_command    — retired in 1.0 (see cmd/andamio/retired.go)
 //	5  unreachable        — the request never reached the service
 //	6  conflict           — conflicts with existing state (409)
+//	7  tier_limit         — the account's plan does not permit this action;
+//	                        remedy is billing-side (revoke, upgrade, subscribe)
 //
 // A caller can branch on the exit code alone or on "kind" alone; the two never
 // disagree. Kinds without a dedicated exit code (server, backpressure,
@@ -129,9 +131,13 @@ func init() {
 // splitting them further buys a caller nothing today.
 //
 // Codes 0-3 predate 1.0 and are load-bearing for existing scripts, so they are
-// fixed. 4 and 5 are new. 6 is the one change to an existing path: conflicts
+// fixed. 4, 5 and 7 are new. 6 is the one change to an existing path: conflicts
 // were typed but exited 1, indistinguishable from a generic failure. 1.0 is
-// the right moment to fix that, and it is called out in the changelog.
+// the right moment to fix that, and it is called out in the changelog. 7 is
+// classified by the gateway's body code (tier_limit_exceeded), not by HTTP
+// status: the cap rides on 429 today and is ruled to move to 403, and a
+// caller told "retry later" or "re-login" for a plan cap would act on the
+// wrong remedy either way.
 //
 // Note that an empty result is NOT an error. Commands that find nothing emit
 // an empty collection and exit 0 — "nothing found", "could not reach the
@@ -177,6 +183,8 @@ func main() {
 			exitCode = 5
 		case apierr.KindConflict:
 			exitCode = 6
+		case apierr.KindTierLimit:
+			exitCode = 7
 		}
 
 		if !alreadyReported {

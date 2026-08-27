@@ -288,6 +288,11 @@ func runDevKeysCreate(cmd *cobra.Command, args []string) error {
 	return runDevKeysCreateFlow(cmd.Context(), cfg, name, environment)
 }
 
+// devKeysTierLimitRemedy is the CLI-authored line appended (non-JSON modes)
+// under the gateway's own tier-cap sentence. It names the commands, since the
+// gateway cannot: free a slot with `dev keys delete`, or change plan.
+const devKeysTierLimitRemedy = "To free a slot, list your keys with 'andamio dev keys list' and revoke one with 'andamio dev keys delete <id>', or upgrade your subscription at https://app.andamio.io."
+
 // runDevKeysCreateFlow is the testable core of `dev keys create`. See
 // runDevKeysListFlow for the split rationale.
 func runDevKeysCreateFlow(ctx context.Context, cfg *config.Config, name, environment string) error {
@@ -301,11 +306,18 @@ func runDevKeysCreateFlow(ctx context.Context, cfg *config.Config, name, environ
 		Name:        name,
 		Environment: environment,
 	}, &resp); err != nil {
-		// 422 with `tier_limit_exceeded`/`invalid_environment` body codes
-		// surfaces via apierr.* — the gateway-side stable error codes are
-		// preserved verbatim in the message so scripts that match on them
-		// continue to work.
-		return fmt.Errorf("create developer key failed: %w", err)
+		// The tier cap is a 429 today (ruled to become 403 —
+		// product-circle#304) carrying the envelope code
+		// `tier_limit_exceeded`; internal/client classifies it by that
+		// code into apierr.TierLimitError (exit 7, kind tier_limit), so
+		// the status change needs no CLI release. `invalid_environment`
+		// is a 422 and stays a plain error. The stable code strings are
+		// preserved verbatim in the message so scripts that match on
+		// them continue to work.
+		return withTierLimitRemedy(
+			fmt.Errorf("create developer key failed: %w", err),
+			devKeysTierLimitRemedy,
+		)
 	}
 	if resp.Key == "" {
 		// Defensive: a 200 with no `key` field in the body means the

@@ -73,6 +73,23 @@ func expiredAuthError(what string, exp time.Time, hint string) *apierr.AuthError
 		"%s expired at %s. %s", what, exp.Local().Format(time.RFC1123), hint)}
 }
 
+// withTierLimitRemedy appends a CLI-authored remedy line to a tier-limit
+// error, in every output mode except JSON. main.go prints err.Error() as
+// prose on stderr for text/csv/markdown and as the "error" field of the JSON
+// envelope; the remedy is for humans, and scripts already have kind
+// "tier_limit" to branch on, so the JSON value stays exactly the gateway's
+// message. The line lives at the command layer, not on the typed error,
+// because only the command knows which remedy applies — "revoke a key" is
+// right for dev keys create and wrong for a future tier_limit elsewhere.
+// Wraps with %w so apierr.Kind (and exit 7) still resolve.
+func withTierLimitRemedy(err error, remedy string) error {
+	var tl *apierr.TierLimitError
+	if !errors.As(err, &tl) || output.GetFormat() == output.FormatJSON {
+		return err
+	}
+	return fmt.Errorf("%w\n%s", err, remedy)
+}
+
 // getJSON is a helper for simple GET endpoints that return JSON
 func getJSON(ctx context.Context, path string) error {
 	cfg, err := config.Load()

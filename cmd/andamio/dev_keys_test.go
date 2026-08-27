@@ -380,21 +380,122 @@ func TestRunDevKeysCreate_GatewayReturnsEmptyKey_RefusesToSilentlySucceed(t *tes
 	}
 }
 
-func TestRunDevKeysCreate_TierLimitExceededBubbles(t *testing.T) {
-	// 429 with the gateway's stable error code — the CLI must surface the
-	// code so scripts can branch on it.
+// devKeysTierLimitEnvelope is the gateway's real shape for the cap —
+// andamio-api WriteErrorResponse nests code/message under "error". An earlier
+// version of this test stubbed a flat {"error":"tier_limit_exceeded"} string,
+// which the gateway never sends.
+const devKeysTierLimitEnvelope = `{"error":{"code":"tier_limit_exceeded","message":"maximum API key limit (1) reached for your tier; revoke an existing key or upgrade your subscription","details":""}}`
+
+func TestRunDevKeysCreate_TierLimit_ClassifiesAndAddsRemedy(t *testing.T) {
+	// 429 today, 403 after product-circle#304 — the CLI keys on the body
+	// code, so both must classify identically.
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			stub := &devKeysGatewayStub{
+				createRespStatus: status,
+				createRespBody:   []byte(devKeysTierLimitEnvelope),
+			}
+			cfg := devKeysTestEnv(t, stub)
+
+			err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet")
+			if err == nil {
+				t.Fatal("expected error on tier-limit response")
+			}
+			assertDualCredentialAuthOnTheWire(t, stub)
+
+			var tl *apierr.TierLimitError
+			if !errors.As(err, &tl) {
+				t.Fatalf("want *apierr.TierLimitError, got %T: %v", err, err)
+			}
+			if got := apierr.Kind(err); got != apierr.KindTierLimit {
+				t.Errorf("Kind = %q, want %q (not backpressure, not auth)", got, apierr.KindTierLimit)
+			}
+			msg := err.Error()
+			for _, want := range []string{
+				"tier_limit_exceeded", // stable code must reach the user
+				"revoke an existing key or upgrade your subscription", // gateway sentence verbatim
+				"andamio dev keys list",                               // CLI remedy line (text mode)
+				"andamio dev keys delete <id>",
+			} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("err = %q, want substring %q", msg, want)
+				}
+			}
+		})
+	}
+}
+
+// JSON is the scripting surface: the "error" value carries the gateway's
+// message, never CLI prose — scripts branch on kind.
+func TestRunDevKeysCreate_TierLimit_JSONModeCarriesNoRemedyLine(t *testing.T) {
+	_ = output.SetFormat("json")
+	t.Cleanup(func() { _ = output.SetFormat("text") })
+
 	stub := &devKeysGatewayStub{
 		createRespStatus: http.StatusTooManyRequests,
-		createRespBody:   []byte(`{"error":"tier_limit_exceeded","message":"tier cap reached"}`),
+		createRespBody:   []byte(devKeysTierLimitEnvelope),
 	}
 	cfg := devKeysTestEnv(t, stub)
 
 	err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet")
 	if err == nil {
-		t.Fatal("expected error on 429 tier-limit response")
+		t.Fatal("expected error on tier-limit response")
 	}
-	if !strings.Contains(err.Error(), "tier_limit_exceeded") {
-		t.Errorf("err = %q, want substring %q (gateway's stable code must reach the user)", err.Error(), "tier_limit_exceeded")
+	if got := apierr.Kind(err); got != apierr.KindTierLimit {
+		t.Errorf("Kind = %q, want %q", got, apierr.KindTierLimit)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "revoke an existing key or upgrade your subscription") {
+		t.Errorf("gateway message missing from JSON-mode error: %q", msg)
+	}
+	if strings.Contains(msg, "andamio dev keys delete") {
+		t.Errorf("CLI remedy line leaked into the JSON error value: %q", msg)
+	}
+}
+
+// csv and markdown are human-facing like text — main.go prints prose on
+// stderr for every format except JSON, so the remedy gate is "not JSON".
+func TestRunDevKeysCreate_TierLimit_CSVModeCarriesRemedyLine(t *testing.T) {
+	_ = output.SetFormat("csv")
+	t.Cleanup(func() { _ = output.SetFormat("text") })
+
+	stub := &devKeysGatewayStub{
+		createRespStatus: http.StatusTooManyRequests,
+		createRespBody:   []byte(devKeysTierLimitEnvelope),
+	}
+	cfg := devKeysTestEnv(t, stub)
+
+	err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet")
+	if err == nil || !strings.Contains(err.Error(), "andamio dev keys delete <id>") {
+		t.Errorf("csv mode should carry the remedy line, got %v", err)
+	}
+}
+
+// An uncoded 429 (rate limit / quota) is still backpressure, exit 1 — only
+// the coded envelope moves to tier_limit.
+func TestRunDevKeysCreate_Uncoded429_StaysBackpressure(t *testing.T) {
+	stub := &devKeysGatewayStub{
+		createRespStatus: http.StatusTooManyRequests,
+		createRespBody:   []byte(`{"error":"Too many requests (minute limit)"}`),
+	}
+	cfg := devKeysTestEnv(t, stub)
+
+	err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet")
+	if got := apierr.Kind(err); got != apierr.KindBackpressure {
+		t.Errorf("Kind = %q, want %q", got, apierr.KindBackpressure)
+	}
+	if strings.Contains(err.Error(), "andamio dev keys delete") {
+		t.Errorf("remedy line must only decorate tier_limit errors: %q", err.Error())
+	}
+}
+
+func TestWithTierLimitRemedy_PassesOtherErrorsThrough(t *testing.T) {
+	authErr := &apierr.AuthError{HTTPStatus: 401, Message: "nope"}
+	if got := withTierLimitRemedy(authErr, "remedy"); got != authErr {
+		t.Errorf("non-tier-limit error was modified: %v", got)
+	}
+	if got := withTierLimitRemedy(nil, "remedy"); got != nil {
+		t.Errorf("nil error became %v", got)
 	}
 }
 
