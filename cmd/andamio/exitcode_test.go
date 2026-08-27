@@ -70,10 +70,11 @@ func TestExitCodes_AndKindsAgree(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			url := statusStub(t, tc.status)
-			if tc.body != "" {
-				url = statusStubWithBody(t, tc.status, tc.body)
+			body := tc.body
+			if body == "" {
+				body = `{"message":"stub"}`
 			}
+			url := statusStubWithBody(t, tc.status, body)
 			stdout, _, code := runCLI(t, bin, url, "course", "list", "--output", "json")
 
 			if code != tc.wantCode {

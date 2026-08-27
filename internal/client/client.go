@@ -293,52 +293,47 @@ func wrapTransportError(ctx context.Context, method, url string, err error) erro
 // release.
 const gatewayCodeTierLimitExceeded = "tier_limit_exceeded"
 
-// decodeGatewayErrorCode tolerantly reads the gateway's error envelope. The
+// gatewayError is the decoded form of the gateway's error envelope.
+type gatewayError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details string `json:"details"`
+}
+
+// decodeGatewayError tolerantly reads the gateway's error envelope. The
 // current shape is {"error":{"code":"…","message":"…","details":"…"}}; some
 // routes still emit the flat {"error":"…"} form, in which case the string is
 // returned as the code with no message. Returns ok=false for an empty or
 // non-JSON body, a null or missing error field, or a blank code — every miss
 // falls through to the status switch, so nothing currently classified changes
 // unless a code matches exactly.
-func decodeGatewayErrorCode(body []byte) (code, message, details string, ok bool) {
-	if len(bytes.TrimSpace(body)) == 0 {
-		return "", "", "", false
-	}
+func decodeGatewayError(body []byte) (ge gatewayError, ok bool) {
 	var envelope struct {
 		Error json.RawMessage `json:"error"`
 	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return "", "", "", false
+	if json.Unmarshal(body, &envelope) != nil {
+		return ge, false
 	}
 	raw := bytes.TrimSpace(envelope.Error)
-	if len(raw) == 0 || string(raw) == "null" {
-		return "", "", "", false
+	if len(raw) == 0 {
+		return ge, false
 	}
 	switch raw[0] {
 	case '{':
-		var detail struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-			Details string `json:"details"`
+		if json.Unmarshal(raw, &ge) != nil {
+			return ge, false
 		}
-		if err := json.Unmarshal(raw, &detail); err != nil {
-			return "", "", "", false
-		}
-		code = strings.TrimSpace(detail.Code)
-		message, details = strings.TrimSpace(detail.Message), strings.TrimSpace(detail.Details)
 	case '"':
-		var flat string
-		if err := json.Unmarshal(raw, &flat); err != nil {
-			return "", "", "", false
+		if json.Unmarshal(raw, &ge.Code) != nil {
+			return ge, false
 		}
-		code = strings.TrimSpace(flat)
 	default:
-		return "", "", "", false
+		return ge, false
 	}
-	if code == "" {
-		return "", "", "", false
-	}
-	return code, message, details, true
+	ge.Code = strings.TrimSpace(ge.Code)
+	ge.Message = strings.TrimSpace(ge.Message)
+	ge.Details = strings.TrimSpace(ge.Details)
+	return ge, ge.Code != ""
 }
 
 // statusError maps an HTTP error status to the typed error the CLI expects.
@@ -350,23 +345,22 @@ func decodeGatewayErrorCode(body []byte) (code, message, details string, ok bool
 // string-match consumers (if any) keep working.
 func statusError(status int, body []byte) error {
 	// Plan-gated refusals are classified by the gateway's body code, not by
-	// status, and before the status switch: a tier cap arrives on 429 today
-	// and is ruled to move to 403 (product-circle#304). Keying on the code
-	// means neither status can misfile it as backpressure (retried) or auth
-	// (re-login). Only 4xx bodies are consulted — a 5xx carrying the code is
-	// still a server failure. Decoded from the raw body (the gateway
-	// pretty-prints; truncating first could cut the closing braces), then
-	// capped, so the 500-byte bound still holds for what reaches the user.
-	if status >= 400 && status < 500 {
-		if code, message, details, ok := decodeGatewayErrorCode(body); ok && code == gatewayCodeTierLimitExceeded {
-			if message == "" {
-				message = truncateErrorBody(body)
+	// status, and before the status switch — see apierr.TierLimitError for
+	// why. Only 4xx bodies are consulted (a 5xx carrying the code is still a
+	// server failure), and only bodies that mention the code are decoded.
+	// Decoding reads the raw body (the gateway pretty-prints; truncating
+	// first could cut the closing braces); the fields are capped afterwards
+	// so the 500-byte bound still holds for what reaches the user.
+	if status >= 400 && status < 500 && bytes.Contains(body, []byte(gatewayCodeTierLimitExceeded)) {
+		if ge, ok := decodeGatewayError(body); ok && ge.Code == gatewayCodeTierLimitExceeded {
+			if ge.Message == "" {
+				ge.Message = string(body)
 			}
 			return &apierr.TierLimitError{
 				Status:  status,
-				Code:    code,
-				Message: truncateErrorBody([]byte(message)),
-				Details: truncateErrorBody([]byte(details)),
+				Code:    ge.Code,
+				Message: truncateErrorString(ge.Message),
+				Details: truncateErrorString(ge.Details),
 			}
 		}
 	}
@@ -433,7 +427,10 @@ func parseRetryAfterSeconds(body []byte) int {
 
 // truncateErrorBody limits error message size to prevent log flooding and info leakage
 func truncateErrorBody(body []byte) string {
-	s := string(body)
+	return truncateErrorString(string(body))
+}
+
+func truncateErrorString(s string) string {
 	if len(s) > maxErrorBodySize {
 		return s[:maxErrorBodySize] + "... (truncated)"
 	}

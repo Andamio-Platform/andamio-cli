@@ -72,11 +72,8 @@ func Kind(err error) string {
 		return KindRemovedCommand
 	case errors.As(err, &notFound):
 		return KindNotFound
-	// Checked before auth and backpressure deliberately: statusError only
-	// ever constructs one type per response, but a tier cap arrives on 429
-	// today and is ruled to move to 403 (product-circle#304). Should a
-	// future wrapper ever carry both, the plan-gated classification must
-	// win — "revoke or upgrade" is the remedy, not "wait" or "re-login".
+	// Before auth and backpressure: a tier cap arrives on 429 today and 403
+	// later, and the plan-gated classification wins over either.
 	case errors.As(err, &tierLimit):
 		return KindTierLimit
 	case errors.As(err, &auth):

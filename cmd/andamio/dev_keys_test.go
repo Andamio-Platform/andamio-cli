@@ -380,33 +380,29 @@ func TestRunDevKeysCreate_GatewayReturnsEmptyKey_RefusesToSilentlySucceed(t *tes
 	}
 }
 
-// devKeysTierLimitEnvelope is the gateway's real shape for the cap —
-// andamio-api WriteErrorResponse nests code/message under "error". An earlier
-// version of this test stubbed a flat {"error":"tier_limit_exceeded"} string,
-// which the gateway never sends.
-const devKeysTierLimitEnvelope = `{"error":{"code":"tier_limit_exceeded","message":"maximum API key limit (1) reached for your tier; revoke an existing key or upgrade your subscription","details":""}}`
+// runDevKeysCreateWithResponse drives the create flow against a stub that
+// answers with the given status/body and returns the flow error plus the stub
+// (for header assertions). The tier-limit fixture is tierLimitBody in
+// exitcode_test.go — the gateway's real nested envelope, shared with the
+// binary-level exit-code guard.
+func runDevKeysCreateWithResponse(t *testing.T, status int, body string) (error, *devKeysGatewayStub) {
+	t.Helper()
+	stub := &devKeysGatewayStub{createRespStatus: status, createRespBody: []byte(body)}
+	cfg := devKeysTestEnv(t, stub)
+	return runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet"), stub
+}
 
 func TestRunDevKeysCreate_TierLimit_ClassifiesAndAddsRemedy(t *testing.T) {
 	// 429 today, 403 after product-circle#304 — the CLI keys on the body
 	// code, so both must classify identically.
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			stub := &devKeysGatewayStub{
-				createRespStatus: status,
-				createRespBody:   []byte(devKeysTierLimitEnvelope),
-			}
-			cfg := devKeysTestEnv(t, stub)
-
-			err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet")
+			err, stub := runDevKeysCreateWithResponse(t, status, tierLimitBody)
 			if err == nil {
 				t.Fatal("expected error on tier-limit response")
 			}
 			assertDualCredentialAuthOnTheWire(t, stub)
 
-			var tl *apierr.TierLimitError
-			if !errors.As(err, &tl) {
-				t.Fatalf("want *apierr.TierLimitError, got %T: %v", err, err)
-			}
 			if got := apierr.Kind(err); got != apierr.KindTierLimit {
 				t.Errorf("Kind = %q, want %q (not backpressure, not auth)", got, apierr.KindTierLimit)
 			}
@@ -425,62 +421,42 @@ func TestRunDevKeysCreate_TierLimit_ClassifiesAndAddsRemedy(t *testing.T) {
 	}
 }
 
-// JSON is the scripting surface: the "error" value carries the gateway's
-// message, never CLI prose — scripts branch on kind.
-func TestRunDevKeysCreate_TierLimit_JSONModeCarriesNoRemedyLine(t *testing.T) {
-	_ = output.SetFormat("json")
-	t.Cleanup(func() { _ = output.SetFormat("text") })
+// The remedy line is for humans: it rides in every mode main.go prints as
+// prose on stderr, and is absent from the JSON "error" value, which stays the
+// gateway's message (scripts branch on kind).
+func TestRunDevKeysCreate_TierLimit_RemedyLineByOutputMode(t *testing.T) {
+	for _, tc := range []struct {
+		format     string
+		wantRemedy bool
+	}{
+		{"text", true}, {"csv", true}, {"markdown", true}, {"json", false},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			_ = output.SetFormat(tc.format)
+			t.Cleanup(func() { _ = output.SetFormat("text") })
 
-	stub := &devKeysGatewayStub{
-		createRespStatus: http.StatusTooManyRequests,
-		createRespBody:   []byte(devKeysTierLimitEnvelope),
-	}
-	cfg := devKeysTestEnv(t, stub)
-
-	err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet")
-	if err == nil {
-		t.Fatal("expected error on tier-limit response")
-	}
-	if got := apierr.Kind(err); got != apierr.KindTierLimit {
-		t.Errorf("Kind = %q, want %q", got, apierr.KindTierLimit)
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "revoke an existing key or upgrade your subscription") {
-		t.Errorf("gateway message missing from JSON-mode error: %q", msg)
-	}
-	if strings.Contains(msg, "andamio dev keys delete") {
-		t.Errorf("CLI remedy line leaked into the JSON error value: %q", msg)
-	}
-}
-
-// csv and markdown are human-facing like text — main.go prints prose on
-// stderr for every format except JSON, so the remedy gate is "not JSON".
-func TestRunDevKeysCreate_TierLimit_CSVModeCarriesRemedyLine(t *testing.T) {
-	_ = output.SetFormat("csv")
-	t.Cleanup(func() { _ = output.SetFormat("text") })
-
-	stub := &devKeysGatewayStub{
-		createRespStatus: http.StatusTooManyRequests,
-		createRespBody:   []byte(devKeysTierLimitEnvelope),
-	}
-	cfg := devKeysTestEnv(t, stub)
-
-	err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet")
-	if err == nil || !strings.Contains(err.Error(), "andamio dev keys delete <id>") {
-		t.Errorf("csv mode should carry the remedy line, got %v", err)
+			err, _ := runDevKeysCreateWithResponse(t, http.StatusTooManyRequests, tierLimitBody)
+			if err == nil {
+				t.Fatal("expected error on tier-limit response")
+			}
+			if got := apierr.Kind(err); got != apierr.KindTierLimit {
+				t.Errorf("Kind = %q, want %q", got, apierr.KindTierLimit)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "revoke an existing key or upgrade your subscription") {
+				t.Errorf("gateway message missing: %q", msg)
+			}
+			if got := strings.Contains(msg, "andamio dev keys delete <id>"); got != tc.wantRemedy {
+				t.Errorf("remedy line present = %v, want %v: %q", got, tc.wantRemedy, msg)
+			}
+		})
 	}
 }
 
 // An uncoded 429 (rate limit / quota) is still backpressure, exit 1 — only
-// the coded envelope moves to tier_limit.
+// the coded envelope moves to tier_limit, and only it gets the remedy line.
 func TestRunDevKeysCreate_Uncoded429_StaysBackpressure(t *testing.T) {
-	stub := &devKeysGatewayStub{
-		createRespStatus: http.StatusTooManyRequests,
-		createRespBody:   []byte(`{"error":"Too many requests (minute limit)"}`),
-	}
-	cfg := devKeysTestEnv(t, stub)
-
-	err := runDevKeysCreateFlow(context.Background(), cfg, "a", "mainnet")
+	err, _ := runDevKeysCreateWithResponse(t, http.StatusTooManyRequests, `{"error":"Too many requests (minute limit)"}`)
 	if got := apierr.Kind(err); got != apierr.KindBackpressure {
 		t.Errorf("Kind = %q, want %q", got, apierr.KindBackpressure)
 	}
