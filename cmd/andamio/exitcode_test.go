@@ -21,13 +21,25 @@ func runCLI(t *testing.T, bin, baseURL string, args ...string) (stdout, stderr s
 
 func statusStub(t *testing.T, status int) string {
 	t.Helper()
+	return statusStubWithBody(t, status, `{"message":"stub"}`)
+}
+
+// statusStubWithBody is statusStub with a caller-supplied body, for the
+// classifications that key on the gateway's error envelope rather than on
+// status alone.
+func statusStubWithBody(t *testing.T, status int, body string) string {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
-		_, _ = w.Write([]byte(`{"message":"stub"}`))
+		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
 }
+
+// tierLimitBody is the gateway's real envelope for a plan cap (andamio-api
+// WriteErrorResponse, code keys_viewmodels.ErrCodeTierLimitExceeded).
+const tierLimitBody = `{"error":{"code":"tier_limit_exceeded","message":"maximum API key limit (1) reached for your tier; revoke an existing key or upgrade your subscription","details":""}}`
 
 // The contract issue #126 turns on: each distinguishable failure gets its own
 // exit code AND its own kind, and the two never disagree.
@@ -37,20 +49,32 @@ func TestExitCodes_AndKindsAgree(t *testing.T) {
 	cases := []struct {
 		name     string
 		status   int
+		body     string // empty → the default {"message":"stub"}
 		wantCode int
 		wantKind string
 	}{
-		{"not found", http.StatusNotFound, 2, "not_found"},
-		{"unauthorized", http.StatusUnauthorized, 3, "auth"},
-		{"forbidden", http.StatusForbidden, 3, "auth"},
-		{"conflict", http.StatusConflict, 6, "conflict"},
-		{"server error", http.StatusInternalServerError, 1, "server"},
-		{"backpressure", http.StatusTooManyRequests, 1, "backpressure"},
+		{"not found", http.StatusNotFound, "", 2, "not_found"},
+		{"unauthorized", http.StatusUnauthorized, "", 3, "auth"},
+		{"forbidden", http.StatusForbidden, "", 3, "auth"},
+		{"conflict", http.StatusConflict, "", 6, "conflict"},
+		{"server error", http.StatusInternalServerError, "", 1, "server"},
+		{"backpressure", http.StatusTooManyRequests, "", 1, "backpressure"},
+		// The same 429 with the gateway's plan-cap code is a different
+		// outcome: "retry later" can never come true for a key cap. And
+		// the classification keys on the code, so the ruled 429→403 move
+		// (product-circle#304) lands on exit 7 too, not on auth.
+		{"tier limit on 429", http.StatusTooManyRequests, tierLimitBody, 7, "tier_limit"},
+		{"tier limit on 403", http.StatusForbidden, tierLimitBody, 7, "tier_limit"},
+		{"uncoded quota 429 stays backpressure", http.StatusTooManyRequests, `{"error":"Monthly quota exceeded"}`, 1, "backpressure"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			url := statusStub(t, tc.status)
+			body := tc.body
+			if body == "" {
+				body = `{"message":"stub"}`
+			}
+			url := statusStubWithBody(t, tc.status, body)
 			stdout, _, code := runCLI(t, bin, url, "course", "list", "--output", "json")
 
 			if code != tc.wantCode {
@@ -177,6 +201,27 @@ func TestExitCodes_TextModeCarriesNoKind(t *testing.T) {
 	}
 	if stderr == "" {
 		t.Error("no error message on stderr")
+	}
+}
+
+// Exit 7 in text mode: prose on stderr, nothing on stdout, no kind leak —
+// the same posture as every other kind.
+func TestExitCodes_TierLimitTextModeIsSeven(t *testing.T) {
+	bin := buildTestBinary(t)
+	url := statusStubWithBody(t, http.StatusTooManyRequests, tierLimitBody)
+
+	stdout, stderr, code := runCLI(t, bin, url, "course", "list")
+	if code != 7 {
+		t.Errorf("exit code = %d, want 7 (tier_limit)", code)
+	}
+	if stdout != "" {
+		t.Errorf("text mode wrote to stdout: %q", stdout)
+	}
+	if !strings.Contains(stderr, "revoke an existing key or upgrade") {
+		t.Errorf("stderr should carry the gateway's remedy sentence, got %q", stderr)
+	}
+	if strings.Contains(stderr, "kind") {
+		t.Errorf("text mode leaked the kind field: %q", stderr)
 	}
 }
 

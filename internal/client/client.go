@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -285,13 +286,90 @@ func wrapTransportError(ctx context.Context, method, url string, err error) erro
 	}
 }
 
+// gatewayCodeTierLimitExceeded is andamio-api's stable body code for "the
+// account's plan does not permit this" (keys_viewmodels.ErrCodeTierLimitExceeded).
+// The CLI exit-code contract consumes it verbatim: renaming it gateway-side
+// silently disables the tier_limit classification and needs a coordinated CLI
+// release.
+const gatewayCodeTierLimitExceeded = "tier_limit_exceeded"
+
+// gatewayError is the decoded form of the gateway's error envelope.
+type gatewayError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details string `json:"details"`
+}
+
+// decodeGatewayError tolerantly reads the gateway's error envelope. The
+// current shape is {"error":{"code":"…","message":"…","details":"…"}}; some
+// routes still emit the flat {"error":"…"} form, in which case the string is
+// the code and any top-level message/details siblings are carried along. Returns ok=false for an empty or
+// non-JSON body, a null or missing error field, or a blank code — every miss
+// falls through to the status switch, so nothing currently classified changes
+// unless a code matches exactly.
+func decodeGatewayError(body []byte) (ge gatewayError, ok bool) {
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+		// Siblings of a flat string error, e.g. {"error":"code","message":"…"}.
+		Message string `json:"message"`
+		Details string `json:"details"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return ge, false
+	}
+	raw := bytes.TrimSpace(envelope.Error)
+	if len(raw) == 0 {
+		return ge, false
+	}
+	switch raw[0] {
+	case '{':
+		if json.Unmarshal(raw, &ge) != nil {
+			return ge, false
+		}
+	case '"':
+		if json.Unmarshal(raw, &ge.Code) != nil {
+			return ge, false
+		}
+		ge.Message, ge.Details = envelope.Message, envelope.Details
+	default:
+		return ge, false
+	}
+	ge.Code = strings.TrimSpace(ge.Code)
+	ge.Message = strings.TrimSpace(ge.Message)
+	ge.Details = strings.TrimSpace(ge.Details)
+	return ge, ge.Code != ""
+}
+
 // statusError maps an HTTP error status to the typed error the CLI expects.
+// A 4xx whose body code is tier_limit_exceeded → TierLimitError (checked first);
 // 401/403 → AuthError, 404 → NotFoundError, 409 → ConflictError,
 // 408/425/429 → BackpressureError (retryable transient backpressure),
 // 5xx → ServerError, anything else → plain error. Error message format
-// ("API error %d: %s") is preserved across all branches so downstream
-// string-match consumers (if any) keep working.
+// ("API error %d: %s") is preserved across the status branches so downstream
+// string-match consumers (if any) keep working; TierLimitError is the one
+// exception, inserting the stable code — "API error %d (%s): %s".
 func statusError(status int, body []byte) error {
+	// Plan-gated refusals are classified by the gateway's body code, not by
+	// status, and before the status switch — see apierr.TierLimitError for
+	// why. Only 4xx bodies are consulted (a 5xx carrying the code is still a
+	// server failure), and only bodies that mention the code are decoded.
+	// Decoding reads the raw body (the gateway pretty-prints; truncating
+	// first could cut the closing braces); the fields are capped afterwards
+	// so the 500-byte bound still holds for what reaches the user.
+	if status >= 400 && status < 500 && bytes.Contains(body, []byte(gatewayCodeTierLimitExceeded)) {
+		if ge, ok := decodeGatewayError(body); ok && ge.Code == gatewayCodeTierLimitExceeded {
+			if ge.Message == "" {
+				ge.Message = string(body)
+			}
+			return &apierr.TierLimitError{
+				Status:  status,
+				Code:    ge.Code,
+				Message: truncateErrorString(ge.Message),
+				Details: truncateErrorString(ge.Details),
+			}
+		}
+	}
+
 	msg := fmt.Sprintf("API error %d: %s", status, truncateErrorBody(body))
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -354,7 +432,10 @@ func parseRetryAfterSeconds(body []byte) int {
 
 // truncateErrorBody limits error message size to prevent log flooding and info leakage
 func truncateErrorBody(body []byte) string {
-	s := string(body)
+	return truncateErrorString(string(body))
+}
+
+func truncateErrorString(s string) string {
 	if len(s) > maxErrorBodySize {
 		return s[:maxErrorBodySize] + "... (truncated)"
 	}

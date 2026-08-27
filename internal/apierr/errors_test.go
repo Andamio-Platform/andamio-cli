@@ -18,6 +18,7 @@ func TestKind_ClassifiesEachTypedError(t *testing.T) {
 		{"conflict", &ConflictError{Message: "clash"}, KindConflict},
 		{"server", &ServerError{Status: 503, Message: "down"}, KindServer},
 		{"backpressure", &BackpressureError{Status: 429, Message: "slow down"}, KindBackpressure},
+		{"tier limit", &TierLimitError{Status: 429, Code: "tier_limit_exceeded", Message: "cap"}, KindTierLimit},
 		{"removed command", &RemovedCommandError{Command: "course student", Guidance: "use the app"}, KindRemovedCommand},
 		{"network", &NetworkError{Message: "unreachable"}, KindUnreachable},
 		{"canceled", context.Canceled, KindCanceled},
@@ -66,6 +67,11 @@ func TestKind_UnwrapsThroughErrorfWrapping(t *testing.T) {
 			KindUnreachable,
 		},
 		{
+			"wrapped tier limit",
+			fmt.Errorf("create developer key failed: %w", &TierLimitError{Status: 429, Code: "tier_limit_exceeded", Message: "cap"}),
+			KindTierLimit,
+		},
+		{
 			"wrapped cancellation",
 			fmt.Errorf("aborted: %w", context.Canceled),
 			KindCanceled,
@@ -112,6 +118,27 @@ func TestNetworkError_UnwrapsToCause(t *testing.T) {
 	}
 	if err.Error() != "could not reach GET /x: connection refused" {
 		t.Errorf("Error() = %q", err.Error())
+	}
+}
+
+func TestKind_TierLimitThroughReportedError(t *testing.T) {
+	err := &ReportedError{Err: fmt.Errorf("wrapped: %w", &TierLimitError{Status: 403, Code: "tier_limit_exceeded", Message: "cap"})}
+	if got := Kind(err); got != KindTierLimit {
+		t.Errorf("Kind() = %q, want %q", got, KindTierLimit)
+	}
+}
+
+// The stable gateway code stays in the text (scripts match on it), the
+// gateway's own remedy sentence rides verbatim, and details are appended only
+// when present — no dangling separator otherwise.
+func TestTierLimitError_Message(t *testing.T) {
+	e := &TierLimitError{Status: 429, Code: "tier_limit_exceeded", Message: "maximum API key limit (1) reached"}
+	if got, want := e.Error(), "API error 429 (tier_limit_exceeded): maximum API key limit (1) reached"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	e.Details = "pioneer tier"
+	if got, want := e.Error(), "API error 429 (tier_limit_exceeded): maximum API key limit (1) reached: pioneer tier"; got != want {
+		t.Errorf("Error() with details = %q, want %q", got, want)
 	}
 }
 

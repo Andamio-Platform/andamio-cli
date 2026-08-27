@@ -72,6 +72,7 @@ branch on whichever is more convenient.
 | 4 | `removed_command` | Command was retired in 1.0 |
 | 5 | `unreachable` | The request never reached the service |
 | 6 | `conflict` | Conflicts with existing state (409) |
+| 7 | `tier_limit` | Your plan does not permit this action — remedy is billing-side (revoke a key, upgrade, subscribe), not retry, not re-auth. Classified by the gateway's `tier_limit_exceeded` error code on any 4xx, so it holds whether the API answers 429 or 403 |
 
 **An empty result is not an error.** A list command that finds nothing emits an
 empty collection and exits 0:
@@ -103,7 +104,10 @@ Text mode prints the message to stderr and carries no `kind`.
 
 **Stability.** Codes 0–3 predate 1.0 and are fixed. New kinds may be added; the
 existing ones are not renamed. Note that 1.0 moved `conflict` from exit 1 to
-exit 6 — see CHANGELOG.
+exit 6, and that a 429 carrying `tier_limit_exceeded` (e.g. `dev keys create`
+at the key cap) now exits 7 / `tier_limit` instead of 1 / `backpressure` — see
+CHANGELOG. A 429 without that code (rate limits, quotas) is still
+`backpressure`.
 
 ## Composability Contract
 
@@ -379,7 +383,8 @@ Empty lists return `{"data": []}`.
 branch on whichever suits the caller. See
 [Exit Codes and Error Kinds](#exit-codes-and-error-kinds) for the full table:
 `0` success, `1` generic/`server`/`backpressure`/`canceled`, `2` `not_found`,
-`3` `auth`, `4` `removed_command`, `5` `unreachable`, `6` `conflict`.
+`3` `auth`, `4` `removed_command`, `5` `unreachable`, `6` `conflict`,
+`7` `tier_limit`.
 
 Note that `6` is new in 1.0: conflicts previously exited `1`. A caller that
 branches on exit `1` to detect a conflict needs updating.

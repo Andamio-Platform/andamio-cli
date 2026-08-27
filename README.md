@@ -150,6 +150,7 @@ Both come from the same classification, so they never disagree.
 | 4 | `removed_command` | Command was retired in 1.0 |
 | 5 | `unreachable` | The request never reached the service |
 | 6 | `conflict` | Conflicts with existing state |
+| 7 | `tier_limit` | Your plan does not permit this action — revoke, upgrade or subscribe; not retryable |
 
 **An empty result is not an error.** A list command that finds nothing emits an
 empty collection and exits 0. That is what keeps three different situations

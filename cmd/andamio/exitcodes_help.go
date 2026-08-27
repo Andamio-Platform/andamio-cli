@@ -28,6 +28,8 @@ they never disagree — branch on whichever is more convenient.
   4     removed_command   command was retired in 1.0
   5     unreachable       the request never reached the service
   6     conflict          conflicts with existing state (409)
+  7     tier_limit        your plan does not permit this action — revoke,
+                          upgrade or subscribe; not retry, not re-auth
 
 AN EMPTY RESULT IS NOT AN ERROR
 
@@ -55,7 +57,13 @@ Text mode prints the message to stderr and carries no "kind" field.
 STABILITY
 
 Codes 0-3 predate 1.0 and are fixed. New kinds may be added; existing ones are
-not renamed. 1.0 moved conflict from exit 1 to exit 6 — see CHANGELOG.md.`,
+not renamed. 1.0 moved conflict from exit 1 to exit 6 — see CHANGELOG.md.
+
+Exit 7 is new in 1.0. It is classified by the gateway's error code
+(tier_limit_exceeded), not by HTTP status, so it holds whether the API answers
+429 or 403 for that condition. A 429 carrying that code previously reported
+backpressure; it no longer does. A 429 without it (rate limits, quotas) still
+reports backpressure.`,
 }
 
 func init() {
