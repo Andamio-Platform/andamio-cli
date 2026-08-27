@@ -129,7 +129,7 @@ Two properties are load-bearing and easy to break:
 
 ### 1.0 release status
 
-**1.0 is merged to `main` but not tagged.** The latest release is `v0.13.3`, which still ships the learner/contributor surface. 1.0 declares a hard requirement on **Andamio API 2.5 or later** and mainnet has not cut over (`andamio-ops#189`), so the tag is gated on that cutover. See the `## [1.0.0]` CHANGELOG entry and README for the supported-version statement. Two consequences worth holding onto: the published contract today is 0.13.x, not what is on `main`; and because 2.5 carries a contract naming change, the cutover is the moment this CLI meets renamed gateway fields (see `todos/031`).
+1.0 declares a hard requirement on **Andamio API 2.5 or later**. Mainnet cut over to 2.5 on 2026-08-25 (`andamio-ops#189`), the preprod validation sweep against the promoted build landed in #154, and the pre-tag fixes it surfaced are in (#160 exit 7 / `tier_limit`, #161 206 reads + qualified-contributors decode, #162 publish-module warning). See the `## [1.0.0]` CHANGELOG entry and README for the supported-version statement. Once `v1.0.0` is tagged, the published contract is what is on `main`; until then it is `v0.13.3`, which still ships the learner/contributor surface. 2.5 carries a contract naming change, so this is the line where the CLI meets renamed gateway fields (see `todos/031`).
 
 ## Failure Contract
 

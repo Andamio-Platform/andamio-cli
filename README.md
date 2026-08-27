@@ -16,7 +16,7 @@ The CLI is built to be driven by programs as well as people. Every list and get 
 
 > **1.0 requires Andamio API 2.5 or later.** It was built and verified against 2.5 and has never been tested against the 2.4 line.
 >
-> **Mainnet has not cut over to 2.5 yet** (tracked in `andamio-ops#189`). Until it does, use **1.0 on preprod** and **stay on 0.13.x for mainnet**. Check the [CHANGELOG](CHANGELOG.md#requires-andamio-api-25-or-later) before upgrading a mainnet workflow.
+> Both **preprod and mainnet run 2.5** (mainnet cut over on 2026-08-25, `andamio-ops#189`), so 1.0 is the release to use on either. If you are on a self-hosted or pinned gateway older than 2.5, stay on 0.13.x. See the [CHANGELOG](CHANGELOG.md#requires-andamio-api-25-or-later) for what the requirement covers.
 
 ## Installation
 
@@ -34,7 +34,7 @@ Download the archive for your platform, extract it, and move the binary to your 
 
 ```bash
 # Example: macOS Apple Silicon — replace VERSION with the latest release
-VERSION=0.3.0
+VERSION=1.0.0
 curl -sLO "https://github.com/Andamio-Platform/andamio-cli/releases/download/v${VERSION}/andamio_${VERSION}_darwin_arm64.tar.gz"
 curl -sLO "https://github.com/Andamio-Platform/andamio-cli/releases/download/v${VERSION}/checksums.txt"
 shasum -a 256 --check --ignore-missing checksums.txt
