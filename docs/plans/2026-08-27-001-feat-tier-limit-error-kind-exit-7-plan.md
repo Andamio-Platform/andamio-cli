@@ -1,7 +1,7 @@
 ---
 title: "feat: `tier_limit` error kind + exit 7 for plan/entitlement refusals"
 type: feat
-status: active
+status: completed
 date: 2026-08-27
 ---
 
