@@ -303,13 +303,16 @@ type gatewayError struct {
 // decodeGatewayError tolerantly reads the gateway's error envelope. The
 // current shape is {"error":{"code":"…","message":"…","details":"…"}}; some
 // routes still emit the flat {"error":"…"} form, in which case the string is
-// returned as the code with no message. Returns ok=false for an empty or
+// the code and any top-level message/details siblings are carried along. Returns ok=false for an empty or
 // non-JSON body, a null or missing error field, or a blank code — every miss
 // falls through to the status switch, so nothing currently classified changes
 // unless a code matches exactly.
 func decodeGatewayError(body []byte) (ge gatewayError, ok bool) {
 	var envelope struct {
 		Error json.RawMessage `json:"error"`
+		// Siblings of a flat string error, e.g. {"error":"code","message":"…"}.
+		Message string `json:"message"`
+		Details string `json:"details"`
 	}
 	if json.Unmarshal(body, &envelope) != nil {
 		return ge, false
@@ -327,6 +330,7 @@ func decodeGatewayError(body []byte) (ge gatewayError, ok bool) {
 		if json.Unmarshal(raw, &ge.Code) != nil {
 			return ge, false
 		}
+		ge.Message, ge.Details = envelope.Message, envelope.Details
 	default:
 		return ge, false
 	}
@@ -341,8 +345,9 @@ func decodeGatewayError(body []byte) (ge gatewayError, ok bool) {
 // 401/403 → AuthError, 404 → NotFoundError, 409 → ConflictError,
 // 408/425/429 → BackpressureError (retryable transient backpressure),
 // 5xx → ServerError, anything else → plain error. Error message format
-// ("API error %d: %s") is preserved across all branches so downstream
-// string-match consumers (if any) keep working.
+// ("API error %d: %s") is preserved across the status branches so downstream
+// string-match consumers (if any) keep working; TierLimitError is the one
+// exception, inserting the stable code — "API error %d (%s): %s".
 func statusError(status int, body []byte) error {
 	// Plan-gated refusals are classified by the gateway's body code, not by
 	// status, and before the status switch — see apierr.TierLimitError for
