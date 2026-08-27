@@ -323,7 +323,12 @@ func runCourseSlts(cmd *cobra.Command, args []string) error {
 		courseID = args[0]
 		moduleCode = args[1]
 	} else {
-		// slts <module-code> --course "Name"
+		// slts <module-code> --course "Name". With one positional and no
+		// --course, the thing that is missing is the module code, not the
+		// course — say so instead of blaming the argument that was given.
+		if name, _ := cmd.Flags().GetString("course"); name == "" {
+			return fmt.Errorf("module-code required\n\nUsage:\n  andamio course slts <course-id> <module-code>\n  andamio course slts <module-code> --course \"<course name>\"\n\nList a course's modules with:\n  andamio course modules <course-id> --output json")
+		}
 		moduleCode = args[0]
 		courseID, err = resolveCourseID(ctx, c, "", cmd)
 		if err != nil {

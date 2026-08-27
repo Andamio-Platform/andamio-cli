@@ -109,9 +109,16 @@ func (c *Client) Get(ctx context.Context, path string, result interface{}) error
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	// Any 2xx is success, matching Post/Put/Delete. The gateway's merged read
+	// endpoints answer 206 Partial Content when one backend is degraded —
+	// the normal data plus meta.warning — and that is data to keep, not an
+	// error (#157). A 204 has no body to decode.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return statusError(resp.StatusCode, body)
+	}
+	if resp.StatusCode == http.StatusNoContent || result == nil {
+		return nil
 	}
 
 	return json.NewDecoder(resp.Body).Decode(result)

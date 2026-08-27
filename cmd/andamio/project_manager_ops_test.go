@@ -31,6 +31,85 @@ func stubQualifiedServer(t *testing.T, handler http.HandlerFunc) (*httptest.Serv
 	return srv, c
 }
 
+// qualifiedEnvelope wraps a payload the way the gateway does: {"data": {...}}.
+func qualifiedEnvelope(data map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{"data": data}
+}
+
+const fixtureV25QualifiedContributors = "../../internal/client/testdata/v2-5-qualified-contributors-response.json"
+
+// The wire shape is snake_case wrapped in `data` (#90 item 6). The first
+// decoder used camelCase tags on the inner object, so this exact fixture
+// produced {"", nil, 0, false} — a project with three qualified contributors
+// reported as having none. Pin the real shape from the fixture file.
+func TestFetchQualifiedContributors_RealWireShapeRoundTrips(t *testing.T) {
+	body, err := os.ReadFile(fixtureV25QualifiedContributors)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	_, c := stubQualifiedServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+
+	resp, err := fetchQualifiedContributors(context.Background(), c, "05b23d1e51322c30e05dbf676cbd344b1527ec9cb4cda3d0987dc3e4")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if resp.TotalCount != 3 || len(resp.Aliases) != 3 {
+		t.Fatalf("TotalCount/Aliases = %d/%v, want 3/3 — the fixture's data was zeroed", resp.TotalCount, resp.Aliases)
+	}
+	if resp.ProjectID == "" || resp.Status != "ok" {
+		t.Errorf("ProjectID=%q Status=%q, want both populated", resp.ProjectID, resp.Status)
+	}
+
+	// --output json passes the gateway's payload through unchanged.
+	out, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"project_id"`, `"total_count"`, `"status"`} {
+		if !strings.Contains(string(out), key) {
+			t.Errorf("JSON output missing %s: %s", key, out)
+		}
+	}
+	if strings.Contains(string(out), "projectId") {
+		t.Errorf("JSON output still uses camelCase: %s", out)
+	}
+}
+
+// A camelCase body — the shape the old tests stubbed and the gateway never
+// sent — must NOT decode into a populated struct. If it does, the tags
+// regressed.
+func TestFetchQualifiedContributors_CamelCaseBodyDoesNotMatch(t *testing.T) {
+	_, c := stubQualifiedServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"projectId": "P", "aliases": []string{"x"}, "totalCount": 1,
+		})
+	})
+	resp, err := fetchQualifiedContributors(context.Background(), c, "P")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if resp.TotalCount != 0 || resp.ProjectID != "" || len(resp.Aliases) != 0 {
+		t.Errorf("camelCase body decoded: %+v", resp)
+	}
+}
+
+func TestRenderQualifiedContributorsText_NoPrerequisitesStatus(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := renderQualifiedContributorsText(qualifiedContributorsResponse{Status: "no_prerequisites_configured"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "No prerequisites configured") {
+		t.Errorf("stderr = %q, want the no-prerequisites explanation", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout should be empty, got %q", stdout.String())
+	}
+}
+
 func TestFetchQualifiedContributors_HappyPath(t *testing.T) {
 	var gotPath string
 	var gotAPIKey, gotAuth string
@@ -38,12 +117,13 @@ func TestFetchQualifiedContributors_HappyPath(t *testing.T) {
 		gotPath = r.URL.Path + "?" + r.URL.RawQuery
 		gotAPIKey = r.Header.Get("X-API-Key")
 		gotAuth = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"projectId":  "P",
-			"aliases":    []string{"ada", "alan"},
-			"totalCount": 2,
-			"truncated":  false,
-		})
+		_ = json.NewEncoder(w).Encode(qualifiedEnvelope(map[string]interface{}{
+			"project_id":  "P",
+			"aliases":     []string{"ada", "alan"},
+			"total_count": 2,
+			"truncated":   false,
+			"status":      "ok",
+		}))
 	})
 
 	resp, err := fetchQualifiedContributors(context.Background(), c, "P")
@@ -75,7 +155,7 @@ func TestFetchQualifiedContributors_EncodesProjectIDWithSpecialChars(t *testing.
 	var gotQuery string
 	_, c := stubQualifiedServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"aliases": []string{}, "totalCount": 0, "truncated": false})
+		_ = json.NewEncoder(w).Encode(qualifiedEnvelope(map[string]interface{}{"aliases": []string{}, "total_count": 0, "truncated": false}))
 	})
 
 	// "+" and space must be percent-encoded, not passed literally.
@@ -90,12 +170,12 @@ func TestFetchQualifiedContributors_EncodesProjectIDWithSpecialChars(t *testing.
 
 func TestFetchQualifiedContributors_EmptyResult(t *testing.T) {
 	_, c := stubQualifiedServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"projectId":  "P",
-			"aliases":    []string{},
-			"totalCount": 0,
-			"truncated":  false,
-		})
+		_ = json.NewEncoder(w).Encode(qualifiedEnvelope(map[string]interface{}{
+			"project_id":  "P",
+			"aliases":     []string{},
+			"total_count": 0,
+			"truncated":   false,
+		}))
 	})
 
 	resp, err := fetchQualifiedContributors(context.Background(), c, "P")
@@ -109,12 +189,12 @@ func TestFetchQualifiedContributors_EmptyResult(t *testing.T) {
 
 func TestFetchQualifiedContributors_TruncatedFlagPassesThrough(t *testing.T) {
 	_, c := stubQualifiedServer(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"projectId":  "P",
-			"aliases":    []string{"a", "b", "c"},
-			"totalCount": 3,
-			"truncated":  true,
-		})
+		_ = json.NewEncoder(w).Encode(qualifiedEnvelope(map[string]interface{}{
+			"project_id":  "P",
+			"aliases":     []string{"a", "b", "c"},
+			"total_count": 3,
+			"truncated":   true,
+		}))
 	})
 
 	resp, err := fetchQualifiedContributors(context.Background(), c, "P")
