@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -22,15 +23,15 @@ import (
 // Action takes one of three values, each with different nullability:
 //
 //   - "registered"         — the module was newly created on this call. Response
-//                            wraps the gateway register-response body. AdvancedFrom is nil.
+//     wraps the gateway register-response body. AdvancedFrom is nil.
 //   - "advanced"           — an existing DRAFT module with matching slt_hash was
-//                            advanced to APPROVED on this call. Response wraps the
-//                            update-status response. AdvancedFrom is non-nil (today
-//                            always "DRAFT", the only status we advance from).
+//     advanced to APPROVED on this call. Response wraps the
+//     update-status response. AdvancedFrom is non-nil (today
+//     always "DRAFT", the only status we advance from).
 //   - "already_registered" — an existing module with matching slt_hash was found
-//                            in a non-DRAFT state; this call was a no-op. Response
-//                            is nil (no gateway round-trip happened after the 409).
-//                            AdvancedFrom is nil.
+//     in a non-DRAFT state; this call was a no-op. Response
+//     is nil (no gateway round-trip happened after the 409).
+//     AdvancedFrom is nil.
 //
 // Status and SltHash are populated from the gateway response via
 // lookupStringField's defensive key search, with hardcoded fallbacks when the
@@ -503,11 +504,6 @@ func runCourseTeacherPublishModule(cmd *cobra.Command, args []string) error {
 	moduleCode, _ := cmd.Flags().GetString("module-code")
 	isJSON := output.GetFormat() == output.FormatJSON
 
-	payload := map[string]interface{}{
-		"course_id":          courseID,
-		"course_module_code": moduleCode,
-	}
-
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -518,37 +514,59 @@ func runCourseTeacherPublishModule(cmd *cobra.Command, args []string) error {
 	}
 
 	c := client.New(cfg)
-	var resp map[string]interface{}
-	if err := c.Post(cmd.Context(), "/api/v2/course/teacher/course-module/publish", payload, &resp); err != nil {
-		return fmt.Errorf("failed to publish module: %w", err)
-	}
-
-	// Inspect response for linkage signals
-	source, hasSource := resp["source"]
-	warningMsg, hasWarning := resp["warning"]
-	linked := hasSource && source == "merged"
-
-	if hasWarning {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", warningMsg)
-	}
-
-	if !linked {
-		fmt.Fprintf(os.Stderr, "Warning: module %s may not have been linked to an on-chain module.\n"+
-			"Ensure the module exists on-chain first (use 'andamio tx run' with modules_manage).\n"+
-			"Then link with: andamio course teacher register-module --course-id %s --module-code %s --slt-hash <hash>\n",
-			moduleCode, courseID, moduleCode)
+	resp, err := publishModuleFlow(cmd.Context(), c, courseID, moduleCode, os.Stderr)
+	if err != nil {
+		return err
 	}
 
 	if isJSON {
 		return output.PrintJSON(resp)
 	}
-
-	if linked {
-		fmt.Fprintf(os.Stderr, "Module %s: published.\n", moduleCode)
-	} else {
-		fmt.Fprintf(os.Stderr, "Module %s: done.\n", moduleCode)
-	}
+	fmt.Fprintf(os.Stderr, "Module %s: published.\n", moduleCode)
 	return nil
+}
+
+// publishModuleFlow is the testable core of publish-module: POSTs the publish,
+// echoes any gateway `warning`, and warns on stderr only when the response
+// shows the module is NOT linked to an on-chain module. Split from the Cobra
+// handler so tests can drive it with a stub and a captured stderr.
+func publishModuleFlow(ctx context.Context, c *client.Client, courseID, moduleCode string, stderr io.Writer) (map[string]interface{}, error) {
+	payload := map[string]interface{}{
+		"course_id":          courseID,
+		"course_module_code": moduleCode,
+	}
+	var resp map[string]interface{}
+	if err := c.Post(ctx, "/api/v2/course/teacher/course-module/publish", payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to publish module: %w", err)
+	}
+
+	if warningMsg, hasWarning := resp["warning"]; hasWarning {
+		fmt.Fprintf(stderr, "Warning: %v\n", warningMsg)
+	}
+
+	if !publishedModuleIsLinked(resp) {
+		fmt.Fprintf(stderr, "Warning: module %s may not have been linked to an on-chain module.\n"+
+			"Ensure the module exists on-chain first (use 'andamio tx run' with modules_manage).\n"+
+			"Then link with: andamio course teacher register-module --course-id %s --module-code %s --slt-hash <hash>\n",
+			moduleCode, courseID, moduleCode)
+	}
+	return resp, nil
+}
+
+// publishedModuleIsLinked reads the linkage signals the publish response
+// actually carries. The gateway returns api_types.CourseModuleEntity —
+// module_status, slt_hash, is_live — and NOT the `source` field, which
+// belongs to the merged read endpoints (course modules / course slts). An
+// earlier version keyed on `source == "merged"`, which is never present
+// here, so the "may not have been linked" warning fired on every publish,
+// including for an ON_CHAIN module with its slt_hash set in the very same
+// response (#158). Linked means: status ON_CHAIN, or an slt_hash is present
+// (the hash is what register-module writes when it links the module).
+func publishedModuleIsLinked(resp map[string]interface{}) bool {
+	if strings.EqualFold(lookupStringField(resp, "module_status", "course_module_status", "status"), "ON_CHAIN") {
+		return true
+	}
+	return lookupStringField(resp, "slt_hash", "course_module_slt_hash") != ""
 }
 
 // runCourseTeacherModuleAction returns a RunE function for module lifecycle commands

@@ -47,6 +47,12 @@ type CreateModuleResult struct {
 	ModuleCode string `json:"module_code"`
 	Title      string `json:"title"`
 	SortOrder  int    `json:"sort_order"`
+	// SltHash is the hash computed locally over --slt when --approve was
+	// given (the value sent as slt_hash with status APPROVED). Echoed so a
+	// caller gets it from this command instead of a follow-up read (#158).
+	SltHash string `json:"slt_hash,omitempty"`
+	// ModuleStatus is "APPROVED" when --approve was given, else empty.
+	ModuleStatus string `json:"module_status,omitempty"`
 }
 
 func runCreateModule(cmd *cobra.Command, args []string) error {
@@ -146,6 +152,10 @@ func runCreateModule(cmd *cobra.Command, args []string) error {
 		ModuleCode: code,
 		Title:      title,
 		SortOrder:  sortOrder,
+	}
+	if approve {
+		result.SltHash = cardano.ComputeSltHash(slts)
+		result.ModuleStatus = "APPROVED"
 	}
 
 	if isJSON {
