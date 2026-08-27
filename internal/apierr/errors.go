@@ -14,6 +14,7 @@ package apierr
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // Kind values are the stable, machine-readable failure names emitted as the
@@ -29,6 +30,7 @@ const (
 	KindRemovedCommand = "removed_command"
 	KindUnreachable    = "unreachable"
 	KindCanceled       = "canceled"
+	KindTierLimit      = "tier_limit"
 	KindError          = "error"
 )
 
@@ -56,6 +58,7 @@ func Kind(err error) string {
 
 	var (
 		notFound     *NotFoundError
+		tierLimit    *TierLimitError
 		auth         *AuthError
 		conflict     *ConflictError
 		server       *ServerError
@@ -69,6 +72,13 @@ func Kind(err error) string {
 		return KindRemovedCommand
 	case errors.As(err, &notFound):
 		return KindNotFound
+	// Checked before auth and backpressure deliberately: statusError only
+	// ever constructs one type per response, but a tier cap arrives on 429
+	// today and is ruled to move to 403 (product-circle#304). Should a
+	// future wrapper ever carry both, the plan-gated classification must
+	// win — "revoke or upgrade" is the remedy, not "wait" or "re-login".
+	case errors.As(err, &tierLimit):
+		return KindTierLimit
 	case errors.As(err, &auth):
 		return KindAuth
 	case errors.As(err, &conflict):
@@ -132,6 +142,36 @@ type BackpressureError struct {
 }
 
 func (e *BackpressureError) Error() string { return e.Message }
+
+// TierLimitError is returned when the gateway refuses an action because the
+// account's current plan does not permit it. main.go maps this to exit code 7.
+//
+// The remedy is billing-side — revoke, upgrade or subscribe — not retry and
+// not re-auth, which is why this is a distinct kind rather than a
+// BackpressureError (429 today) or an AuthError (403 after
+// product-circle#304). The API-key cap is the first member; future
+// plan-gated refusals reuse this kind rather than allocating new exit codes.
+//
+// Classification keys on the gateway's body code (Code == "tier_limit_exceeded",
+// andamio-api keys_viewmodels.ErrCodeTierLimitExceeded) on any 4xx, not on the
+// HTTP status — see statusError in internal/client. Message carries the
+// gateway's own sentence verbatim, which names the remedy; Details is the
+// envelope's optional details field. Error() keeps the stable code string in
+// the text: scripts and the dev keys test suite match on it.
+type TierLimitError struct {
+	Status  int
+	Code    string
+	Message string
+	Details string
+}
+
+func (e *TierLimitError) Error() string {
+	s := fmt.Sprintf("API error %d (%s): %s", e.Status, e.Code, e.Message)
+	if e.Details != "" {
+		s += ": " + e.Details
+	}
+	return s
+}
 
 // NetworkError is returned when a request never reached the service — DNS
 // failure, connection refused, TLS failure, a dropped connection mid-flight.

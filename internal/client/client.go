@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -285,13 +286,91 @@ func wrapTransportError(ctx context.Context, method, url string, err error) erro
 	}
 }
 
+// gatewayCodeTierLimitExceeded is andamio-api's stable body code for "the
+// account's plan does not permit this" (keys_viewmodels.ErrCodeTierLimitExceeded).
+// The CLI exit-code contract consumes it verbatim: renaming it gateway-side
+// silently disables the tier_limit classification and needs a coordinated CLI
+// release.
+const gatewayCodeTierLimitExceeded = "tier_limit_exceeded"
+
+// decodeGatewayErrorCode tolerantly reads the gateway's error envelope. The
+// current shape is {"error":{"code":"…","message":"…","details":"…"}}; some
+// routes still emit the flat {"error":"…"} form, in which case the string is
+// returned as the code with no message. Returns ok=false for an empty or
+// non-JSON body, a null or missing error field, or a blank code — every miss
+// falls through to the status switch, so nothing currently classified changes
+// unless a code matches exactly.
+func decodeGatewayErrorCode(body []byte) (code, message, details string, ok bool) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return "", "", "", false
+	}
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", "", "", false
+	}
+	raw := bytes.TrimSpace(envelope.Error)
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", "", "", false
+	}
+	switch raw[0] {
+	case '{':
+		var detail struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Details string `json:"details"`
+		}
+		if err := json.Unmarshal(raw, &detail); err != nil {
+			return "", "", "", false
+		}
+		code = strings.TrimSpace(detail.Code)
+		message, details = strings.TrimSpace(detail.Message), strings.TrimSpace(detail.Details)
+	case '"':
+		var flat string
+		if err := json.Unmarshal(raw, &flat); err != nil {
+			return "", "", "", false
+		}
+		code = strings.TrimSpace(flat)
+	default:
+		return "", "", "", false
+	}
+	if code == "" {
+		return "", "", "", false
+	}
+	return code, message, details, true
+}
+
 // statusError maps an HTTP error status to the typed error the CLI expects.
+// A 4xx whose body code is tier_limit_exceeded → TierLimitError (checked first);
 // 401/403 → AuthError, 404 → NotFoundError, 409 → ConflictError,
 // 408/425/429 → BackpressureError (retryable transient backpressure),
 // 5xx → ServerError, anything else → plain error. Error message format
 // ("API error %d: %s") is preserved across all branches so downstream
 // string-match consumers (if any) keep working.
 func statusError(status int, body []byte) error {
+	// Plan-gated refusals are classified by the gateway's body code, not by
+	// status, and before the status switch: a tier cap arrives on 429 today
+	// and is ruled to move to 403 (product-circle#304). Keying on the code
+	// means neither status can misfile it as backpressure (retried) or auth
+	// (re-login). Only 4xx bodies are consulted — a 5xx carrying the code is
+	// still a server failure. Decoded from the raw body (the gateway
+	// pretty-prints; truncating first could cut the closing braces), then
+	// capped, so the 500-byte bound still holds for what reaches the user.
+	if status >= 400 && status < 500 {
+		if code, message, details, ok := decodeGatewayErrorCode(body); ok && code == gatewayCodeTierLimitExceeded {
+			if message == "" {
+				message = truncateErrorBody(body)
+			}
+			return &apierr.TierLimitError{
+				Status:  status,
+				Code:    code,
+				Message: truncateErrorBody([]byte(message)),
+				Details: truncateErrorBody([]byte(details)),
+			}
+		}
+	}
+
 	msg := fmt.Sprintf("API error %d: %s", status, truncateErrorBody(body))
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:

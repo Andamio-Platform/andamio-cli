@@ -100,7 +100,8 @@ func (c *Client) doWithRetry(ctx context.Context, cfg retryConfig, fn func() err
 // isRetryable decides whether err is worth retrying. Conservative: only
 // network-layer errors, 5xx responses, and specific 4xx backpressure
 // signals (408/425/429 via *apierr.BackpressureError). Everything else —
-// including unknown error types — is not retried.
+// including unknown error types and plan-gated refusals
+// (*apierr.TierLimitError, which can also arrive on 429) — is not retried.
 //
 // Classification uses typed errors (errors.As) rather than string parsing
 // so the retry predicate is not coupled to the statusError message format.
@@ -114,10 +115,14 @@ func isRetryable(err error) bool {
 	}
 	// Semantic 4xx — never retry. Check these first so a future-added
 	// field on these types cannot accidentally pass the retry predicate.
+	// TierLimitError is listed here explicitly even though it is never a
+	// BackpressureError: a tier cap rides on 429 today, and "retry later" is
+	// exactly the wrong remedy for a plan-gated refusal.
 	var authErr *apierr.AuthError
 	var notFound *apierr.NotFoundError
 	var conflict *apierr.ConflictError
-	if errors.As(err, &authErr) || errors.As(err, &notFound) || errors.As(err, &conflict) {
+	var tierLimit *apierr.TierLimitError
+	if errors.As(err, &authErr) || errors.As(err, &notFound) || errors.As(err, &conflict) || errors.As(err, &tierLimit) {
 		return false
 	}
 	// 5xx — retry.
