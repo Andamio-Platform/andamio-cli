@@ -6,7 +6,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-07-27
+## [1.0.0] - 2026-08-27
 
 **Andamio CLI 1.0 is a developer tool for the people who author work and assess it: course Owners and Teachers, and project Managers.**
 
@@ -16,7 +16,7 @@ If you own, teach or manage on Andamio, **your workflows are unchanged.** Everyt
 
 **1.0 is supported against Andamio API 2.5 and later only.** It was built and verified against 2.5, which carries a contract naming change and a new pagination convention; it has never been tested against the 2.4 line. Running 1.0 against a 2.4 gateway is unsupported, and the failures would not be limited to the new commands.
 
-**At release, this means preprod only.** Mainnet has not yet cut over to 2.5 — the pre-cutover work is tracked in `andamio-ops#189` — so **if you teach or manage on mainnet, stay on 0.13.x until that lands.** We are stating this plainly rather than leaving it to be discovered, because 1.0's headline addition is the Teacher assessment surface and mainnet Teachers are exactly the people who cannot use it yet.
+**Both preprod and mainnet run 2.5.** Mainnet cut over on 2026-08-25 (`andamio-ops#189`), and 1.0 was re-verified against the promoted build (`v2.5.0-rc5`, #154) before tagging, so this release is the one to use on either network. The requirement still matters for anyone pointing the CLI at a self-hosted or pinned gateway on the 2.4 line: stay on 0.13.x there.
 
 Supporting two gateway contracts from one CLI was the alternative, and we chose not to: it would mean every command carrying two code paths, with the version-detection logic itself untested against the older one. Declaring the requirement is the honest statement of what was actually verified.
 
