@@ -142,12 +142,13 @@ Every failure carries an exit code **and**, under `--output json`, a `kind` fiel
 | 4 | `removed_command` | Retired in 1.0 |
 | 5 | `unreachable` | Request never reached the service |
 | 6 | `conflict` | 409 |
+| 7 | `tier_limit` | Plan does not permit the action; remedy is billing-side. Classified by body code `tier_limit_exceeded` on any 4xx (429 today, 403 after product-circle#304), before the status switch. Never retried |
 
 **An empty result is exit 0 with an empty collection, not an error.** This is what keeps "nothing found", "not permitted" (3) and "could not reach the service" (5) distinguishable. Do not "fix" `printList` to return an error on empty.
 
 `apierr.NetworkError` wraps transport failures in `internal/client`. It deliberately excludes context cancellation and deadline expiry — an operator pressing Ctrl-C is not the service being down. It implements `Unwrap()` so the retry classifier still reaches the underlying `net.Error`; removing that silently disables retries on connection failures.
 
-Exit codes 0–3 predate 1.0 and are fixed. `conflict` moved from 1 to 6 in 1.0.
+Exit codes 0–3 predate 1.0 and are fixed. `conflict` moved from 1 to 6 in 1.0. `tier_limit` (7) is new in 1.0: the decoder in `internal/client.statusError` runs before the status switch, reads the raw body tolerantly (nested `{"error":{"code":…}}` or flat `{"error":"…"}`), and matches the code exactly — the gateway's `keys_viewmodels.ErrCodeTierLimitExceeded` is a CLI contract. Uncoded 429s (rate limits, monthly/daily quotas) remain `backpressure` until the gateway codes them. The CLI-authored remedy line for `dev keys create` is added at the command layer (`withTierLimitRemedy` in `helpers.go`) in every mode except JSON, so the JSON `error` value stays the gateway's message.
 
 ## Complete Command Reference
 
@@ -288,7 +289,7 @@ Supplies the `policy_id` / `asset_name` values for `project task create --token 
 | `dev logout` | local | none | Clear entire dev slot (JWT, refresh token, alias, ID, tier, key hash). Does not affect user JWT. |
 | `dev status` | local | none | Show developer auth status — JWT expiry, refresh-token expiry, tier. JSON envelope surfaces `jwt_expires_at` / `refresh_token_expires_at` / `*_expired` / `*_remaining_seconds` for scriptable branching. `*_remaining_seconds` is always present (no `omitempty`): zero means "sub-second remaining" (refresh now); branch on `*_expired` to disambiguate "fully expired" from "not parseable". Branch on `dev_authenticated` first. |
 | `dev keys list` | `GET /v2/keys` | dev-jwt | List developer API keys across mainnet + preprod, unified. JSON passes through gateway `{keys: [...]}` envelope. |
-| `dev keys create --name <label> --environment <mainnet\|preprod>` | `POST /v2/keys` | dev-jwt | Create a developer API key. Raw key value returned **exactly once** — text mode emits raw key on stdout + WARNING + metadata on stderr (so `\| pbcopy` captures key alone); JSON mode includes `key` field AND ALSO emits the WARNING on stderr so a human running `--output json` interactively still sees the one-time-use disclaimer (scripts pipe `2>/dev/null`). Errors: 422 `invalid_environment`, 429 `tier_limit_exceeded`, 503 `preprod_routing_disabled`/`preprod_unavailable` — stable error codes preserved verbatim for script branching. |
+| `dev keys create --name <label> --environment <mainnet\|preprod>` | `POST /v2/keys` | dev-jwt | Create a developer API key. Raw key value returned **exactly once** — text mode emits raw key on stdout + WARNING + metadata on stderr (so `\| pbcopy` captures key alone); JSON mode includes `key` field AND ALSO emits the WARNING on stderr so a human running `--output json` interactively still sees the one-time-use disclaimer (scripts pipe `2>/dev/null`). Errors: 422 `invalid_environment`, 429 `tier_limit_exceeded` (→ exit 7 / kind `tier_limit`, classified by code so a 403 classifies the same; text modes add a remedy line naming `dev keys list` / `dev keys delete <id>` / upgrade), 503 `preprod_routing_disabled`/`preprod_unavailable` — stable error codes preserved verbatim for script branching. |
 | `dev keys delete <id>` | `DELETE /v2/keys/{id}` | dev-jwt | Revoke a developer API key by local UUID. 204 No Content on success. Malformed ids rejected client-side (UUID-format gate, error `invalid developer key id`) before reaching the gateway — closes URL-injection class (`?`, `..`, empty `$ID`). 404 covers both unknown ids and ids owned by other developers (gateway threat-model: indistinguishable). |
 
 ### spec — OpenAPI spec

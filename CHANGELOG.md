@@ -40,6 +40,10 @@ What 1.0 adds is a designed automation surface for assessment. Our own tooling h
 
 - **Exit code 5, `unreachable`** — the request never reached the service. Transport failures previously exited 1, indistinguishable from a malformed flag or a decode failure. Cancellation and `--timeout` expiry are deliberately *not* classified this way: an operator pressing Ctrl-C is not the service being down.
 
+- **Exit code 7, `tier_limit`** — the account's current plan does not permit the action, and the remedy is billing-side: revoke a key, upgrade, or subscribe. Not retry, not re-auth. The first member is the developer API-key cap on `dev keys create`; future plan-gated refusals reuse this kind rather than allocating new exit codes. Text output carries the gateway's own sentence plus one line naming `andamio dev keys list`, `andamio dev keys delete <id>`, and upgrading; `--output json` is `{"error": …, "kind": "tier_limit"}` with no new fields.
+
+  Classification keys on the gateway's error code (`tier_limit_exceeded`), not on HTTP status, and runs before the status mapping — the API answers 429 for this today and is ruled to change to 403, and the CLI must not need a release to keep up. **Behavior change:** a 429 carrying that code previously reported `backpressure` / exit 1 ("retry later" — which could never come true for a key cap); it now exits 7. A 429 without the code (rate limits, monthly/daily quotas) still reports `backpressure`. (#159, product-circle#321)
+
 ### Removed
 
 - **`andamio course student ...` and `andamio project contributor ...`** — the learner and contributor command surface. Learners and contributors use the [Andamio app](https://app.andamio.io), which signs and submits their work in one flow.

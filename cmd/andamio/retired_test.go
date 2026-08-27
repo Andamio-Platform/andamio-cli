@@ -637,7 +637,7 @@ func TestExitCodesHelpTopic_IsReachable(t *testing.T) {
 
 	for _, want := range []string{
 		"not_found", "auth", "removed_command", "unreachable", "conflict",
-		"empty", "0", "5",
+		"tier_limit", "empty", "0", "5", "7",
 	} {
 		if !strings.Contains(topic, want) {
 			t.Errorf("exit-codes help topic is missing %q:\n%s", want, topic)
