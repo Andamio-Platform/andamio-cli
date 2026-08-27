@@ -1,0 +1,10 @@
+{
+  "data": {
+    "project_id": "0000000000000000000000000000000000000000000000000000000000",
+    "treasury_balance": 0,
+    "source": "chain_only"
+  },
+  "meta": {
+    "warning": "DB API unavailable, showing on-chain data only"
+  }
+}

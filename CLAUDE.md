@@ -76,6 +76,10 @@ Go CLI using Cobra for the Andamio Protocol. Dependencies: Cobra (CLI), `pkg/bro
 - `internal/cardano/` — Cardano transaction signing. Loads `.skey` files via Bursa, extracts raw CBOR body bytes (preserves original encoding), signs with Blake2b-256 + ed25519, assembles VKey witnesses (merges into existing witness set).
 - `internal/submit/` — HTTP client for Cardano submit APIs. Posts `application/cbor` to configurable endpoints with custom headers. Separate from the Andamio API client.
 
+### Degraded reads (206 Partial Content)
+
+`client.Get` accepts the whole 2xx range. The gateway's merged read endpoints answer **206** with the normal `data` plus `meta.warning` when one backend is unavailable; that is a success (exit 0) with degraded data, not an error. `warnMetaWarning` in `helpers.go` prints the warning on stderr in every mode except JSON, where the envelope (including `meta`) passes through on stdout — `getJSON`, `printList` and `printListPost` all route through it. Exception: non-empty **list** commands emit a bare array in JSON mode (`todos/038`) with no slot for `meta`, so a degraded list keeps that shape and warns on stderr in JSON mode too — the shape must never depend on gateway health. Guarded by `TestExitCodes_206PartialContentIsSuccess` (#157).
+
 ### Command Pattern
 
 Commands register to `rootCmd` via `init()` functions in each file. Two patterns:
@@ -219,7 +223,7 @@ Exit codes 0–3 predate 1.0 and are fixed. `conflict` moved from 1 to 6 in 1.0.
 | `project owner register --project-id <id> --title <t>` | `/v2/project/owner/project/register` | jwt | Register on-chain project with off-chain metadata. `--title` required |
 | `project tasks <project-id>` | `/v2/project/user/tasks/list` | either | List tasks (public view) |
 | `project manager commitments --project-id <id>` | `/v2/project/manager/commitments/list` | jwt | List task commitments — pending and assessed (with evidence). v2.3 returns the union; filter via `jq` on `--output json` |
-| `project manager qualified-contributors --project-id <id>` | `/v2/project/manager/contributors/get-qualified` | jwt | List aliases qualified to commit (holds every prerequisite SLT). Capped at 500; JSON surfaces `truncated`. |
+| `project manager qualified-contributors --project-id <id>` | `/v2/project/manager/contributors/get-qualified` | jwt | List aliases qualified to commit (holds every prerequisite SLT). Capped at 500; JSON passes the gateway `data` payload through in snake_case (`project_id`, `aliases`, `total_count`, `truncated`, `status`). Wire shape pinned by `internal/client/testdata/v2-5-qualified-contributors-response.json` — the first decoder used camelCase tags and zeroed every field (#90). |
 | `project task list <project-id>` | `/v2/project/manager/tasks/list` | jwt | List tasks (manager) |
 | `project task get <index> --project-id <id>` | `/v2/project/manager/tasks/list` | jwt | Get task by index (filters from list) |
 | `project task create <project-id>` | `/v2/project/manager/task/create` | jwt | Create task. Flags: --title, --lovelace, --expiration, --github-issue |

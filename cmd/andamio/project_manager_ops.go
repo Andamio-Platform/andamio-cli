@@ -107,13 +107,29 @@ func runProjectManagerCommitments(cmd *cobra.Command, args []string) error {
 	)
 }
 
-// qualifiedContributorsResponse matches the gateway envelope.
-// Field tags follow the gateway contract from andamio-api v2.3 PR #380.
+// qualifiedContributorsEnvelope is the gateway's wire shape for
+// GET /api/v2/project/manager/contributors/get-qualified: the payload is
+// wrapped in `data` (andamio-api merged_handlers.QualifiedContributorsResponseEnvelope).
+type qualifiedContributorsEnvelope struct {
+	Data qualifiedContributorsResponse `json:"data"`
+}
+
+// qualifiedContributorsResponse mirrors andamio-api
+// orchestration.QualifiedContributorsResponse one-for-one, snake_case per the
+// API taxonomy. `--output json` passes it through unchanged.
+//
+// History (#90 item 6): the first version used camelCase tags and decoded the
+// inner object without unwrapping `data`, so every field stayed at its Go zero
+// value — a project with 50 qualified contributors printed the same as one
+// with none. The fixture in internal/client/testdata pins the real shape.
 type qualifiedContributorsResponse struct {
-	ProjectID  string   `json:"projectId"`
+	ProjectID  string   `json:"project_id"`
 	Aliases    []string `json:"aliases"`
-	TotalCount int      `json:"totalCount"`
+	TotalCount int      `json:"total_count"`
 	Truncated  bool     `json:"truncated"`
+	// Status explains an empty list: "ok" (intersection computed) or
+	// "no_prerequisites_configured" (every alias is vacuously qualified).
+	Status string `json:"status,omitempty"`
 }
 
 func runProjectManagerQualifiedContributors(cmd *cobra.Command, args []string) error {
@@ -146,7 +162,11 @@ func renderQualifiedContributorsText(resp qualifiedContributorsResponse, stdout,
 		fmt.Fprintln(stdout, alias)
 	}
 	if len(resp.Aliases) == 0 {
-		fmt.Fprintln(stderr, "No qualified contributors found.")
+		if resp.Status == "no_prerequisites_configured" {
+			fmt.Fprintln(stderr, "No prerequisites configured for this project — every alias is qualified.")
+		} else {
+			fmt.Fprintln(stderr, "No qualified contributors found.")
+		}
 	}
 	if resp.Truncated {
 		fmt.Fprintln(stderr, "warning: result truncated at 500 aliases")
@@ -159,11 +179,11 @@ func renderQualifiedContributorsText(resp qualifiedContributorsResponse, stdout,
 // into filesystem config.
 func fetchQualifiedContributors(ctx context.Context, c *client.Client, projectID string) (qualifiedContributorsResponse, error) {
 	path := "/api/v2/project/manager/contributors/get-qualified?" + url.Values{"project_id": {projectID}}.Encode()
-	var resp qualifiedContributorsResponse
-	if err := c.Get(ctx, path, &resp); err != nil {
+	var env qualifiedContributorsEnvelope
+	if err := c.Get(ctx, path, &env); err != nil {
 		return qualifiedContributorsResponse{}, remapQualifiedContributorsError(err, projectID)
 	}
-	return resp, nil
+	return env.Data, nil
 }
 
 // remapQualifiedContributorsError rewrites the gateway's typed errors into

@@ -106,7 +106,34 @@ func getJSON(ctx context.Context, path string) error {
 		return err
 	}
 
+	warnMetaWarning(result)
 	return output.PrintJSON(result)
+}
+
+// metaWarning returns the gateway's meta.warning from a decoded envelope, or
+// "" when absent. Merged read endpoints set it (with a 206) when one backend
+// was unavailable and the response is degraded — e.g. "DB API unavailable,
+// showing on-chain data only".
+func metaWarning(v interface{}) string {
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	meta, ok := m["meta"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	w, _ := meta["warning"].(string)
+	return strings.TrimSpace(w)
+}
+
+// warnMetaWarning prints the gateway's meta.warning to stderr in every mode
+// except JSON, where the envelope (meta included) passes through on stdout
+// and scripts read it there. Progress-to-stderr rule: never on stdout.
+func warnMetaWarning(v interface{}) {
+	if w := metaWarning(v); w != "" && output.GetFormat() != output.FormatJSON {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
 }
 
 // getJSONWithHint wraps getJSON and replaces NotFoundError messages with a contextual hint.
@@ -171,11 +198,16 @@ func printList(ctx context.Context, path, emptyMsg, titleKey, idKey string, useP
 	if reqErr != nil {
 		return reqErr
 	}
+	warnMetaWarning(response)
 
 	data, ok := response["data"].([]interface{})
 	if !ok || len(data) == 0 {
 		if output.GetFormat() == output.FormatJSON {
-			return output.PrintJSON(map[string]interface{}{"data": []interface{}{}})
+			empty := map[string]interface{}{"data": []interface{}{}}
+			if meta, ok := response["meta"]; ok {
+				empty["meta"] = meta
+			}
+			return output.PrintJSON(empty)
 		} else {
 			fmt.Fprintln(os.Stderr, emptyMsg)
 		}
@@ -189,6 +221,16 @@ func printList(ctx context.Context, path, emptyMsg, titleKey, idKey string, useP
 		}
 	}
 
+	// Non-empty lists emit a bare array in JSON mode (todos/038 records the
+	// envelope inconsistency; changing the shape is its own breaking change).
+	// There is no slot for meta.warning in that shape, and making the shape
+	// depend on whether the gateway was degraded would be worse than losing
+	// the warning from stdout — so a degraded list says so on stderr in JSON
+	// mode too. Scripts that must detect degradation use `get` (envelope
+	// passes through) or check stderr.
+	if w := metaWarning(response); w != "" && output.GetFormat() == output.FormatJSON {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
 	return output.PrintList(items, titleKey, idKey)
 }
 
@@ -205,6 +247,7 @@ func printListPost(ctx context.Context, path string, payload interface{}, emptyM
 	if err := c.Post(ctx, path, payload, &response); err != nil {
 		return err
 	}
+	warnMetaWarning(response)
 
 	if output.GetFormat() == output.FormatJSON {
 		return output.PrintJSON(response)
