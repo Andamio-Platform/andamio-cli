@@ -18,6 +18,7 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
+	"github.com/Andamio-Platform/andamio-cli/internal/quiz"
 	"github.com/spf13/cobra"
 )
 
@@ -32,8 +33,15 @@ This creates a directory structure that can be edited locally and re-imported:
   ├── introduction.md     # Module introduction (if present)
   ├── lesson-1.md         # Lesson for SLT 1
   ├── lesson-N.md         # Lesson for SLT N
-  ├── assignment.md       # Module assignment (if present)
+  ├── assignment.md       # Module assignment (Tiptap doc, if present)
+  ├── assignment.quiz.json  # Module assignment when it is a quiz envelope
   └── assets/             # Downloaded images
+
+A quiz assignment (content_json type "quiz") is written verbatim to
+assignment.quiz.json and no assignment.md is produced — converting it to
+Markdown would lose it. Import sends assignment.quiz.json back verbatim
+after validating it as a v1 quiz; a non-quiz or non-v1 file in that slot
+blocks re-import of the whole directory until it is a valid quiz.
 
 The course can be specified by ID (first arg) or by name (--course flag):
   andamio course export <course-id> <module-code>
@@ -395,16 +403,52 @@ func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, erro
 		result.Files = append(result.Files, "introduction.md")
 	}
 
-	// Write assignment.md if present
+	// Write the assignment if present. A Tiptap doc becomes assignment.md;
+	// anything else — a quiz envelope today, a type-less or unknown object
+	// tomorrow — is preserved verbatim as assignment.quiz.json, because
+	// tiptapToMarkdown matches none of its nodes and would write an empty
+	// assignment.md that a later import publishes as the assignment (#165,
+	// #59). The shape decision is quiz.Classify, the same classifier import
+	// uses, so the two sides cannot drift. Whatever was NOT written this
+	// export is removed: a stale counterpart would trip import's
+	// both-files-present error, and when the remote assignment is gone both
+	// files go, or the next import would republish it.
+	var wroteAssignment string
 	if data.Assignment != nil {
-		assignPath := filepath.Join(absDir, "assignment.md")
-		assignContent, urls := convertContentToMarkdown(data.Assignment)
-		imageURLs = append(imageURLs, urls...)
+		contentJSON, title := unwrapContent(data.Assignment)
+		if contentJSON != nil && quiz.Classify(contentJSON) != quiz.Doc {
+			pretty, err := json.MarshalIndent(contentJSON, "", "  ")
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode assignment.quiz.json: %w", err)
+			}
+			if err := writeFileAtomic(filepath.Join(absDir, "assignment.quiz.json"), append(pretty, '\n')); err != nil {
+				return nil, fmt.Errorf("failed to write assignment.quiz.json: %w", err)
+			}
+			wroteAssignment = "assignment.quiz.json"
+		} else {
+			assignContent, urls := renderContentMarkdown(contentJSON, title)
+			imageURLs = append(imageURLs, urls...)
 
-		if err := writeFileAtomic(assignPath, []byte(assignContent)); err != nil {
-			return nil, fmt.Errorf("failed to write assignment.md: %w", err)
+			if err := writeFileAtomic(filepath.Join(absDir, "assignment.md"), []byte(assignContent)); err != nil {
+				return nil, fmt.Errorf("failed to write assignment.md: %w", err)
+			}
+			wroteAssignment = "assignment.md"
 		}
-		result.Files = append(result.Files, "assignment.md")
+		result.Files = append(result.Files, wroteAssignment)
+	}
+	for _, name := range []string{"assignment.md", "assignment.quiz.json"} {
+		if name == wroteAssignment {
+			continue
+		}
+		removed, err := removeIfExists(filepath.Join(absDir, name))
+		if err != nil {
+			return nil, err
+		}
+		if removed && output.GetFormat() != output.FormatJSON {
+			// Only reachable under --force. The file may be a local draft, so
+			// say what happened rather than folding it into "overwriting".
+			fmt.Fprintf(os.Stderr, "Removed %s: it no longer matches the module's assignment\n", name)
+		}
 	}
 
 	// Download images if any
@@ -522,29 +566,52 @@ func sanitizeTitle(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func convertContentToMarkdown(resp map[string]interface{}) (string, []string) {
-	// Handle introduction/assignment response structure
-	// API returns: { "data": { "content": { "content_json": {...}, "title": "..." } } }
-	var contentJSON map[string]interface{}
-	var title string
-
-	if data, ok := resp["data"].(map[string]interface{}); ok {
-		if content, ok := data["content"].(map[string]interface{}); ok {
-			if cj, ok := content["content_json"].(map[string]interface{}); ok {
-				contentJSON = cj
-			}
-			if t, ok := content["title"].(string); ok {
-				title = t
-			}
+// unwrapContent pulls content_json and title out of the wrapped
+// introduction/assignment shape fetchModuleData builds:
+// { "data": { "content": { "content_json": {...}, "title": "..." } } }.
+// Falls back to a direct content_json on data in case the shape flattens.
+func unwrapContent(resp map[string]interface{}) (contentJSON map[string]interface{}, title string) {
+	data, ok := resp["data"].(map[string]interface{})
+	if !ok {
+		return nil, ""
+	}
+	if content, ok := data["content"].(map[string]interface{}); ok {
+		if cj, ok := content["content_json"].(map[string]interface{}); ok {
+			contentJSON = cj
 		}
-		// Fallback: try direct content_json on data (in case API changes)
-		if contentJSON == nil {
-			if cj, ok := data["content_json"].(map[string]interface{}); ok {
-				contentJSON = cj
-			}
+		if t, ok := content["title"].(string); ok {
+			title = t
 		}
 	}
+	if contentJSON == nil {
+		if cj, ok := data["content_json"].(map[string]interface{}); ok {
+			contentJSON = cj
+		}
+	}
+	return contentJSON, title
+}
 
+// removeIfExists deletes path when present and tolerates its absence. It
+// reports whether a file was actually removed so the caller can say so.
+func removeIfExists(path string) (bool, error) {
+	err := os.Remove(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("failed to remove stale %s: %w", filepath.Base(path), err)
+}
+
+func convertContentToMarkdown(resp map[string]interface{}) (string, []string) {
+	contentJSON, title := unwrapContent(resp)
+	return renderContentMarkdown(contentJSON, title)
+}
+
+// renderContentMarkdown converts an already-unwrapped content_json to Markdown
+// with the title as an H1. A nil contentJSON renders nothing.
+func renderContentMarkdown(contentJSON map[string]interface{}, title string) (string, []string) {
 	if contentJSON == nil {
 		return "", nil
 	}

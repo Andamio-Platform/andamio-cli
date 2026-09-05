@@ -145,6 +145,7 @@ Both come from the same classification, so they never disagree.
 |------|--------|------|
 | 0 | — | Success, **including an empty but valid result set** |
 | 1 | `error` / `server` / `backpressure` / `canceled` | Unexpected, 5xx, retry-later, or interrupted |
+| 1 | `verify` | The update was accepted, but the read-back did not confirm the stored value (`course import-assignment`) — inspect, don't retry blindly |
 | 2 | `not_found` | Resource doesn't exist |
 | 3 | `auth` | No credentials, or 401 / 403 |
 | 4 | `removed_command` | Command was retired in 1.0 |
@@ -201,6 +202,7 @@ Author:
 
 - `course export <course-id> <module-code>` — Export module to local directory
 - `course import <path> --course-id <id>` — Import module from local directory
+- `course import-assignment <course-id> <module-code> <file.json>` — Publish a quiz assignment (JSON envelope) and verify it by read-back
 - `course owner create|update|register` — Create and register a course
 - `course owner teachers --course-id <id> --alias <you> --skey <path> --add <alias>` — Manage teachers (on-chain transaction)
 - `course teacher register-module|publish-module|update-module-status` — Module lifecycle
@@ -348,6 +350,30 @@ A blockchain is a distributed ledger...
 ```
 
 **introduction.md** / **assignment.md** — Same format as lessons (H1 = title).
+
+**assignment.quiz.json** — A quiz assignment instead of `assignment.md`. The file is the quiz envelope (`{"type": "quiz", "version": 1, "passThreshold": N, "questions": [...]}`) exactly as the Andamio app stores and grades it; format contract in the app's `docs/quiz-content-format.md`. Export writes this file for a quiz module and no `assignment.md`; import validates it and sends it back verbatim, keeping the module's existing assignment title. A directory holding both `assignment.md` and `assignment.quiz.json` is refused.
+
+### Quiz assignments
+
+Publish a quiz envelope directly, without a module directory:
+
+```bash
+# Validate, preview the summary, send nothing
+andamio course import-assignment <course-id> 101 quiz.json --dry-run
+
+# Publish, then read back and verify. Title/description come from the existing
+# assignment unless overridden; a module with no assignment yet needs --title.
+andamio course import-assignment <course-id> 101 quiz.json --title "Module Quiz"
+
+# Scripting
+andamio course import-assignment <course-id> 101 quiz.json --output json
+# {"course_id":"…","module_code":"101","module_status":"ON_CHAIN",
+#  "assignment":{"title":"Module Quiz","title_source":"flag","question_count":5,
+#                "pass_threshold":4,"question_ids":["q1","q2","q3","q4","q5"]},
+#  "verified":true}
+```
+
+The command validates the envelope with the union of the rules the two Andamio apps enforce — fcb-fan-engagement-app and app.andamio.io, since any course on the gateway is viewable in the latter (`type`, `version: 1`, non-empty `questions`, unique ids, non-blank prompts, at least two options with unique non-empty values and non-blank labels, `correctValue` matching one option, `passThreshold` in `1..len(questions)`, an `intro` that is a Tiptap doc if present). Every violated rule is listed; there is no bypass flag. Only the `assignment` key is sent, so lessons, SLTs, and the introduction are untouched. Assignments are editable in any module status — only SLTs lock after DRAFT. After the update the module is re-fetched and the stored `content_json` is deep-compared to the file; a mismatch, a degraded read-back, or a read-back request that fails for any reason exits 1 with `kind: verify`, which means the update was applied but should be inspected.
 
 ### Image Handling
 

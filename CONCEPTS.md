@@ -22,6 +22,11 @@ The content-derived identity of a Course Module: a digest computed over the orde
 
 Both the CLI and the chain compute it independently from the same content, which is what makes it a linkage key rather than a checksum: two records agree that they describe the same module precisely when their SLT Hashes match. A mismatch is therefore not corruption to repair but a statement that these are different modules.
 
+### Quiz Envelope
+An assignment whose `content_json` is a `{"type": "quiz", "version": 1, ...}` object instead of a Tiptap `doc`. The gateway and db-api store it as opaque JSON; only the Andamio app's render layer interprets it, grading client-side and storing a self-contained evidence snapshot on commit. Its validity rules are owned by the app (`src/lib/quiz/quiz-envelope.ts` in fcb-fan-engagement-app); the CLI mirrors them so an envelope it publishes is one the app can render.
+
+On disk a quiz assignment is `assignment.quiz.json`, never `assignment.md`: converting the envelope to Markdown loses it, so export and import carry it verbatim.
+
 ## Project
 
 ### Task
