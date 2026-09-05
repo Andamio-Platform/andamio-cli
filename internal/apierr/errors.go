@@ -231,11 +231,19 @@ func (e *RemovedCommandError) Error() string {
 type VerifyError struct {
 	Path    string
 	Message string
+	// Err is the underlying cause when the read-back request itself failed
+	// (a transport error, a 5xx, an expired token). Kind classifies the
+	// whole as verify — the write WAS applied, so "unreachable" or "auth"
+	// would send a script down the wrong branch — while Unwrap keeps the
+	// cause inspectable with errors.Is / errors.As.
+	Err error
 }
 
 func (e *VerifyError) Error() string {
 	return fmt.Sprintf("update was accepted, but %s could not be verified: %s", e.Path, e.Message)
 }
+
+func (e *VerifyError) Unwrap() error { return e.Err }
 
 // ReportedError wraps an error whose output has already been printed to stdout
 // (e.g., a structured JSON result). main.go should set the exit code from the

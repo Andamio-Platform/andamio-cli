@@ -230,13 +230,13 @@ andamio course import-assignment <course-id> 101 quiz.json --dry-run
 andamio course import-assignment <course-id> 101 quiz.json --title "Module Quiz"
 ```
 
-Only the `assignment` key is sent — lessons, SLTs and the introduction are untouched. After the POST the module is re-fetched and `assignment.content_json` is deep-compared to the file; a mismatch or a degraded (206) read-back exits 1 with `kind: verify`, meaning the update was applied but could not be confirmed and should be inspected.
+Only the `assignment` key is sent — lessons, SLTs and the introduction are untouched. After the POST the module is re-fetched and `assignment.content_json` is deep-compared to the file; a mismatch, a degraded (206) read-back, or a read-back request that fails exits 1 with `kind: verify`, meaning the update was applied but could not be confirmed and should be inspected.
 
 **Published modules.** Assignments are editable in any module status; only SLTs lock after DRAFT (db-api's aggregate update soft-skips SLTs on non-DRAFT modules and states that lessons, assignments and introductions remain editable). `import-assignment` therefore works on DRAFT, APPROVED, PENDING_TX and ON_CHAIN modules alike. This statement rests on the gateway and db-api source; see the release notes for the live verification status.
 
 **In a module directory** the quiz lives at `assignment.quiz.json` in place of `assignment.md`. `course export` writes that file for a quiz module and no `assignment.md`; `course import` validates it and sends it back verbatim, so export followed by import of a quiz module is a server-side no-op. A directory holding both `assignment.md` and `assignment.quiz.json` is refused before any request. A file in that slot that is not a valid v1 quiz (for example an envelope from a newer app version) is preserved on disk but blocks re-import of the whole directory, lessons and introduction included, until it is valid.
 
-Validation mirrors the app's rules (`src/lib/quiz/quiz-envelope.ts` in fcb-fan-engagement-app). Every violated rule is reported, and there is no bypass flag.
+Validation enforces the union of the two apps' rules (`src/lib/quiz/quiz-envelope.ts` in fcb-fan-engagement-app and in andamio-app-v2; see `testdata/quiz/SOURCE.md`). Every violated rule is reported, and there is no bypass flag.
 
 ## Assignment Commitment Lifecycle
 

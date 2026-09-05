@@ -100,7 +100,7 @@ Export and import are the two complex commands. They follow a different pattern:
 7. **SLT locking** — import checks module status; skips sending SLTs for non-DRAFT modules to avoid `SLT_LOCKED` errors.
 8. **Tiptap node types** — standalone images use `imageBlock` (with `width: "600"`, `align: "center"` attrs), not `image`. Matches app's `markdown-to-tiptap.ts`.
 9. **Goldmark TextBlock** — tight list items use `ast.TextBlock`, not `ast.Paragraph`. Both are handled identically in the converter.
-10. **Quiz assignments** — an assignment whose `content_json.type` is not `doc` (a quiz envelope, see CONCEPTS.md) is exported verbatim to `assignment.quiz.json` with no `assignment.md`, and import sends `assignment.quiz.json` back verbatim after validating it as a v1 quiz through `internal/quiz`. Both files present is a parse-time error. The validator mirrors the app's `validateQuizDefinition`; `testdata/quiz/SOURCE.md` records the app commit the fixtures were copied from, and a rule change in the app is re-mirrored by hand.
+10. **Quiz assignments** — an assignment whose `content_json.type` is not `doc` (a quiz envelope, see CONCEPTS.md) is exported verbatim to `assignment.quiz.json` with no `assignment.md`, and import sends `assignment.quiz.json` back verbatim after validating it as a v1 quiz through `internal/quiz`. Both files present is a parse-time error. The validator enforces the union of both apps' `validateQuizDefinition` rules (fcb-fan-engagement-app and andamio-app-v2); `testdata/quiz/SOURCE.md` records the commits the fixtures were copied from, and a rule change in either app is re-mirrored by hand.
 
 ### Auth Flow
 
@@ -213,7 +213,7 @@ Exit codes 0–3 predate 1.0 and are fixed. `conflict` moved from 1 to 6 in 1.0.
 | `course teacher commitments` | `/v2/course/teacher/assignment-commitments/list` | jwt | List pending reviews. `--course-id` |
 | `course credential verify-hash <course-id>` | `/api/v2/course/user/modules/{id}` | either | Verify credential hashes match computed SLT hashes |
 | `course credential compute-hash` | local | none | Compute SLT hash from `--slt` flags or `--file` (outline.md). No auth required |
-| `course import-assignment <course-id> <module-code> <file.json>` | `/v2/course/teacher/course-modules/list` + `/v2/course/teacher/course-module/update` | jwt | Publish a quiz envelope (`{"type":"quiz","version":1,…}`) verbatim as the module's `assignment.content_json`, sending only the `assignment` key. Validates before any request (no bypass flag), preserves existing title/description/image_url/video_url (`--title`/`--description` override), then re-fetches and deep-compares; a mismatch or degraded read-back is `kind: verify`. `--course`, `--dry-run`, `--show-payload`. Assignments are editable in any module status; only SLTs lock |
+| `course import-assignment <course-id> <module-code> <file.json>` | `/v2/course/teacher/course-modules/list` + `/v2/course/teacher/course-module/update` | jwt | Publish a quiz envelope (`{"type":"quiz","version":1,…}`) verbatim as the module's `assignment.content_json`, sending only the `assignment` key. Validates before any request (no bypass flag), preserves existing title/description/image_url/video_url (`--title`/`--description` override), then re-fetches and deep-compares; any failure after the accepted write (mismatch, degraded read-back, failed re-fetch) is `kind: verify`. `--course`, `--dry-run`, `--show-payload`. Assignments are editable in any module status; only SLTs lock |
 
 ### project — Project data
 | Command | Endpoint | Auth | Description |

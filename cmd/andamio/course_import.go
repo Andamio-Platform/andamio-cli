@@ -226,6 +226,14 @@ func importModule(p ImportParams) (*ImportResult, error) {
 		}
 		// Only trigger creation for "not found" errors, not auth/network failures
 		if p.CreateMode && errors.Is(err, errModuleNotFound) {
+			// A quiz file carries no title and a brand-new module has no
+			// assignment to take one from, so the update after the create
+			// would be refused (R5). Refuse here, before the create POST,
+			// rather than leaving an empty module behind — the condition is
+			// fully known before any request.
+			if data.Assignment != nil && data.Assignment.RawJSON != nil {
+				return nil, fmt.Errorf("title required for a module with no existing assignment: assignment.quiz.json carries no title and module %s does not exist yet. Create the module first (import the directory without assignment.quiz.json, or 'andamio course create-module'), then publish the quiz with 'andamio course import-assignment %s %s assignment.quiz.json --title <title>'", data.ModuleCode, p.CourseID, data.ModuleCode)
+			}
 			if p.DryRun {
 				if !p.Quiet {
 					fmt.Printf("Dry-run: would create module %s (%s) with sort_order %d\n", data.Title, data.ModuleCode, p.SortOrder)
@@ -607,13 +615,25 @@ func readCompiledModule(dir string) (*ImportData, error) {
 	// or assignment.quiz.json (a quiz envelope sent verbatim). Both present is
 	// an error here, before any request: the ambiguity is never resolved by
 	// picking one (#165).
+	// Only a missing file means "no assignment": an unreadable one (EACCES,
+	// a directory in its place) must fail, not silently drop the assignment
+	// from the payload. A zero-byte assignment.md is ignored, as the Markdown
+	// path always has, so it never conflicts with a quiz file.
 	assignBytes, mdErr := os.ReadFile(filepath.Join(dir, "assignment.md"))
+	if mdErr != nil && !os.IsNotExist(mdErr) {
+		return nil, fmt.Errorf("failed to read assignment.md: %w", mdErr)
+	}
 	quizBytes, quizErr := os.ReadFile(filepath.Join(dir, "assignment.quiz.json"))
-	if mdErr == nil && quizErr == nil {
+	if quizErr != nil && !os.IsNotExist(quizErr) {
+		return nil, fmt.Errorf("failed to read assignment.quiz.json: %w", quizErr)
+	}
+	hasMD := mdErr == nil && len(assignBytes) > 0
+	hasQuiz := quizErr == nil
+	if hasMD && hasQuiz {
 		return nil, fmt.Errorf("both assignment.md and assignment.quiz.json exist in %s — a module has one assignment; remove the file that is not the assignment you mean to publish", dir)
 	}
 
-	if mdErr == nil && len(assignBytes) > 0 {
+	if hasMD {
 		title, body := extractH1Title(string(assignBytes))
 		if title == "" && output.GetFormat() != output.FormatJSON {
 			fmt.Printf("Warning: assignment.md has no # title heading\n")
@@ -625,7 +645,7 @@ func readCompiledModule(dir string) (*ImportData, error) {
 		data.Assignment = &ContentSection{Title: title, TiptapJSON: tiptap}
 	}
 
-	if quizErr == nil {
+	if hasQuiz {
 		_, summary, err := parseQuizFile(quizBytes, "assignment.quiz.json")
 		if err != nil {
 			return nil, err
@@ -1300,13 +1320,25 @@ func fetchExistingModule(ctx context.Context, c *client.Client, courseID, module
 	}
 
 	// A module with content comes from db-api, so a found module is complete
-	// even when Andamioscan was down. Not found on a degraded list is the
-	// opposite case: db-api may be the missing backend and the module may
-	// exist with content the list could not show.
-	if warning := metaWarning(resp); warning != "" {
+	// even when Andamioscan was down. Not found on a degraded list depends on
+	// WHICH backend was missing: with db-api down the module may exist with
+	// content the list could not show; with only Andamioscan down the db list
+	// is complete and authoritative, so absent means absent (and --create
+	// must keep working through an Andamioscan outage).
+	if warning := metaWarning(resp); warning != "" && warningHidesDBContent(warning) {
 		return nil, fmt.Errorf("%w: %s (module '%s' in course '%s' may exist but was not returned)", errDegradedRead, warning, moduleCode, courseID)
 	}
 	return nil, fmt.Errorf("%w: '%s' in course '%s'", errModuleNotFound, moduleCode, courseID)
+}
+
+// warningHidesDBContent reports whether a merged-read meta.warning means the
+// db-api side — the only source of module content — was unavailable. The
+// gateway's strings (andamio-api course_orchestrator.go) begin "DB API
+// unavailable, ..." or "Andamioscan unavailable, ...". Only the Andamioscan
+// form leaves the db list authoritative; unknown text is treated as hiding
+// content, the conservative reading.
+func warningHidesDBContent(warning string) bool {
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(warning)), "andamioscan unavailable")
 }
 
 func updateModuleContent(ctx context.Context, c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool, dryRun bool, showPayload bool) (map[string]interface{}, error) {

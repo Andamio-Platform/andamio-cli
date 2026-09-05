@@ -158,6 +158,37 @@ func TestWriteCompiledModule_NoAssignmentWritesNeither(t *testing.T) {
 	}
 }
 
+// When the remote assignment is gone, both stale assignment files go too —
+// otherwise the next import would republish the deleted assignment.
+func TestWriteCompiledModule_NoAssignmentRemovesStaleFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"assignment.md", "assignment.quiz.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("stale"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := writeCompiledModule(dir, exportModuleData(nil)); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"assignment.md", "assignment.quiz.json"} {
+		if fileExists(t, filepath.Join(dir, name)) {
+			t.Errorf("stale %s survived an export of a module with no assignment", name)
+		}
+	}
+}
+
+// A type-less object is not a Tiptap doc: exporting it as Markdown would be
+// lossy (an H1-only file), so it takes the verbatim path like any non-doc.
+func TestWriteCompiledModule_TypelessObjectExportsVerbatim(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := writeCompiledModule(dir, exportModuleData(wrapAssignment(map[string]interface{}{"foo": "bar"}, "Odd"))); err != nil {
+		t.Fatal(err)
+	}
+	if !fileExists(t, filepath.Join(dir, "assignment.quiz.json")) || fileExists(t, filepath.Join(dir, "assignment.md")) {
+		t.Error("a type-less content_json must be preserved verbatim, not flattened to Markdown")
+	}
+}
+
 // A re-export into the same directory (only reachable under --force) must not
 // leave the previous assignment file behind: both files present is the R11
 // ambiguity error on the next import, and export would be the tool that

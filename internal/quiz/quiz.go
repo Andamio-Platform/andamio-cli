@@ -2,13 +2,16 @@
 // `type: "quiz"` shape that rides an assignment's opaque `content_json` field
 // alongside ordinary Tiptap documents (`type: "doc"`).
 //
-// The Andamio app is the authority for the shared rules. Recognize mirrors
-// its isQuizContentEnvelope guard and Validate mirrors validateQuizDefinition:
-// same control flow, same issue codes, same wording where practical. The
-// exact upstream revision these mirror, and the three checks the CLI adds on
-// top (malformed-prompt, malformed-help, malformed-intro), are recorded in
-// testdata/quiz/SOURCE.md; a rule change in the app is re-mirrored by hand
-// and pinned by the fixtures under testdata/quiz.
+// The Andamio apps are the authority for the shared rules. Two apps render
+// quizzes — fcb-fan-engagement-app and andamio-app-v2 (app.andamio.io) — and
+// any course on the gateway is viewable in the latter, so Validate enforces
+// the UNION of their validateQuizDefinition rules: a quiz the CLI accepts
+// renders in both. Recognize mirrors isQuizContentEnvelope; Validate keeps
+// the apps' control flow, issue codes and wording where practical. The exact
+// upstream revisions, and the two checks the CLI adds on top (malformed-help,
+// malformed-intro), are recorded in testdata/quiz/SOURCE.md; a rule change in
+// either app is re-mirrored by hand and pinned by the fixtures under
+// testdata/quiz.
 //
 // Recognition and validity are deliberately separate, as in the app: an
 // envelope with an unsupported version is still quiz-shaped (it must not be
@@ -21,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 )
 
 // Kind is the recognized shape of a content_json value.
@@ -57,9 +61,10 @@ func (k Kind) String() string {
 // SupportedVersion is the only quiz envelope version the CLI accepts.
 const SupportedVersion = 1
 
-// Issue codes. The first ten reuse the app's QuizDefinitionIssueCode names
-// exactly; the last three are CLI-additional checks; CodeNotAQuiz is a guard
-// for callers that hand Validate something Recognize would not call a quiz.
+// Issue codes. The first ten are the codes both apps share; the next three
+// come from andamio-app-v2 only; the two after that are CLI-additional
+// checks; CodeNotAQuiz is a guard for callers that hand Validate something
+// Recognize would not call a quiz.
 const (
 	CodeUnsupportedVersion       = "unsupported-version"
 	CodeEmptyQuestions           = "empty-questions"
@@ -72,9 +77,12 @@ const (
 	CodeTooFewOptions            = "too-few-options"
 	CodeMalformedQuestion        = "malformed-question"
 
-	CodeMalformedPrompt = "malformed-prompt"
-	CodeMalformedHelp   = "malformed-help"
-	CodeMalformedIntro  = "malformed-intro"
+	CodeEmptyPrompt      = "empty-prompt"
+	CodeEmptyOptionLabel = "empty-option-label"
+	CodeEmptyOptionValue = "empty-option-value"
+
+	CodeMalformedHelp  = "malformed-help"
+	CodeMalformedIntro = "malformed-intro"
 
 	CodeNotAQuiz = "not-a-quiz"
 )
@@ -91,7 +99,9 @@ var AllCodes = []string{
 	CodeDuplicateQuestionIDs,
 	CodeTooFewOptions,
 	CodeMalformedQuestion,
-	CodeMalformedPrompt,
+	CodeEmptyPrompt,
+	CodeEmptyOptionLabel,
+	CodeEmptyOptionValue,
 	CodeMalformedHelp,
 	CodeMalformedIntro,
 	CodeNotAQuiz,
@@ -136,6 +146,16 @@ func Recognize(raw []byte) (Kind, map[string]interface{}, error) {
 }
 
 // recognizeObject mirrors isQuizContentEnvelope, with a doc branch first.
+// Classify is Recognize for an already-decoded value: the one shape
+// classifier for callers holding a map (course export decides between
+// assignment.md and assignment.quiz.json with it). nil is NotObject.
+func Classify(env map[string]interface{}) Kind {
+	if env == nil {
+		return NotObject
+	}
+	return recognizeObject(env)
+}
+
 func recognizeObject(env map[string]interface{}) Kind {
 	switch env["type"] {
 	case "doc":
@@ -249,13 +269,15 @@ func Validate(env map[string]interface{}) []Issue {
 			continue
 		}
 
-		// CLI-additional: prompt must be a non-empty string; help, when
-		// present and non-null, must be a string. Neither depends on the
-		// options shape, so they are reported even when options are broken.
-		if prompt, isStr := question["prompt"].(string); !isStr || prompt == "" {
+		// andamio-app-v2: a blank prompt renders as a working quiz with an
+		// empty question. Non-string prompts render blank too. CLI-additional:
+		// help, when present and non-null, must be a string. Neither depends
+		// on the options shape, so they are reported even when options are
+		// broken.
+		if prompt, isStr := question["prompt"].(string); !isStr || strings.TrimSpace(prompt) == "" {
 			issues = append(issues, Issue{
-				Code:       CodeMalformedPrompt,
-				Message:    fmt.Sprintf("Question %q must have a non-empty string prompt.", questionID),
+				Code:       CodeEmptyPrompt,
+				Message:    fmt.Sprintf("Question %q has an empty prompt.", questionID),
 				QuestionID: questionID,
 			})
 		}
@@ -305,6 +327,41 @@ func Validate(env map[string]interface{}) []Issue {
 			issues = append(issues, Issue{
 				Code:       CodeDuplicateOptionValues,
 				Message:    fmt.Sprintf("Question %q has duplicate option values — the correct answer would be ambiguous.", questionID),
+				QuestionID: questionID,
+			})
+		}
+
+		// andamio-app-v2: blank labels render as empty answer buttons (one
+		// issue per question, with the count); an empty-string value is
+		// "no answer" to the taker's all-answered gate, so selecting it
+		// dead-locks the quiz. A whitespace value is not empty to that gate.
+		blankLabels := 0
+		emptyValue := false
+		for _, opt := range options {
+			if strings.TrimSpace(opt.label) == "" {
+				blankLabels++
+			}
+			if opt.value == "" {
+				emptyValue = true
+			}
+		}
+		if blankLabels == 1 {
+			issues = append(issues, Issue{
+				Code:       CodeEmptyOptionLabel,
+				Message:    fmt.Sprintf("Question %q has an option with an empty label.", questionID),
+				QuestionID: questionID,
+			})
+		} else if blankLabels > 1 {
+			issues = append(issues, Issue{
+				Code:       CodeEmptyOptionLabel,
+				Message:    fmt.Sprintf("Question %q has %d options with empty labels.", questionID, blankLabels),
+				QuestionID: questionID,
+			})
+		}
+		if emptyValue {
+			issues = append(issues, Issue{
+				Code:       CodeEmptyOptionValue,
+				Message:    fmt.Sprintf("Question %q has an option with an empty value — selecting it would never register as an answer.", questionID),
 				QuestionID: questionID,
 			})
 		}

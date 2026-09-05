@@ -32,9 +32,10 @@ var courseImportAssignmentCmd = &cobra.Command{
 
 The file is a quiz envelope — {"type": "quiz", "version": 1, "passThreshold": N,
 "questions": [...]} — exactly as the Andamio app stores and grades it. It is
-validated before any request with the same rules the FCB Fan Campus app enforces: type and
-version, a non-empty questions array, unique question ids, at least two options
-per question with unique values, a correctValue matching one option, a
+validated before any request with the union of the rules the FCB Fan Campus app and
+app.andamio.io enforce: type and
+version, a non-empty questions array, unique question ids, non-blank prompts, at least two options
+per question with unique non-empty values and non-blank labels, a correctValue matching one option, a
 passThreshold in 1..len(questions), and an intro that is a Tiptap doc if present.
 Every violated rule is listed. There is no bypass flag. A Tiptap document is
 refused: author it as assignment.md in a module directory and use 'course import'.
@@ -47,9 +48,9 @@ lock after DRAFT — so this works on DRAFT, APPROVED, PENDING_TX and ON_CHAIN
 modules alike.
 
 After the update the module is re-fetched and the stored content_json is
-deep-compared to the file. A mismatch, or a degraded (206) read-back that
-cannot confirm the stored value, exits 1 with kind "verify" under --output json:
-the update WAS applied and should be inspected.
+deep-compared to the file. A mismatch, a degraded (206) read-back, or a
+read-back request that fails for any reason exits 1 with kind "verify" under
+--output json: the update WAS applied and should be inspected.
 
 Examples:
   andamio course import-assignment <course-id> 101 quiz.json --dry-run
@@ -266,13 +267,19 @@ func runImportAssignment(ctx context.Context, c *client.Client, opts importAssig
 	}
 	stored, err := fetchExistingModule(ctx, c, opts.CourseID, opts.ModuleCode)
 	if err != nil {
-		if errors.Is(err, errDegradedRead) {
-			return nil, &apierr.VerifyError{
-				Path:    "assignment.content_json",
-				Message: fmt.Sprintf("the read-back was degraded (%v); the stored value could not be confirmed", err),
-			}
+		// Every failure after the accepted POST is kind verify: "applied but
+		// unconfirmed" is the outcome a caller must branch on, whatever the
+		// cause. A connection reset here is not "the request never reached
+		// the service" and an expired token is not "unauthenticated" — the
+		// module changed. The cause stays inspectable via Unwrap.
+		msg := fmt.Sprintf("the read-back request failed (%v); the stored value could not be confirmed", err)
+		switch {
+		case errors.Is(err, errDegradedRead):
+			msg = fmt.Sprintf("the read-back was degraded (%v); the stored value could not be confirmed", err)
+		case errors.Is(err, errModuleNotFound):
+			msg = fmt.Sprintf("the read-back did not return the module (%v); the stored value could not be confirmed", err)
 		}
-		return nil, fmt.Errorf("update was accepted, but verification could not run: %w", err)
+		return nil, &apierr.VerifyError{Path: "assignment.content_json", Message: msg, Err: err}
 	}
 	if err := verifyStoredAssignment(env, input, stored.Assignment); err != nil {
 		return nil, err

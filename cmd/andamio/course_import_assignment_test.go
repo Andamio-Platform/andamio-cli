@@ -265,7 +265,7 @@ func TestImportAssignment_InvalidQuizListsEveryRule(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
-	for _, want := range []string{"threshold-exceeds-questions", "dangling-correct-value", "malformed-prompt"} {
+	for _, want := range []string{"threshold-exceeds-questions", "dangling-correct-value", "empty-prompt"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should list %q: %v", want, err)
 		}
@@ -387,6 +387,23 @@ func TestImportAssignment_ModuleNotInListIsNotFound(t *testing.T) {
 	}
 }
 
+// Only Andamioscan being down leaves the db list complete, so a module that is
+// absent from it is genuinely absent: not_found, not a degraded read — and
+// course import --create keeps working through such an outage.
+func TestImportAssignment_AndamioscanOnlyWarningMissingModuleIsNotFound(t *testing.T) {
+	stub := &assignmentStub{
+		listBodies: []string{`{"data":[{"content":{"course_module_code":"999","module_status":"DRAFT"}}],"meta":{"warning":"Andamioscan unavailable, showing DB data only"}}`},
+		listStatus: []int{http.StatusPartialContent},
+	}
+	c, _ := stub.serve(t)
+	_, err := runImportAssignment(context.Background(), c, importAssignmentOptions{
+		CourseID: "course-1", ModuleCode: "101", FilePath: writeQuizFile(t, quizEnvelope()),
+	})
+	if apierr.Kind(err) != apierr.KindNotFound {
+		t.Fatalf("kind = %q, want not_found; err = %v", apierr.Kind(err), err)
+	}
+}
+
 func TestImportAssignment_ReadBackOmittingModuleSaysAccepted(t *testing.T) {
 	stub := &assignmentStub{listBodies: []string{
 		listBody(t, docAssignment("Quiz"), ""),
@@ -396,11 +413,11 @@ func TestImportAssignment_ReadBackOmittingModuleSaysAccepted(t *testing.T) {
 	_, err := runImportAssignment(context.Background(), c, importAssignmentOptions{
 		CourseID: "course-1", ModuleCode: "101", FilePath: writeQuizFile(t, quizEnvelope()),
 	})
-	if err == nil || !strings.Contains(err.Error(), "accepted") {
-		t.Fatalf("err = %v, want a message saying the update was accepted", err)
+	if apierr.Kind(err) != apierr.KindVerify || !strings.Contains(err.Error(), "accepted") {
+		t.Fatalf("err = %v, want kind verify with a message saying the update was accepted", err)
 	}
-	if apierr.Kind(err) == apierr.KindVerify {
-		t.Errorf("a healthy list that omits the module is not a degraded read: %v", err)
+	if !errors.Is(err, errModuleNotFound) {
+		t.Errorf("the cause must stay inspectable through Unwrap: %v", err)
 	}
 }
 
@@ -421,7 +438,7 @@ func TestImportAssignment_DegradedReadBackIsVerifyErrorNamingWarning(t *testing.
 	}
 }
 
-func TestImportAssignment_ReadBackFailureKeepsUnderlyingKind(t *testing.T) {
+func TestImportAssignment_ReadBackFailureIsVerifyWithCause(t *testing.T) {
 	stub := &assignmentStub{
 		listBodies: []string{listBody(t, docAssignment("Quiz"), ""), `{"message":"down"}`},
 		listStatus: []int{0, http.StatusServiceUnavailable},
@@ -430,8 +447,15 @@ func TestImportAssignment_ReadBackFailureKeepsUnderlyingKind(t *testing.T) {
 	_, err := runImportAssignment(context.Background(), c, importAssignmentOptions{
 		CourseID: "course-1", ModuleCode: "101", FilePath: writeQuizFile(t, quizEnvelope()),
 	})
-	if apierr.Kind(err) != apierr.KindServer {
-		t.Fatalf("kind = %q, want server; err = %v", apierr.Kind(err), err)
+	// Every failure after the accepted POST is verify: the module changed,
+	// and "server" would tell a script the write did not happen. The cause
+	// stays inspectable through Unwrap.
+	if apierr.Kind(err) != apierr.KindVerify {
+		t.Fatalf("kind = %q, want verify; err = %v", apierr.Kind(err), err)
+	}
+	var se *apierr.ServerError
+	if !errors.As(err, &se) {
+		t.Errorf("underlying 503 must remain reachable via errors.As: %v", err)
 	}
 	if !strings.Contains(err.Error(), "accepted") {
 		t.Errorf("message must say the update was accepted: %v", err)

@@ -18,6 +18,7 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
+	"github.com/Andamio-Platform/andamio-cli/internal/quiz"
 	"github.com/spf13/cobra"
 )
 
@@ -402,40 +403,51 @@ func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, erro
 		result.Files = append(result.Files, "introduction.md")
 	}
 
-	// Write the assignment if present. A Tiptap doc becomes assignment.md; any
-	// other content_json (a quiz envelope today) is preserved verbatim as
-	// assignment.quiz.json, because tiptapToMarkdown matches none of its nodes
-	// and would write an empty assignment.md that a later import publishes as
-	// the assignment (#165, #59). Whichever file is written, the other is
-	// removed: export only reaches an existing directory under --force, and a
-	// stale counterpart would trip import's both-files-present error.
+	// Write the assignment if present. A Tiptap doc becomes assignment.md;
+	// anything else — a quiz envelope today, a type-less or unknown object
+	// tomorrow — is preserved verbatim as assignment.quiz.json, because
+	// tiptapToMarkdown matches none of its nodes and would write an empty
+	// assignment.md that a later import publishes as the assignment (#165,
+	// #59). The shape decision is quiz.Classify, the same classifier import
+	// uses, so the two sides cannot drift. Whatever was NOT written this
+	// export is removed: a stale counterpart would trip import's
+	// both-files-present error, and when the remote assignment is gone both
+	// files go, or the next import would republish it.
+	var wroteAssignment string
 	if data.Assignment != nil {
-		mdPath := filepath.Join(absDir, "assignment.md")
-		quizPath := filepath.Join(absDir, "assignment.quiz.json")
 		contentJSON, title := unwrapContent(data.Assignment)
-		if isNonDocContent(contentJSON) {
+		if contentJSON != nil && quiz.Classify(contentJSON) != quiz.Doc {
 			pretty, err := json.MarshalIndent(contentJSON, "", "  ")
 			if err != nil {
 				return nil, fmt.Errorf("failed to encode assignment.quiz.json: %w", err)
 			}
-			if err := writeFileAtomic(quizPath, append(pretty, '\n')); err != nil {
+			if err := writeFileAtomic(filepath.Join(absDir, "assignment.quiz.json"), append(pretty, '\n')); err != nil {
 				return nil, fmt.Errorf("failed to write assignment.quiz.json: %w", err)
 			}
-			if err := removeIfExists(mdPath); err != nil {
-				return nil, err
-			}
-			result.Files = append(result.Files, "assignment.quiz.json")
+			wroteAssignment = "assignment.quiz.json"
 		} else {
 			assignContent, urls := renderContentMarkdown(contentJSON, title)
 			imageURLs = append(imageURLs, urls...)
 
-			if err := writeFileAtomic(mdPath, []byte(assignContent)); err != nil {
+			if err := writeFileAtomic(filepath.Join(absDir, "assignment.md"), []byte(assignContent)); err != nil {
 				return nil, fmt.Errorf("failed to write assignment.md: %w", err)
 			}
-			if err := removeIfExists(quizPath); err != nil {
-				return nil, err
-			}
-			result.Files = append(result.Files, "assignment.md")
+			wroteAssignment = "assignment.md"
+		}
+		result.Files = append(result.Files, wroteAssignment)
+	}
+	for _, name := range []string{"assignment.md", "assignment.quiz.json"} {
+		if name == wroteAssignment {
+			continue
+		}
+		removed, err := removeIfExists(filepath.Join(absDir, name))
+		if err != nil {
+			return nil, err
+		}
+		if removed && output.GetFormat() != output.FormatJSON {
+			// Only reachable under --force. The file may be a local draft, so
+			// say what happened rather than folding it into "overwriting".
+			fmt.Fprintf(os.Stderr, "Removed %s: it no longer matches the module's assignment\n", name)
 		}
 	}
 
@@ -579,24 +591,17 @@ func unwrapContent(resp map[string]interface{}) (contentJSON map[string]interfac
 	return contentJSON, title
 }
 
-// isNonDocContent reports whether a content_json object is something other
-// than a Tiptap document — the detection key for the quiz file convention on
-// both the export and import sides (KTD6 in the #165 plan). A nil or
-// type-less object is treated as a doc so it keeps the Markdown path.
-func isNonDocContent(contentJSON map[string]interface{}) bool {
-	if contentJSON == nil {
-		return false
+// removeIfExists deletes path when present and tolerates its absence. It
+// reports whether a file was actually removed so the caller can say so.
+func removeIfExists(path string) (bool, error) {
+	err := os.Remove(path)
+	if err == nil {
+		return true, nil
 	}
-	kind, _ := contentJSON["type"].(string)
-	return kind != "" && kind != "doc"
-}
-
-// removeIfExists deletes path when present and tolerates its absence.
-func removeIfExists(path string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove stale %s: %w", filepath.Base(path), err)
+	if os.IsNotExist(err) {
+		return false, nil
 	}
-	return nil
+	return false, fmt.Errorf("failed to remove stale %s: %w", filepath.Base(path), err)
 }
 
 func convertContentToMarkdown(resp map[string]interface{}) (string, []string) {

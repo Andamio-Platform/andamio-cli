@@ -287,6 +287,56 @@ func TestCourseImport_TextSummaryReportsQuiz(t *testing.T) {
 	}
 }
 
+// Only a missing file means "no assignment". An unreadable one must fail
+// rather than silently drop the assignment from the payload.
+func TestReadCompiledModule_UnreadableQuizFileIsError(t *testing.T) {
+	dir := writeQuizModuleDir(t, nil, false)
+	if err := os.Mkdir(filepath.Join(dir, "assignment.quiz.json"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readCompiledModule(dir)
+	if err == nil || !strings.Contains(err.Error(), "assignment.quiz.json") {
+		t.Fatalf("a directory in the quiz file's place must fail loudly, got %v", err)
+	}
+}
+
+// A zero-byte assignment.md has always meant "no assignment" on the Markdown
+// path; it must not trip the both-files error beside a real quiz file.
+func TestReadCompiledModule_EmptyMarkdownBesideQuizIsNotAConflict(t *testing.T) {
+	dir := writeQuizModuleDir(t, prettyQuiz(t), false)
+	if err := os.WriteFile(filepath.Join(dir, "assignment.md"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readCompiledModule(dir)
+	if err != nil {
+		t.Fatalf("readCompiledModule: %v", err)
+	}
+	if data.Assignment == nil || data.Assignment.RawJSON == nil {
+		t.Fatal("the quiz file must win over an empty assignment.md")
+	}
+}
+
+// --create with a quiz file and no module would create the module and then
+// refuse the update for lack of a title, leaving an empty module behind. The
+// condition is known before any request, so the refusal comes first.
+func TestImportModule_CreateWithQuizAndNoModuleRefusesBeforeCreate(t *testing.T) {
+	for _, dry := range []bool{true, false} {
+		stub := &assignmentStub{listBodies: []string{`{"data":[]}`}}
+		c, _ := stub.serve(t)
+		_, err := importModule(ImportParams{
+			Ctx: context.Background(), Client: c, Config: &config.Config{},
+			ModuleDir: writeQuizModuleDir(t, prettyQuiz(t), false), CourseID: "course-1",
+			CreateMode: true, DryRun: dry, Quiet: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "title required") || strings.Contains(err.Error(), "failed to create module") {
+			t.Fatalf("dry=%v: err = %v, want the title-required refusal before any create", dry, err)
+		}
+		if len(stub.posts) != 0 {
+			t.Errorf("dry=%v: no update may be sent", dry)
+		}
+	}
+}
+
 func TestImportResult_AssignmentQuizIsAdditive(t *testing.T) {
 	b, _ := json.Marshal(ImportResult{Changes: map[string]interface{}{}})
 	if strings.Contains(string(b), "assignment_quiz") {

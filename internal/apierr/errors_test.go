@@ -82,6 +82,14 @@ func TestKind_UnwrapsThroughErrorfWrapping(t *testing.T) {
 			&ReportedError{Err: fmt.Errorf("import-assignment: %w", &VerifyError{Path: "assignment.content_json", Message: "mismatch"})},
 			KindVerify,
 		},
+		{
+			// A failed read-back after an accepted write is verify, not the
+			// cause's kind: the module was modified, and "unreachable" would
+			// tell a script the request never happened.
+			"verify wrapping a transport failure stays verify",
+			&VerifyError{Path: "assignment.content_json", Message: "read-back failed", Err: &NetworkError{Message: "connection reset"}},
+			KindVerify,
+		},
 	}
 
 	for _, tc := range cases {

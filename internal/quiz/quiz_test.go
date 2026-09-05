@@ -44,8 +44,9 @@ func mustEnv(t *testing.T, raw string) map[string]interface{} {
 	return env
 }
 
-// readSidecar parses a <case>.issues file: first line "source: app" or
-// "source: cli-additional", then one expected issue code per line.
+// readSidecar parses a <case>.issues file: first line "source: app" (both
+// apps), "source: app-v2" (andamio-app-v2 only) or "source: cli-additional",
+// then one expected issue code per line.
 func readSidecar(t *testing.T, path string) (source string, expected []string) {
 	t.Helper()
 	f, err := os.Open(path)
@@ -63,10 +64,10 @@ func readSidecar(t *testing.T, path string) (source string, expected []string) {
 		if first {
 			first = false
 			if !strings.HasPrefix(line, "source: ") {
-				t.Fatalf("%s: first line must be 'source: <app|cli-additional>', got %q", path, line)
+				t.Fatalf("%s: first line must be 'source: <app|app-v2|cli-additional>', got %q", path, line)
 			}
 			source = strings.TrimPrefix(line, "source: ")
-			if source != "app" && source != "cli-additional" {
+			if source != "app" && source != "app-v2" && source != "cli-additional" {
 				t.Fatalf("%s: unknown source %q", path, source)
 			}
 			continue
@@ -159,9 +160,13 @@ func TestInvalidFixtures(t *testing.T) {
 					t.Errorf("issue %s has empty String()", is.Code)
 				}
 				covered[is.Code] = true
-				isAdditional := is.Code == CodeMalformedPrompt || is.Code == CodeMalformedHelp || is.Code == CodeMalformedIntro
-				if source == "app" && isAdditional {
-					t.Errorf("source: app fixture yields CLI-additional code %s", is.Code)
+				isAppV2 := is.Code == CodeEmptyPrompt || is.Code == CodeEmptyOptionLabel || is.Code == CodeEmptyOptionValue
+				isAdditional := is.Code == CodeMalformedHelp || is.Code == CodeMalformedIntro
+				if source == "app" && (isAppV2 || isAdditional) {
+					t.Errorf("source: app fixture yields a code the FCB app does not emit: %s", is.Code)
+				}
+				if source == "app-v2" && isAdditional {
+					t.Errorf("source: app-v2 fixture yields CLI-additional code %s", is.Code)
 				}
 			}
 			// Never let Summarize panic on malformed input.
