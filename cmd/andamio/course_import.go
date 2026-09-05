@@ -22,6 +22,7 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
+	"github.com/Andamio-Platform/andamio-cli/internal/quiz"
 	"github.com/adrg/frontmatter"
 	"github.com/spf13/cobra"
 	"github.com/yuin/goldmark"
@@ -57,7 +58,9 @@ The directory should contain:
   - outline.md (with YAML frontmatter: title, code)
   - lesson-N.md files (one per SLT)
   - introduction.md (optional)
-  - assignment.md (optional)
+  - assignment.md (optional) — or assignment.quiz.json for a quiz assignment,
+    never both. A quiz file is validated as a v1 quiz envelope and sent
+    verbatim; the module's existing assignment title is preserved.
 
 Examples:
   andamio course import ./compiled/my-course/101 --course-id abc123
@@ -76,14 +79,17 @@ Requires user authentication via 'andamio user login'.`,
 
 // ImportData holds the parsed module content for import
 type ImportData struct {
-	Title         string
-	ModuleCode    string
-	SLTs          []string
-	Lessons       []LessonImport
-	Introduction  *ContentSection
-	Assignment    *ContentSection
-	ImageWarnings []string
-	ImageManifest map[string]string // filename → original URL from .image-manifest.json
+	Title        string
+	ModuleCode   string
+	SLTs         []string
+	Lessons      []LessonImport
+	Introduction *ContentSection
+	Assignment   *ContentSection
+	// AssignmentQuiz is set when the assignment came from assignment.quiz.json:
+	// the validated envelope's digest for the dry-run summary and the result.
+	AssignmentQuiz *quiz.Summary
+	ImageWarnings  []string
+	ImageManifest  map[string]string // filename → original URL from .image-manifest.json
 }
 
 // LessonImport holds a single lesson's data
@@ -93,10 +99,17 @@ type LessonImport struct {
 	TiptapJSON map[string]interface{}
 }
 
-// ContentSection holds parsed content with title extracted from H1
+// ContentSection holds parsed content with title extracted from H1.
+//
+// Exactly one of TiptapJSON and RawJSON is set. TiptapJSON is the converted
+// Markdown; RawJSON is the bytes of assignment.quiz.json, sent as
+// content_json without re-encoding so the envelope reaches the gateway as
+// the author wrote it (byte-for-byte modulo encoding/json's compaction —
+// equality with the stored value is structural, see KTD3 in the #165 plan).
 type ContentSection struct {
 	Title      string
 	TiptapJSON map[string]interface{}
+	RawJSON    json.RawMessage
 }
 
 // OutlineFrontmatter is the YAML frontmatter structure in outline.md
@@ -107,16 +120,19 @@ type OutlineFrontmatter struct {
 
 // ImportResult holds the result of an import operation for structured output
 type ImportResult struct {
-	CourseID       string                 `json:"course_id"`
-	ModuleCode     string                 `json:"module_code"`
-	Title          string                 `json:"title"`
-	ModuleStatus   string                 `json:"module_status"`
-	SLTsLocked     bool                   `json:"slts_locked"`
-	SLTCount       int                    `json:"slt_count"`
-	SltHash        string                 `json:"slt_hash,omitempty"`
-	LessonCount    int                    `json:"lesson_count"`
-	HasIntro       bool                   `json:"has_introduction"`
-	HasAssignment  bool                   `json:"has_assignment"`
+	CourseID      string `json:"course_id"`
+	ModuleCode    string `json:"module_code"`
+	Title         string `json:"title"`
+	ModuleStatus  string `json:"module_status"`
+	SLTsLocked    bool   `json:"slts_locked"`
+	SLTCount      int    `json:"slt_count"`
+	SltHash       string `json:"slt_hash,omitempty"`
+	LessonCount   int    `json:"lesson_count"`
+	HasIntro      bool   `json:"has_introduction"`
+	HasAssignment bool   `json:"has_assignment"`
+	// AssignmentQuiz is present only when the assignment came from
+	// assignment.quiz.json (additive; Markdown assignments omit it).
+	AssignmentQuiz *quiz.Summary          `json:"assignment_quiz,omitempty"`
 	ManifestUsed   int                    `json:"manifest_images"`
 	ImagesUploaded int                    `json:"images_uploaded,omitempty"`
 	FailedImages   []string               `json:"failed_images,omitempty"`
@@ -208,16 +224,17 @@ func importModule(p ImportParams) (*ImportResult, error) {
 					earlyHash = cardano.ComputeSltHash(data.SLTs)
 				}
 				return &ImportResult{
-					CourseID:      p.CourseID,
-					ModuleCode:    data.ModuleCode,
-					Title:         data.Title,
-					DryRun:        true,
-					SLTCount:      len(data.SLTs),
-					SltHash:       earlyHash,
-					LessonCount:   len(data.Lessons),
-					HasIntro:      data.Introduction != nil,
-					HasAssignment: data.Assignment != nil,
-					Changes:       map[string]interface{}{"would_create_module": true},
+					CourseID:       p.CourseID,
+					ModuleCode:     data.ModuleCode,
+					Title:          data.Title,
+					DryRun:         true,
+					SLTCount:       len(data.SLTs),
+					SltHash:        earlyHash,
+					LessonCount:    len(data.Lessons),
+					HasIntro:       data.Introduction != nil,
+					HasAssignment:  data.Assignment != nil,
+					AssignmentQuiz: data.AssignmentQuiz,
+					Changes:        map[string]interface{}{"would_create_module": true},
 				}, nil
 			}
 			if !p.Quiet {
@@ -283,6 +300,7 @@ func importModule(p ImportParams) (*ImportResult, error) {
 		LessonCount:    len(data.Lessons),
 		HasIntro:       data.Introduction != nil,
 		HasAssignment:  data.Assignment != nil,
+		AssignmentQuiz: data.AssignmentQuiz,
 		ManifestUsed:   len(data.ImageManifest),
 		ImagesUploaded: imagesUploaded,
 		FailedImages:   data.ImageWarnings,
@@ -393,7 +411,9 @@ func runCourseImport(cmd *cobra.Command, args []string) error {
 	if r.HasIntro {
 		fmt.Printf("    Introduction:  yes\n")
 	}
-	if r.HasAssignment {
+	if r.AssignmentQuiz != nil {
+		fmt.Printf("    Assignment:    quiz (%d questions, threshold %d)\n", r.AssignmentQuiz.QuestionCount, r.AssignmentQuiz.PassThreshold)
+	} else if r.HasAssignment {
 		fmt.Printf("    Assignment:    yes\n")
 	}
 
@@ -572,8 +592,18 @@ func readCompiledModule(dir string) (*ImportData, error) {
 		data.Introduction = &ContentSection{Title: title, TiptapJSON: tiptap}
 	}
 
-	// Read assignment.md if exists — H1 → title, rest → content_json
+	// The assignment is either assignment.md (Markdown → Tiptap, H1 → title)
+	// or assignment.quiz.json (a quiz envelope sent verbatim). Both present is
+	// an error here, before any request: the ambiguity is never resolved by
+	// picking one (#165).
 	assignPath := filepath.Join(dir, "assignment.md")
+	quizPath := filepath.Join(dir, "assignment.quiz.json")
+	_, mdErr := os.Stat(assignPath)
+	_, quizErr := os.Stat(quizPath)
+	if mdErr == nil && quizErr == nil {
+		return nil, fmt.Errorf("both assignment.md and assignment.quiz.json exist in %s — a module has one assignment; remove the file that is not the assignment you mean to publish", dir)
+	}
+
 	if assignBytes, err := os.ReadFile(assignPath); err == nil && len(assignBytes) > 0 {
 		title, body := extractH1Title(string(assignBytes))
 		if title == "" && output.GetFormat() != output.FormatJSON {
@@ -586,7 +616,47 @@ func readCompiledModule(dir string) (*ImportData, error) {
 		data.Assignment = &ContentSection{Title: title, TiptapJSON: tiptap}
 	}
 
+	if quizBytes, err := os.ReadFile(quizPath); err == nil {
+		_, summary, err := parseQuizFile(quizBytes, "assignment.quiz.json")
+		if err != nil {
+			return nil, err
+		}
+		// Title stays empty on purpose: the update merge then keeps the
+		// module's existing assignment title, which is what export relies on.
+		data.Assignment = &ContentSection{RawJSON: json.RawMessage(quizBytes)}
+		data.AssignmentQuiz = &summary
+	}
+
 	return data, nil
+}
+
+// parseQuizFile recognizes and validates a quiz envelope read from name,
+// returning the decoded envelope and its summary. Every failure is an error
+// that names the file: a Tiptap doc points the author at the Markdown path,
+// any other non-quiz type is refused, and an invalid quiz lists every
+// violated rule on its own line. There is no bypass (R16).
+func parseQuizFile(raw []byte, name string) (map[string]interface{}, quiz.Summary, error) {
+	env, kind, issues, err := quiz.Parse(raw)
+	if err != nil {
+		return nil, quiz.Summary{}, fmt.Errorf("%s: %w", name, err)
+	}
+	switch kind {
+	case quiz.Doc:
+		return nil, quiz.Summary{}, fmt.Errorf("%s is a Tiptap document, not a quiz. Tiptap assignments are authored as assignment.md in a module directory and published with 'andamio course import <dir>'", name)
+	case quiz.Quiz:
+		// validated below
+	default:
+		return nil, quiz.Summary{}, fmt.Errorf("%s is not a quiz envelope: expected an object with \"type\": \"quiz\", \"version\": 1 and a \"questions\" array", name)
+	}
+	if len(issues) > 0 {
+		lines := make([]string, 0, len(issues)+1)
+		lines = append(lines, fmt.Sprintf("%s is not a valid quiz (%d issue(s)):", name, len(issues)))
+		for _, is := range issues {
+			lines = append(lines, "  "+is.String())
+		}
+		return nil, quiz.Summary{}, errors.New(strings.Join(lines, "\n"))
+	}
+	return env, quiz.Summarize(env), nil
 }
 
 // loadImageManifest reads .image-manifest.json from the assets directory.
@@ -1154,6 +1224,11 @@ type ExistingModuleData struct {
 	Lessons      map[int]map[string]interface{} // slt_index → lesson fields
 	Introduction map[string]interface{}
 	Assignment   map[string]interface{}
+	// Warning is the gateway's meta.warning when the list came back degraded
+	// (206: one backend unavailable, modules may carry chain-only data with no
+	// content). Callers that would otherwise infer "no assignment" from a
+	// missing key must check this first.
+	Warning string
 }
 
 // fetchExistingModule gets the current module state from the teacher endpoint.
@@ -1170,6 +1245,7 @@ func fetchExistingModule(ctx context.Context, c *client.Client, courseID, module
 	if !ok {
 		return nil, fmt.Errorf("unexpected response format")
 	}
+	warning := metaWarning(resp)
 
 	for _, m := range modules {
 		mod, ok := m.(map[string]interface{})
@@ -1187,6 +1263,7 @@ func fetchExistingModule(ctx context.Context, c *client.Client, courseID, module
 
 		existing := &ExistingModuleData{
 			Lessons: make(map[int]map[string]interface{}),
+			Warning: warning,
 		}
 
 		if status, ok := content["module_status"].(string); ok {
@@ -1351,10 +1428,16 @@ func updateModuleContent(ctx context.Context, c *client.Client, courseID string,
 		payload["introduction"] = intro
 	}
 
-	// Build assignment — H1 title from file, preserve existing metadata
+	// Build assignment — H1 title from file, preserve existing metadata. A quiz
+	// assignment carries its file bytes as content_json (RawJSON) instead of a
+	// converted Tiptap document.
 	if data.Assignment != nil {
+		var contentJSON interface{} = data.Assignment.TiptapJSON
+		if data.Assignment.RawJSON != nil {
+			contentJSON = data.Assignment.RawJSON
+		}
 		assign := map[string]interface{}{
-			"content_json": data.Assignment.TiptapJSON,
+			"content_json": contentJSON,
 		}
 		if data.Assignment.Title != "" {
 			assign["title"] = data.Assignment.Title
