@@ -174,6 +174,7 @@ andamio course modules "$COURSE_ID" --output json
 | `course export <course-id> <module>` | jwt | Export module to local files |
 | `course import <course-id> <module>` | jwt | Import local files to update module |
 | `course import-all <course-id>` | jwt | Import all modules from compiled directory |
+| `course import-assignment <course-id> <module-code> <file.json>` | jwt | Publish a quiz envelope verbatim as the module's assignment `content_json`; validates first, sends only `assignment`, verifies by read-back (`kind: verify` on mismatch). `--dry-run`, `--show-payload`, `--title`, `--description` |
 
 ### teacher — Teacher operations
 

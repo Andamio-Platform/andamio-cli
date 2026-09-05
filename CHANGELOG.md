@@ -6,6 +6,22 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Added
+
+- **`andamio course import-assignment <course-id> <module-code> <file.json>`** — publishes a quiz assignment (a `{"type": "quiz", "version": 1, …}` envelope, the format the Andamio app grades client-side) as the module's `assignment.content_json`, verbatim, sending only the `assignment` key. Until now this was a hand-built `curl` against the module-update endpoint with the JWT copied out of `~/.andamio/config.json` — the gap #62 closed for module creation, reopened for quizzes.
+
+  The envelope is validated before any request with the same rules the app enforces (`src/lib/quiz/quiz-envelope.ts`), every violated rule is listed, and there is no bypass flag. The existing assignment's title, description, image and video URLs are preserved unless `--title` / `--description` override them. After the update the module is re-fetched and the stored value deep-compared to the file, so the command proves the opaque-`jsonb` assumption on the live gateway rather than trusting it. `--dry-run` prints the summary (question count, pass threshold, question ids, title source) and sends nothing; `--show-payload` adds the payload; `--output json` emits `{course_id, module_code, module_status, assignment: {title, title_source, question_count, pass_threshold, question_ids}, verified}`.
+
+  Works on published modules too: db-api's aggregate update soft-skips only SLTs on a non-DRAFT module and edits assignments in any status. That statement rests on the gateway and db-api source as of this change; the live preprod check on an `ON_CHAIN` module had not been run when it was written. (#165)
+
+- **`kind: verify` in the `--output json` error envelope** — a write the gateway accepted but whose read-back did not confirm the stored value: it differs from what was sent, or the read-back was degraded (206). It shares exit 1 with the other kinds that are already distinguishable by name. The distinction matters because the alternatives both mislead: success would hide that the stored value is wrong, `server` would hide that the module *was* modified. Emitted by `course import-assignment`. Additive — no existing kind changes. (#165)
+
+- **`assignment.quiz.json` in the module directory format.** `course import <dir>` sends it verbatim as the assignment's `content_json` after validating it as a v1 quiz, preserving the existing title; a directory holding both `assignment.md` and `assignment.quiz.json` is refused before any request. `--dry-run` reports `Assignment: quiz (N questions, threshold M)` and `--output json` gains an additive `assignment_quiz` summary object. (#165)
+
+### Fixed
+
+- **`course export` no longer destroys a quiz assignment.** It ran the Markdown converter over the envelope, matched no node type, and wrote an empty `assignment.md` — which a later `course import` of that directory published as the assignment, replacing the quiz with an empty text document. A non-`doc` assignment is now written verbatim to `assignment.quiz.json` and no `assignment.md` is produced, so export followed by import of a quiz module is a server-side no-op. Re-exporting into the same directory with `--force` removes the stale counterpart file. (#165, #59)
+
 ## [1.0.0] - 2026-08-27
 
 **Andamio CLI 1.0 is a developer tool for the people who author work and assess it: course Owners and Teachers, and project Managers.**
