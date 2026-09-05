@@ -37,6 +37,14 @@ var (
 	sltLineRe         = regexp.MustCompile(`^\d+[\.\)]\s+(.+)$`)
 	lessonNumRe       = regexp.MustCompile(`lesson-(\d+)\.md`)
 	errModuleNotFound = errors.New("module not found")
+	// errDegradedRead is returned by fetchExistingModule when the module was
+	// not in the list AND the gateway flagged the list as degraded (206 with
+	// meta.warning). The merged list carries `content` only from db-api, so
+	// on a db-api outage every module comes back chain-only with no content
+	// and looks absent. That is not "not found": a write would null the
+	// module's metadata and --create would try to duplicate it. Callers must
+	// refuse to send. Deliberately does NOT wrap errModuleNotFound.
+	errDegradedRead = errors.New("module list was degraded")
 )
 
 func init() {
@@ -213,6 +221,9 @@ func importModule(p ImportParams) (*ImportResult, error) {
 	// Fetch current module state to determine SLT lock status and preserve metadata
 	existing, err := fetchExistingModule(p.Ctx, p.Client, p.CourseID, data.ModuleCode)
 	if err != nil {
+		if errors.Is(err, errDegradedRead) {
+			return nil, fmt.Errorf("%w; nothing was sent — retry when the gateway is healthy", err)
+		}
 		// Only trigger creation for "not found" errors, not auth/network failures
 		if p.CreateMode && errors.Is(err, errModuleNotFound) {
 			if p.DryRun {
@@ -596,15 +607,13 @@ func readCompiledModule(dir string) (*ImportData, error) {
 	// or assignment.quiz.json (a quiz envelope sent verbatim). Both present is
 	// an error here, before any request: the ambiguity is never resolved by
 	// picking one (#165).
-	assignPath := filepath.Join(dir, "assignment.md")
-	quizPath := filepath.Join(dir, "assignment.quiz.json")
-	_, mdErr := os.Stat(assignPath)
-	_, quizErr := os.Stat(quizPath)
+	assignBytes, mdErr := os.ReadFile(filepath.Join(dir, "assignment.md"))
+	quizBytes, quizErr := os.ReadFile(filepath.Join(dir, "assignment.quiz.json"))
 	if mdErr == nil && quizErr == nil {
 		return nil, fmt.Errorf("both assignment.md and assignment.quiz.json exist in %s — a module has one assignment; remove the file that is not the assignment you mean to publish", dir)
 	}
 
-	if assignBytes, err := os.ReadFile(assignPath); err == nil && len(assignBytes) > 0 {
+	if mdErr == nil && len(assignBytes) > 0 {
 		title, body := extractH1Title(string(assignBytes))
 		if title == "" && output.GetFormat() != output.FormatJSON {
 			fmt.Printf("Warning: assignment.md has no # title heading\n")
@@ -616,7 +625,7 @@ func readCompiledModule(dir string) (*ImportData, error) {
 		data.Assignment = &ContentSection{Title: title, TiptapJSON: tiptap}
 	}
 
-	if quizBytes, err := os.ReadFile(quizPath); err == nil {
+	if quizErr == nil {
 		_, summary, err := parseQuizFile(quizBytes, "assignment.quiz.json")
 		if err != nil {
 			return nil, err
@@ -1224,11 +1233,6 @@ type ExistingModuleData struct {
 	Lessons      map[int]map[string]interface{} // slt_index → lesson fields
 	Introduction map[string]interface{}
 	Assignment   map[string]interface{}
-	// Warning is the gateway's meta.warning when the list came back degraded
-	// (206: one backend unavailable, modules may carry chain-only data with no
-	// content). Callers that would otherwise infer "no assignment" from a
-	// missing key must check this first.
-	Warning string
 }
 
 // fetchExistingModule gets the current module state from the teacher endpoint.
@@ -1245,7 +1249,6 @@ func fetchExistingModule(ctx context.Context, c *client.Client, courseID, module
 	if !ok {
 		return nil, fmt.Errorf("unexpected response format")
 	}
-	warning := metaWarning(resp)
 
 	for _, m := range modules {
 		mod, ok := m.(map[string]interface{})
@@ -1263,7 +1266,6 @@ func fetchExistingModule(ctx context.Context, c *client.Client, courseID, module
 
 		existing := &ExistingModuleData{
 			Lessons: make(map[int]map[string]interface{}),
-			Warning: warning,
 		}
 
 		if status, ok := content["module_status"].(string); ok {
@@ -1297,6 +1299,13 @@ func fetchExistingModule(ctx context.Context, c *client.Client, courseID, module
 		return existing, nil
 	}
 
+	// A module with content comes from db-api, so a found module is complete
+	// even when Andamioscan was down. Not found on a degraded list is the
+	// opposite case: db-api may be the missing backend and the module may
+	// exist with content the list could not show.
+	if warning := metaWarning(resp); warning != "" {
+		return nil, fmt.Errorf("%w: %s (module '%s' in course '%s' may exist but was not returned)", errDegradedRead, warning, moduleCode, courseID)
+	}
 	return nil, fmt.Errorf("%w: '%s' in course '%s'", errModuleNotFound, moduleCode, courseID)
 }
 
@@ -1445,6 +1454,12 @@ func updateModuleContent(ctx context.Context, c *client.Client, courseID string,
 			if v, ok := existing.Assignment["title"].(string); ok && v != "" {
 				assign["title"] = v
 			}
+		}
+		// A quiz file carries no title. db-api stores Title as a plain
+		// string, so omitting it here would silently publish an untitled
+		// assignment; refuse, as import-assignment does (R5).
+		if _, ok := assign["title"]; !ok && data.Assignment.RawJSON != nil {
+			return nil, fmt.Errorf("title required for a module with no existing assignment: assignment.quiz.json carries no title. Publish it first with 'andamio course import-assignment %s %s assignment.quiz.json --title <title>', then import the directory", courseID, data.ModuleCode)
 		}
 		if existing.Assignment != nil {
 			for _, field := range []string{"description", "image_url", "video_url"} {

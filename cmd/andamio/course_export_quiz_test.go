@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -77,15 +78,6 @@ func fileExists(t *testing.T, path string) bool {
 	return false
 }
 
-func contains(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
-}
-
 // A non-doc assignment is preserved verbatim on disk as assignment.quiz.json;
 // converting it to Markdown matched no node type and produced an empty
 // assignment.md that a later import would publish as the assignment (#165).
@@ -105,10 +97,10 @@ func TestWriteCompiledModule_QuizAssignmentWritesQuizJSON(t *testing.T) {
 	if fileExists(t, filepath.Join(dir, "assignment.md")) {
 		t.Error("assignment.md must not be written for a quiz assignment")
 	}
-	if !contains(result.Files, "assignment.quiz.json") {
+	if !slices.Contains(result.Files, "assignment.quiz.json") {
 		t.Errorf("Files = %v, want assignment.quiz.json listed", result.Files)
 	}
-	if contains(result.Files, "assignment.md") {
+	if slices.Contains(result.Files, "assignment.md") {
 		t.Errorf("Files = %v, must not list assignment.md", result.Files)
 	}
 
@@ -151,7 +143,7 @@ func TestWriteCompiledModule_DocAssignmentUnchanged(t *testing.T) {
 	if want := "# Essay\n\nWrite an essay."; strings.TrimSpace(string(md)) != want {
 		t.Errorf("assignment.md = %q, want H1 title then body", string(md))
 	}
-	if !contains(result.Files, "assignment.md") {
+	if !slices.Contains(result.Files, "assignment.md") {
 		t.Errorf("Files = %v, want assignment.md listed", result.Files)
 	}
 }

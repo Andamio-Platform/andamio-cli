@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -31,7 +32,7 @@ var courseImportAssignmentCmd = &cobra.Command{
 
 The file is a quiz envelope — {"type": "quiz", "version": 1, "passThreshold": N,
 "questions": [...]} — exactly as the Andamio app stores and grades it. It is
-validated before any request with the same rules the app enforces: type and
+validated before any request with the same rules the FCB Fan Campus app enforces: type and
 version, a non-empty questions array, unique question ids, at least two options
 per question with unique values, a correctValue matching one option, a
 passThreshold in 1..len(questions), and an intro that is a Tiptap doc if present.
@@ -139,11 +140,10 @@ func runCourseImportAssignment(cmd *cobra.Command, args []string) error {
 	if len(args) == 3 {
 		opts.CourseID, opts.ModuleCode, opts.FilePath = args[0], args[1], args[2]
 	} else {
-		// import-assignment <module-code> <file.json> --course "Name"
+		// import-assignment <module-code> <file.json> --course "Name".
+		// resolveCourseID owns the "no course given" error, as it does for
+		// course export's two-arg form.
 		opts.ModuleCode, opts.FilePath = args[0], args[1]
-		if name, _ := cmd.Flags().GetString("course"); name == "" {
-			return fmt.Errorf("course required: pass <course-id> as the first argument or --course <name>. Run 'andamio teacher courses --output json' to list courses you teach")
-		}
 		opts.CourseID, err = resolveCourseID(ctx, c, "", cmd)
 		if err != nil {
 			return err
@@ -189,13 +189,16 @@ func runImportAssignment(ctx context.Context, c *client.Client, opts importAssig
 	}
 	existing, err := fetchExistingModule(ctx, c, opts.CourseID, opts.ModuleCode)
 	if err != nil {
+		switch {
+		case errors.Is(err, errDegradedRead):
+			// db-api may be the missing backend: the module may exist with an
+			// assignment the list could not show. Inferring "no existing
+			// assignment" would null its metadata on the write (R7a).
+			return nil, fmt.Errorf("module state could not be read reliably: %w; not sending. Retry when the gateway is healthy", err)
+		case errors.Is(err, errModuleNotFound):
+			return nil, &apierr.NotFoundError{Message: err.Error() + ". Run 'andamio course modules " + opts.CourseID + " --output json' to list the course's modules"}
+		}
 		return nil, err
-	}
-	// A degraded list (206) may carry chain-only modules with no assignment.
-	// Inferring "no existing assignment" from that would null the metadata on
-	// the write; refusing is the only safe move (R7a).
-	if existing.Warning != "" {
-		return nil, fmt.Errorf("module state could not be read reliably (%s); not sending. Retry when the gateway is healthy", existing.Warning)
 	}
 
 	title, titleSource := opts.Title, "flag"
@@ -263,13 +266,13 @@ func runImportAssignment(ctx context.Context, c *client.Client, opts importAssig
 	}
 	stored, err := fetchExistingModule(ctx, c, opts.CourseID, opts.ModuleCode)
 	if err != nil {
-		return nil, fmt.Errorf("update was accepted, but verification could not run: %w", err)
-	}
-	if stored.Warning != "" {
-		return nil, &apierr.VerifyError{
-			Path:    "assignment.content_json",
-			Message: fmt.Sprintf("the read-back was degraded (%s); the stored value could not be confirmed", stored.Warning),
+		if errors.Is(err, errDegradedRead) {
+			return nil, &apierr.VerifyError{
+				Path:    "assignment.content_json",
+				Message: fmt.Sprintf("the read-back was degraded (%v); the stored value could not be confirmed", err),
+			}
 		}
+		return nil, fmt.Errorf("update was accepted, but verification could not run: %w", err)
 	}
 	if err := verifyStoredAssignment(env, input, stored.Assignment); err != nil {
 		return nil, err

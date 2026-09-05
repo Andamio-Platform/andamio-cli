@@ -102,6 +102,27 @@ func listBody(t *testing.T, assignment map[string]interface{}, warning string) s
 	return string(b)
 }
 
+// chainOnlyListBody is the shape the merged endpoint really produces when
+// db-api is down: a 206 with meta.warning and every module chain-only —
+// slt_hash, course_id, source, and no `content` key at all
+// (MergedCourseModuleItem.Content is omitempty and only db-api fills it).
+func chainOnlyListBody(t *testing.T, warning string) string {
+	t.Helper()
+	env := map[string]interface{}{
+		"data": []interface{}{map[string]interface{}{
+			"slt_hash":  "c28e2bad6ef905179a5d81eb1ebdb9198db87f067fe867ed3c34b566d9c5f6c5",
+			"course_id": "course-1",
+			"source":    "chain_only",
+		}},
+		"meta": map[string]interface{}{"warning": warning},
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func docAssignment(title string) map[string]interface{} {
 	return map[string]interface{}{
 		"title":        title,
@@ -310,7 +331,7 @@ func TestImportAssignment_ReadBackMetadataMismatchIsVerifyError(t *testing.T) {
 
 func TestImportAssignment_DegradedPreFetchIsErrorNotTitleError(t *testing.T) {
 	stub := &assignmentStub{
-		listBodies: []string{listBody(t, nil, "DB API unavailable, showing on-chain data only")},
+		listBodies: []string{chainOnlyListBody(t, "DB API unavailable, showing on-chain data only")},
 		listStatus: []int{http.StatusPartialContent},
 	}
 	c, _ := stub.serve(t)
@@ -320,14 +341,72 @@ func TestImportAssignment_DegradedPreFetchIsErrorNotTitleError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "DB API unavailable") || strings.Contains(err.Error(), "title required") {
 		t.Fatalf("err = %v, want an error naming the warning, not the title error", err)
 	}
+	if apierr.Kind(err) == apierr.KindNotFound {
+		t.Errorf("a degraded read must not classify as not_found: %v", err)
+	}
 	if len(stub.posts) != 0 {
 		t.Error("no POST may follow a degraded pre-fetch")
 	}
 }
 
+// An Andamioscan outage also produces a 206 with meta.warning, but a module
+// that came back with content came from db-api and is complete: publishing
+// must proceed and verify normally.
+func TestImportAssignment_AndamioscanOnlyWarningStillPublishes(t *testing.T) {
+	quiz := quizEnvelope()
+	stub := &assignmentStub{
+		listBodies: []string{
+			listBody(t, docAssignment("Quiz"), "Andamioscan unavailable, showing database data only"),
+			listBody(t, map[string]interface{}{"title": "Quiz", "content_json": quiz}, "Andamioscan unavailable, showing database data only"),
+		},
+		listStatus: []int{http.StatusPartialContent, http.StatusPartialContent},
+	}
+	c, _ := stub.serve(t)
+	env, err := runImportAssignment(context.Background(), c, importAssignmentOptions{
+		CourseID: "course-1", ModuleCode: "101", FilePath: writeQuizFile(t, quiz),
+	})
+	if err != nil {
+		t.Fatalf("a found module with content is complete regardless of the warning: %v", err)
+	}
+	if !env.Verified || len(stub.posts) != 1 {
+		t.Errorf("verified=%v posts=%d, want a verified publish", env.Verified, len(stub.posts))
+	}
+}
+
+func TestImportAssignment_ModuleNotInListIsNotFound(t *testing.T) {
+	stub := &assignmentStub{listBodies: []string{`{"data":[{"content":{"course_module_code":"999","module_status":"DRAFT"}}]}`}}
+	c, _ := stub.serve(t)
+	_, err := runImportAssignment(context.Background(), c, importAssignmentOptions{
+		CourseID: "course-1", ModuleCode: "101", FilePath: writeQuizFile(t, quizEnvelope()),
+	})
+	if apierr.Kind(err) != apierr.KindNotFound {
+		t.Fatalf("kind = %q, want not_found; err = %v", apierr.Kind(err), err)
+	}
+	if len(stub.posts) != 0 {
+		t.Error("no POST for an unknown module")
+	}
+}
+
+func TestImportAssignment_ReadBackOmittingModuleSaysAccepted(t *testing.T) {
+	stub := &assignmentStub{listBodies: []string{
+		listBody(t, docAssignment("Quiz"), ""),
+		`{"data":[{"content":{"course_module_code":"999","module_status":"DRAFT"}}]}`,
+	}}
+	c, _ := stub.serve(t)
+	_, err := runImportAssignment(context.Background(), c, importAssignmentOptions{
+		CourseID: "course-1", ModuleCode: "101", FilePath: writeQuizFile(t, quizEnvelope()),
+	})
+	if err == nil || !strings.Contains(err.Error(), "accepted") {
+		t.Fatalf("err = %v, want a message saying the update was accepted", err)
+	}
+	if apierr.Kind(err) == apierr.KindVerify {
+		t.Errorf("a healthy list that omits the module is not a degraded read: %v", err)
+	}
+}
+
 func TestImportAssignment_DegradedReadBackIsVerifyErrorNamingWarning(t *testing.T) {
 	stub := &assignmentStub{
-		listBodies: []string{listBody(t, docAssignment("Quiz"), ""), listBody(t, nil, "DB API unavailable, showing on-chain data only")},
+		listBodies: []string{listBody(t, docAssignment("Quiz"), ""), chainOnlyListBody(t, "DB API unavailable, showing on-chain data only")},
 		listStatus: []int{0, http.StatusPartialContent},
 	}
 	c, _ := stub.serve(t)

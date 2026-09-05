@@ -373,7 +373,7 @@ andamio course import-assignment <course-id> 101 quiz.json --output json
 #  "verified":true}
 ```
 
-The command validates the envelope with the same rules the app enforces (`type`, `version: 1`, non-empty `questions`, unique ids, at least two options with unique values, `correctValue` matching one option, `passThreshold` in `1..len(questions)`, an `intro` that is a Tiptap doc if present). Every violated rule is listed; there is no bypass flag. Only the `assignment` key is sent, so lessons, SLTs, and the introduction are untouched. Assignments are editable in any module status — only SLTs lock after DRAFT. After the update the module is re-fetched and the stored `content_json` is deep-compared to the file; a mismatch or a degraded read-back exits 1 with `kind: verify`, which means the update was applied but should be inspected.
+The command validates the envelope with the same rules the FCB Fan Campus app (fcb-fan-engagement-app) enforces (`type`, `version: 1`, non-empty `questions`, unique ids, at least two options with unique values, `correctValue` matching one option, `passThreshold` in `1..len(questions)`, an `intro` that is a Tiptap doc if present). Every violated rule is listed; there is no bypass flag. Only the `assignment` key is sent, so lessons, SLTs, and the introduction are untouched. Assignments are editable in any module status — only SLTs lock after DRAFT. After the update the module is re-fetched and the stored `content_json` is deep-compared to the file; a mismatch or a degraded read-back exits 1 with `kind: verify`, which means the update was applied but should be inspected.
 
 ### Image Handling
 

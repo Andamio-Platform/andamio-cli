@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Andamio-Platform/andamio-cli/internal/config"
 )
 
 const quizOutlineMD = "---\ntitle: Module 101\ncode: \"101\"\n---\n\n## SLTs\n\n1. Do a thing\n"
@@ -227,6 +230,60 @@ func TestUpdateModuleContent_MarkdownAssignmentUnchanged(t *testing.T) {
 	cj := assign["content_json"].(map[string]interface{})
 	if cj["type"] != "doc" {
 		t.Errorf("content_json type = %v, want doc", cj["type"])
+	}
+}
+
+// A quiz file carries no title. On a module with no assignment the update
+// would store an empty title (db-api's Title is a plain string), so the
+// import refuses the way import-assignment does (R5).
+func TestUpdateModuleContent_QuizWithoutExistingAssignmentRequiresTitle(t *testing.T) {
+	data, err := readCompiledModule(writeQuizModuleDir(t, prettyQuiz(t), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := &ExistingModuleData{Status: "DRAFT", Lessons: map[int]map[string]interface{}{}}
+	_, err = updateModuleContent(context.Background(), nil, "course-1", data, existing, false, true, false)
+	if err == nil || !strings.Contains(err.Error(), "title required") || !strings.Contains(err.Error(), "import-assignment") {
+		t.Fatalf("err = %v, want the title-required error pointing at import-assignment", err)
+	}
+}
+
+// A degraded (206) list that does not show the module must refuse to send:
+// db-api may be the missing backend and the module may exist with metadata
+// the write would null. With --create it must not create a duplicate either.
+func TestImportModule_DegradedListRefusesToSend(t *testing.T) {
+	for _, create := range []bool{false, true} {
+		stub := &assignmentStub{
+			listBodies: []string{chainOnlyListBody(t, "DB API unavailable, showing on-chain data only")},
+			listStatus: []int{http.StatusPartialContent},
+		}
+		c, _ := stub.serve(t)
+		_, err := importModule(ImportParams{
+			Ctx: context.Background(), Client: c, Config: &config.Config{},
+			ModuleDir: writeQuizModuleDir(t, prettyQuiz(t), false), CourseID: "course-1",
+			CreateMode: create, DryRun: true, Quiet: true,
+		})
+		if err == nil || !strings.Contains(err.Error(), "DB API unavailable") || !strings.Contains(err.Error(), "nothing was sent") {
+			t.Fatalf("create=%v: err = %v, want a refusal naming the warning", create, err)
+		}
+		if len(stub.posts) != 0 {
+			t.Errorf("create=%v: a degraded list must never lead to a create or update request", create)
+		}
+	}
+}
+
+// The text summary names the quiz digest instead of "Assignment: yes".
+func TestCourseImport_TextSummaryReportsQuiz(t *testing.T) {
+	bin := buildTestBinary(t)
+	stub := &assignmentStub{listBodies: []string{listBody(t, docAssignment("Quiz"), "")}}
+	_, url := stub.serve(t)
+	dir := writeQuizModuleDir(t, prettyQuiz(t), false)
+	stdout, stderr, code := runCLI(t, bin, url, "course", "import", dir, "--course-id", "course-1", "--dry-run")
+	if code != 0 {
+		t.Fatalf("exit = %d; stderr %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "Assignment:    quiz (2 questions, threshold 2)") {
+		t.Errorf("stdout = %q, want the quiz summary line", stdout)
 	}
 }
 

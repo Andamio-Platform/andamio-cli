@@ -142,13 +142,13 @@ Every failure carries an exit code **and**, under `--output json`, a `kind` fiel
 |------|--------|------|
 | 0 | — | Success, including an empty but valid result set |
 | 1 | `error` / `server` / `backpressure` / `canceled` | Unexpected, 5xx, retry-later, interrupted |
+| 1 | `verify` | A write was accepted but the read-back did not confirm the stored value (differs, or degraded 206). Emitted by `course import-assignment`. Shares exit 1 per the main.go rule; the module WAS modified |
 | 2 | `not_found` | 404 |
 | 3 | `auth` | No credentials, or 401/403 |
 | 4 | `removed_command` | Retired in 1.0 |
 | 5 | `unreachable` | Request never reached the service |
 | 6 | `conflict` | 409 |
 | 7 | `tier_limit` | Plan does not permit the action; remedy is billing-side. Classified by body code `tier_limit_exceeded` on any 4xx (429 today, 403 after product-circle#304), before the status switch. Never retried |
-| 1 | `verify` | A write was accepted but the read-back did not confirm the stored value (differs, or degraded 206). Emitted by `course import-assignment`. Shares exit 1 per the main.go rule; the module WAS modified |
 
 **An empty result is exit 0 with an empty collection, not an error.** This is what keeps "nothing found", "not permitted" (3) and "could not reach the service" (5) distinguishable. Do not "fix" `printList` to return an error on empty.
 

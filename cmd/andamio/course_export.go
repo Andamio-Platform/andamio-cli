@@ -412,7 +412,7 @@ func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, erro
 	if data.Assignment != nil {
 		mdPath := filepath.Join(absDir, "assignment.md")
 		quizPath := filepath.Join(absDir, "assignment.quiz.json")
-		contentJSON, _ := unwrapContent(data.Assignment)
+		contentJSON, title := unwrapContent(data.Assignment)
 		if isNonDocContent(contentJSON) {
 			pretty, err := json.MarshalIndent(contentJSON, "", "  ")
 			if err != nil {
@@ -426,7 +426,7 @@ func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, erro
 			}
 			result.Files = append(result.Files, "assignment.quiz.json")
 		} else {
-			assignContent, urls := convertContentToMarkdown(data.Assignment)
+			assignContent, urls := renderContentMarkdown(contentJSON, title)
 			imageURLs = append(imageURLs, urls...)
 
 			if err := writeFileAtomic(mdPath, []byte(assignContent)); err != nil {
@@ -601,6 +601,12 @@ func removeIfExists(path string) error {
 
 func convertContentToMarkdown(resp map[string]interface{}) (string, []string) {
 	contentJSON, title := unwrapContent(resp)
+	return renderContentMarkdown(contentJSON, title)
+}
+
+// renderContentMarkdown converts an already-unwrapped content_json to Markdown
+// with the title as an H1. A nil contentJSON renders nothing.
+func renderContentMarkdown(contentJSON map[string]interface{}, title string) (string, []string) {
 	if contentJSON == nil {
 		return "", nil
 	}
