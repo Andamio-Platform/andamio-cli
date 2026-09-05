@@ -43,6 +43,10 @@ const tierLimitBody = `{"error":{"code":"tier_limit_exceeded","message":"maximum
 
 // The contract issue #126 turns on: each distinguishable failure gets its own
 // exit code AND its own kind, and the two never disagree.
+//
+// Kind "verify" (#165) cannot be produced by `course list` — it needs a write
+// followed by a read-back — so its end-to-end pin lives in
+// TestImportAssignment_CLIJSONContract (course_import_assignment_test.go).
 func TestExitCodes_AndKindsAgree(t *testing.T) {
 	bin := buildTestBinary(t)
 
