@@ -1,0 +1,37 @@
+{
+  "type": "quiz",
+  "version": 1,
+  "passThreshold": 2,
+  "questions": [
+    {
+      "id": 7,
+      "prompt": "What is a wallet?",
+      "options": [
+        {
+          "value": "a",
+          "label": "A key manager"
+        },
+        {
+          "value": "b",
+          "label": "A bank account"
+        }
+      ],
+      "correctValue": "a"
+    },
+    {
+      "id": "q2",
+      "prompt": "What is a credential?",
+      "options": [
+        {
+          "value": "a",
+          "label": "A sticker"
+        },
+        {
+          "value": "b",
+          "label": "An on-chain record"
+        }
+      ],
+      "correctValue": "b"
+    }
+  ]
+}

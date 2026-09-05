@@ -1,0 +1,6 @@
+{
+  "type": "quiz",
+  "version": 1,
+  "passThreshold": 2,
+  "questions": []
+}
