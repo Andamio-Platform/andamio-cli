@@ -145,6 +145,7 @@ Both come from the same classification, so they never disagree.
 |------|--------|------|
 | 0 | — | Success, **including an empty but valid result set** |
 | 1 | `error` / `server` / `backpressure` / `canceled` | Unexpected, 5xx, retry-later, or interrupted |
+| 1 | `verify` | The update was accepted, but the read-back did not confirm the stored value (`course import-assignment`) — inspect, don't retry blindly |
 | 2 | `not_found` | Resource doesn't exist |
 | 3 | `auth` | No credentials, or 401 / 403 |
 | 4 | `removed_command` | Command was retired in 1.0 |

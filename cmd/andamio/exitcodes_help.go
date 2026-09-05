@@ -23,6 +23,8 @@ they never disagree — branch on whichever is more convenient.
   1     server            5xx response
   1     backpressure      408 / 425 / 429 — retry later
   1     canceled          interrupted, or a --timeout expired
+  1     verify            the update was accepted, but the read-back did not
+                          confirm the stored value — inspect, don't retry blindly
   2     not_found         resource doesn't exist (404)
   3     auth              no credentials, or 401 / 403
   4     removed_command   command was retired in 1.0
@@ -63,7 +65,14 @@ Exit 7 is new in 1.0. It is classified by the gateway's error code
 (tier_limit_exceeded), not by HTTP status, so it holds whether the API answers
 429 or 403 for that condition. A 429 carrying that code previously reported
 backpressure; it no longer does. A 429 without it (rate limits, quotas) still
-reports backpressure.`,
+reports backpressure.
+
+The verify kind is emitted by commands that read their own write back
+(course import-assignment). It is distinct from server: the module WAS
+modified. Either the stored value differs from what was sent, or the
+read-back was degraded and could not confirm it. Text mode carries no kind,
+so a script that must tell "applied but unconfirmed" from "failed" uses
+--output json.`,
 }
 
 func init() {

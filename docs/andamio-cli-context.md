@@ -67,6 +67,7 @@ branch on whichever is more convenient.
 | 1 | `server` | 5xx response |
 | 1 | `backpressure` | 408 / 425 / 429 — retry later |
 | 1 | `canceled` | Interrupted, or a `--timeout` expired |
+| 1 | `verify` | The update was accepted, but the read-back did not confirm the stored value — it differs from what was sent, or the read-back was degraded. Emitted by `course import-assignment`. The module WAS modified; inspect it rather than retrying blindly |
 | 2 | `not_found` | Resource doesn't exist (404) |
 | 3 | `auth` | No credentials, or 401 / 403 |
 | 4 | `removed_command` | Command was retired in 1.0 |
@@ -382,7 +383,7 @@ Empty lists return `{"data": []}`.
 `kind` pairs with the exit code — both come from the same classification, so
 branch on whichever suits the caller. See
 [Exit Codes and Error Kinds](#exit-codes-and-error-kinds) for the full table:
-`0` success, `1` generic/`server`/`backpressure`/`canceled`, `2` `not_found`,
+`0` success, `1` generic/`server`/`backpressure`/`canceled`/`verify`, `2` `not_found`,
 `3` `auth`, `4` `removed_command`, `5` `unreachable`, `6` `conflict`,
 `7` `tier_limit`.
 

@@ -117,6 +117,8 @@ func init() {
 //
 //	0                     — success, including an empty but valid result set
 //	1  error              — generic: unexpected, server-side, interrupted, bad input
+//	1  verify             — a write was accepted but its read-back did not confirm
+//	                        the stored value (course import-assignment)
 //	2  not_found          — resource doesn't exist (404)
 //	3  auth               — no credentials, or 401/403
 //	4  removed_command    — retired in 1.0 (see cmd/andamio/retired.go)
@@ -127,8 +129,8 @@ func init() {
 //
 // A caller can branch on the exit code alone or on "kind" alone; the two never
 // disagree. Kinds without a dedicated exit code (server, backpressure,
-// canceled) share exit 1 — they are already distinguishable via "kind", and
-// splitting them further buys a caller nothing today.
+// canceled, verify) share exit 1 — they are already distinguishable via "kind",
+// and splitting them further buys a caller nothing today.
 //
 // Codes 0-3 predate 1.0 and are load-bearing for existing scripts, so they are
 // fixed. 4, 5 and 7 are new. 6 is the one change to an existing path: conflicts
