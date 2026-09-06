@@ -47,6 +47,12 @@ name: create | shorthand:  | type: bool
 name: dry-run | shorthand:  | type: bool
 name: show-payload | shorthand:  | type: bool
 name: sort-order-start | shorthand:  | type: int
+andamio course import-assignment
+name: course | shorthand:  | type: string
+name: description | shorthand:  | type: string
+name: dry-run | shorthand:  | type: bool
+name: show-payload | shorthand:  | type: bool
+name: title | shorthand:  | type: string
 andamio course intro
 andamio course lesson
 andamio course list

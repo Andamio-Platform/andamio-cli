@@ -1,0 +1,34 @@
+{
+  "type": "quiz",
+  "version": 1,
+  "intro": {
+    "type": "doc",
+    "content": [
+      {
+        "type": "paragraph",
+        "content": [{ "type": "text", "text": "Answer both questions to unlock the credential." }]
+      }
+    ]
+  },
+  "passThreshold": 1,
+  "questions": [
+    {
+      "id": "q1",
+      "prompt": "What is a wallet?",
+      "options": [
+        { "value": "a", "label": "A key manager" },
+        { "value": "b", "label": "A bank account" }
+      ],
+      "correctValue": "a"
+    },
+    {
+      "id": "q2",
+      "prompt": "What is a credential?",
+      "options": [
+        { "value": "a", "label": "A sticker" },
+        { "value": "b", "label": "An on-chain record" }
+      ],
+      "correctValue": "b"
+    }
+  ]
+}

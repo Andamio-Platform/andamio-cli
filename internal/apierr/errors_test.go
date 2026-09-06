@@ -21,6 +21,7 @@ func TestKind_ClassifiesEachTypedError(t *testing.T) {
 		{"tier limit", &TierLimitError{Status: 429, Code: "tier_limit_exceeded", Message: "cap"}, KindTierLimit},
 		{"removed command", &RemovedCommandError{Command: "course student", Guidance: "use the app"}, KindRemovedCommand},
 		{"network", &NetworkError{Message: "unreachable"}, KindUnreachable},
+		{"verify", &VerifyError{Path: "assignment.content_json", Message: "did not read back identical"}, KindVerify},
 		{"canceled", context.Canceled, KindCanceled},
 		{"deadline exceeded", context.DeadlineExceeded, KindCanceled},
 		{"plain error", errors.New("something"), KindError},
@@ -75,6 +76,19 @@ func TestKind_UnwrapsThroughErrorfWrapping(t *testing.T) {
 			"wrapped cancellation",
 			fmt.Errorf("aborted: %w", context.Canceled),
 			KindCanceled,
+		},
+		{
+			"verify inside ReportedError",
+			&ReportedError{Err: fmt.Errorf("import-assignment: %w", &VerifyError{Path: "assignment.content_json", Message: "mismatch"})},
+			KindVerify,
+		},
+		{
+			// A failed read-back after an accepted write is verify, not the
+			// cause's kind: the module was modified, and "unreachable" would
+			// tell a script the request never happened.
+			"verify wrapping a transport failure stays verify",
+			&VerifyError{Path: "assignment.content_json", Message: "read-back failed", Err: &NetworkError{Message: "connection reset"}},
+			KindVerify,
 		},
 	}
 

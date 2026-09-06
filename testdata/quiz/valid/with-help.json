@@ -1,0 +1,29 @@
+{
+  "type": "quiz",
+  "version": 1,
+  "intro": null,
+  "passThreshold": 2,
+  "questions": [
+    {
+      "id": "q1",
+      "prompt": "What is a wallet?",
+      "help": "Think about what it holds.",
+      "options": [
+        { "value": "a", "label": "A key manager" },
+        { "value": "b", "label": "A bank account" }
+      ],
+      "correctValue": "a"
+    },
+    {
+      "id": "q2",
+      "prompt": "Which of these is a credential?",
+      "help": "Only one is recorded on-chain.",
+      "options": [
+        { "value": "a", "label": "A sticker" },
+        { "value": "b", "label": "An on-chain record" },
+        { "value": "c", "label": "A receipt" }
+      ],
+      "correctValue": "b"
+    }
+  ]
+}

@@ -31,6 +31,7 @@ const (
 	KindUnreachable    = "unreachable"
 	KindCanceled       = "canceled"
 	KindTierLimit      = "tier_limit"
+	KindVerify         = "verify"
 	KindError          = "error"
 )
 
@@ -65,11 +66,14 @@ func Kind(err error) string {
 		backpressure *BackpressureError
 		removed      *RemovedCommandError
 		network      *NetworkError
+		verify       *VerifyError
 	)
 
 	switch {
 	case errors.As(err, &removed):
 		return KindRemovedCommand
+	case errors.As(err, &verify):
+		return KindVerify
 	case errors.As(err, &notFound):
 		return KindNotFound
 	// Before auth and backpressure: a tier cap arrives on 429 today and 403
@@ -209,6 +213,37 @@ type RemovedCommandError struct {
 func (e *RemovedCommandError) Error() string {
 	return "'andamio " + e.Command + "' was removed in Andamio CLI 1.0.\n" + e.Guidance
 }
+
+// VerifyError is returned when a write was accepted by the gateway but the
+// CLI's read-back could not confirm the stored value: the re-fetched value
+// differs from what was sent, or the re-fetch came back degraded (206 with
+// meta.warning and no content to compare). main.go maps this to exit 1 — it
+// shares the generic code because "kind" already distinguishes it, per the
+// rule in main.go's exit-code comment.
+//
+// This exists because the alternative outcomes all mislead. Reporting success
+// would hide that the stored value is not what the caller asked for;
+// reporting `server` or `error` would hide that the module WAS modified. A
+// caller seeing `verify` knows two things at once: the update was applied,
+// and it must be inspected. Path names what was compared
+// ("assignment.content_json"); Message carries the specific mismatch or the
+// gateway's degradation warning.
+type VerifyError struct {
+	Path    string
+	Message string
+	// Err is the underlying cause when the read-back request itself failed
+	// (a transport error, a 5xx, an expired token). Kind classifies the
+	// whole as verify — the write WAS applied, so "unreachable" or "auth"
+	// would send a script down the wrong branch — while Unwrap keeps the
+	// cause inspectable with errors.Is / errors.As.
+	Err error
+}
+
+func (e *VerifyError) Error() string {
+	return fmt.Sprintf("update was accepted, but %s could not be verified: %s", e.Path, e.Message)
+}
+
+func (e *VerifyError) Unwrap() error { return e.Err }
 
 // ReportedError wraps an error whose output has already been printed to stdout
 // (e.g., a structured JSON result). main.go should set the exit code from the

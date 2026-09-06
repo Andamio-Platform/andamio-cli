@@ -19,6 +19,10 @@ var update = flag.Bool("update", false, "update golden files instead of comparin
 var schemaSrcDirs = []string{
 	".",
 	"../../internal/config",
+	// quiz.Summary rides inside ImportResult / ImportAssignmentEnvelope as
+	// `assignment_quiz` / `assignment`, so its json tags are part of the
+	// --output json contract and must be pinned here too.
+	"../../internal/quiz",
 }
 
 // compareOrUpdateGolden either overwrites goldenPath with actual (-update)

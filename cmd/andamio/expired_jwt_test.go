@@ -90,7 +90,7 @@ func runCLIInDir(t *testing.T, bin, baseURL, userJWT, workdir string, extraEnv [
 	return outBuf.String(), errBuf.String(), code
 }
 
-// Every JWT-required command — jwtAuthPreRunE parents and the seven
+// Every JWT-required command — jwtAuthPreRunE parents and the eight
 // hand-rolled PreRunEs — must reject a locally-expired session with exit 3 /
 // kind auth BEFORE any request leaves the machine (issue #134).
 func TestExpiredJWT_FailFastOnJWTRequiredCommands(t *testing.T) {
@@ -102,10 +102,11 @@ func TestExpiredJWT_FailFastOnJWTRequiredCommands(t *testing.T) {
 		{"course", "owner", "list"},
 		{"teacher", "courses"},
 		{"project", "task", "list", "proj-1"},
-		// the seven hand-rolled PreRunEs
+		// the eight hand-rolled PreRunEs
 		{"course", "export", "course-1", "101"},
 		{"course", "import", "somedir"},
 		{"course", "import-all", "somedir"},
+		{"course", "import-assignment", "course-1", "101", "quiz.json"},
 		{"course", "create-module", "--course-id", "course-1"},
 		{"tx", "build", "/api/v2/tx/x"},
 		{"tx", "register", "--tx-hash", "h", "--tx-type", "t"},
