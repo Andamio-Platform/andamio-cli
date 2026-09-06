@@ -6,6 +6,8 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-06
+
 ### Added
 
 - **`andamio course import-assignment <course-id> <module-code> <file.json>`** — publishes a quiz assignment (a `{"type": "quiz", "version": 1, …}` envelope, the format the Andamio app grades client-side) as the module's `assignment.content_json`, verbatim, sending only the `assignment` key. Until now this was a hand-built `curl` against the module-update endpoint with the JWT copied out of `~/.andamio/config.json` — the gap #62 closed for module creation, reopened for quizzes.
