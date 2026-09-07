@@ -6,17 +6,13 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
-## [1.1.1] - 2026-09-21
-
 ### Added
 
-- **`video_url` frontmatter on `lesson-N.md`.** A teacher can now set a lesson's video from the CLI. `course import` reads an optional YAML block at the top of a lesson file: `video_url: "<url>"` sets the lesson's video, `video_url: ""` clears it, and a file with no `video_url` key keeps the stored value, as before. `video_url` is the only supported key; another key, or a value that is not an absolute `http`/`https` URL, fails the import before any request and names the file. `course export` writes the block for each lesson that has a video, so export followed by import leaves the module unchanged. Lesson files without frontmatter import and export exactly as they did, including a lesson that opens with a `---` thematic break.
+- **`andamio wallet create`** — generates a payment/stake key pair entirely offline (via Bursa, already a dependency for `tx sign`) and writes `payment.skey`/`payment.vkey`/`stake.skey`/`stake.vkey` to `~/.andamio/wallet/<name>/` (`--name` defaults to `default`), `0600`. Closes the actual on-ramp gap behind `tx sign`/`tx run`: both commands require `--skey`, but there was never a supported way to produce one — the only prior path was deriving one from a mnemonic via `docker run inputoutput/cardano-addresses`. The mnemonic is written to `mnemonic.txt` (`0600`) alongside the keys by default, since the CLI's commands must all run without a TTY and can't gate on an interactive "did you save it?" confirmation; `--no-write-mnemonic` opts back into shown-once-only. `--network` (default `preprod`) and `--output-dir` for a fully custom location. `--output json` emits `{address, stake_address, payment_skey_path, payment_vkey_path, stake_skey_path, stake_vkey_path, mnemonic_path}`.
 
-  The Andamio app embeds YouTube links only, so import warns on stderr (in every output mode) when the URL is anything else, and still sends it. In text modes import also prints a line for each lesson whose stored video it changes.
+### Changed
 
-### Fixed
-
-- `docs/COURSE-LIFECYCLE.md` showed `description`, `image_url` and `video_url` keys in the `outline.md` example. Import has only ever read `title` and `code` there; the example now says so.
+- **`tx sign --skey` and `tx run --skey` are no longer required flags.** Both fall back to `~/.andamio/wallet/default/payment.skey` (the path `wallet create` writes by default) when `--skey` is omitted, and fail with an actionable error naming `andamio wallet create` if neither the flag nor the default wallet exist. `--skey` still overrides when passed. Additive — existing scripts that always pass `--skey` are unaffected.
 
 ## [1.1.0] - 2026-09-06
 
