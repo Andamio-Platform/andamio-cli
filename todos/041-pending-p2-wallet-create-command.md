@@ -30,24 +30,54 @@ Add `andamio wallet create`, generating a new mnemonic and deriving a full
 CIP-1852 key set locally, entirely offline.
 
 ```bash
-andamio wallet create --output-dir ./payment [--network preprod|mainnet] [--output json]
+andamio wallet create [--name default] [--network preprod|mainnet] [--output-dir <path>] [--no-write-mnemonic] [--output json]
 ```
 
 - Generates a fresh BIP-39 mnemonic
 - Derives payment (and stake) keys from it
-- Writes `payment.skey` / `payment.vkey` (and `stake.skey` / `stake.vkey`) to
-  `--output-dir` in the same cardano-cli JSON envelope format `tx sign`
-  already reads via `LoadKeyFromFile`
-- Prints the mnemonic to stderr exactly once, with a loud one-time warning to
-  write it down — never written to disk, never in `--output json`, never in
-  logs
+- **Default location, zero flags required:** `~/.andamio/wallet/<name>/`
+  (`--name` defaults to `default`) — mirrors the CLI's one existing
+  filesystem convention, `~/.andamio/config.json`
+  (`internal/config/config.go:199`). `--output-dir` overrides for a fully
+  custom path. This matters because the CLI is meant to work as a dev-kit
+  download-and-go tool — requiring a flag before the first command works
+  defeats that.
+- Writes `payment.skey` / `payment.vkey` (and `stake.skey` / `stake.vkey`) in
+  the same cardano-cli JSON envelope format `tx sign` already reads via
+  `LoadKeyFromFile`
+- **Mnemonic handling:** write `mnemonic.txt` (`0600`) alongside the keys by
+  default, plus a one-time stderr warning banner. This is a deliberate
+  departure from "shown once, never stored" wallet-generator convention —
+  see the Composability Rules discussion below for why. `--no-write-mnemonic`
+  opts back into shown-once-only for anyone who wants it (e.g. mainnet use)
 - Prints the derived payment address to stdout (JSON: `{"address": "...",
-  "payment_skey_path": "...", "payment_vkey_path": "..."}`)
+  "payment_skey_path": "...", "payment_vkey_path": "...", "mnemonic_path":
+  "..."}`)
+- `tx sign` should default `--skey` to `~/.andamio/wallet/default/payment.skey`
+  when the flag is omitted and the file exists (still a flag, still
+  overridable — a default lookup, not a prompt)
 
-No key state is stored in CLI config — same "fully explicit, fully
-scriptable" posture as `tx sign --skey` already has (see the 2026-03-18
-wallet-signing plan's Key Decisions). This only adds a way to produce the
-file that flag already expects.
+No key state is stored in CLI *config* (`~/.andamio/config.json` stays
+untouched) — same "fully explicit, fully scriptable" posture as
+`tx sign --skey` already has (see the 2026-03-18 wallet-signing plan's Key
+Decisions). This only adds a way to produce the file that flag already
+expects, at a predictable default path.
+
+### Why write the mnemonic to disk (Composability Rules constraint)
+
+`CLAUDE.md`'s Composability Rules require every command to work without a
+TTY and forbid stdin reads or interactive pickers — the whole CLI is built
+so no command ever blocks waiting on a keypress. That rules out the usual
+"type yes to confirm you saved this" gate a wallet generator would normally
+use before proceeding. A single non-blocking invocation can't safely make
+the mnemonic recoverable only if the user happened to copy it fast enough —
+so instead of an interactive confirmation, `wallet create` persists the
+mnemonic itself (0600, same directory as the keys), and the command stays a
+single atomic action with no exception carved into the no-prompts rule.
+This is consistent with the CLI being preprod/dev-kit-first
+(`internal/config/config.go`'s default `BaseURL` is preprod) rather than a
+production wallet manager; `--no-write-mnemonic` covers anyone who wants
+stricter mainnet handling.
 
 ## Implementation Option: Bursa (no new dependency)
 
@@ -91,6 +121,28 @@ start instead of the Docker workaround.
 - Keeps the whole tx pipeline (`wallet create` → `tx build` → `tx sign` →
   `tx submit` → `tx register`) self-contained in the CLI
 
+## Paradigm shift: wallet *kind*, not one wallet story
+
+This todo also exposes something that was previously conflated. `user
+login`/`dev login`'s CIP-30 browser-wallet connection is **authentication
+only** — it has never produced a signing key, and was never meant to (that
+confusion is exactly what prompted this todo). Once the CLI can hold its own
+key, "which wallet do I sign with" becomes a real choice with three distinct
+answers, not one flow:
+
+| Kind | Key location | Setup needed | Fits |
+|---|---|---|---|
+| `local` (this todo, new) | CLI-generated, on disk at `~/.andamio/wallet/` | None — works out of the box | Default dev-kit experience, scripting, CI |
+| `file` (exists today, `--skey <path>`) | Developer's own `.skey` from elsewhere (`cardano-cli`, hardware wallet export, etc.) | Developer already has one | CI/automation with externally-managed keys |
+| `browser` (todo 029, CIP-30 signing — not built) | Never touches disk, stays in Eternl/Lace/Nami | Browser + wallet extension | Less technical / non-developer users, mainnet safety-conscious use |
+
+Worth a `--wallet-type`/config `wallet.kind` flag once more than one of
+these exists, so `tx sign` can pick a default without the user re-specifying
+`--skey` every time. Not required for v1 of *this* todo (which only builds
+`local`), but the command surface (`wallet create`, `--skey` flag naming,
+etc.) should be chosen with this three-way split in mind rather than assuming
+`local` is the only kind that will ever exist.
+
 ## References
 
 - Plan: `docs/plans/2026-03-18-feat-cli-wallet-transaction-signing-plan.md` (shipped `tx sign`/`build`/`submit`/`register`, assumed a `.skey` already exists)
@@ -102,14 +154,19 @@ start instead of the Docker workaround.
 
 ## Notes
 
-- Mnemonic display is the one irreversible/security-sensitive step — needs
-  careful stderr handling so it can't end up in shell history, `--output json`,
-  or a piped log. Consider requiring an explicit `--i-have-saved-the-mnemonic`
-  confirmation flag or an interactive confirm before proceeding (note: the CLI
-  otherwise has a hard "no interactive prompts" rule — this may need to be the
-  one deliberate exception, or handled via a `--confirm` flag instead).
+- Mnemonic handling resolved: persisted to disk (`0600`) by default rather
+  than gated behind a confirmation prompt — see "Why write the mnemonic to
+  disk" above. No exception to the no-interactive-prompts rule needed.
+  `mnemonic.txt` should get the same permission warning `tx sign` already
+  applies to `.skey` files if it ends up group/world-readable.
+- Default storage path resolved: `~/.andamio/wallet/<name>/`, mirroring
+  `~/.andamio/config.json`. `--output-dir` remains for a fully custom
+  location.
 - `.skey` file permission hardening should match what `tx sign` already does
   (warn if group/world-readable) — see the security section of the March plan.
 - Should probably also support deriving from an *existing* mnemonic
   (`--from-mnemonic`, read from stdin/env, never a flag) for recovery — but
   that's a natural follow-up, not required for v1.
+- `wallet.kind`/`--wallet-type` (see Paradigm shift section) is out of scope
+  for v1 — file it as a separate follow-up todo once `browser` (todo 029)
+  actually exists and there are two-plus kinds to choose between.
