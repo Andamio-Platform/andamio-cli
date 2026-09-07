@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -61,7 +62,8 @@ func init() {
 	txCmd.AddCommand(txRunCmd)
 	txRunCmd.Flags().String("body", "", "Inline JSON request body")
 	txRunCmd.Flags().String("body-file", "", "Path to JSON file (mutually exclusive with --body)")
-	txRunCmd.Flags().String("skey", "", "Path to Cardano .skey file for signing")
+	txRunCmd.Flags().String("skey", "",
+		"Path to Cardano .skey file for signing; defaults to the wallet from 'andamio wallet create' if omitted")
 	txRunCmd.Flags().String("tx-type", "", "Transaction type for registration (see 'andamio tx types')")
 	txRunCmd.Flags().String("submit-url", "", "Override submit API URL (falls back to config)")
 	txRunCmd.Flags().StringArray("submit-header", nil, "Additional submit headers (repeatable, format: \"Key: Value\")")
@@ -69,7 +71,6 @@ func init() {
 	txRunCmd.Flags().StringArray("metadata", nil, "Metadata for registration (repeatable, format: key=value)")
 	txRunCmd.Flags().Bool("no-wait", false, "Exit after registration without polling for confirmation")
 	txRunCmd.Flags().Duration("timeout", 10*time.Minute, "Max time to wait for confirmation")
-	txRunCmd.MarkFlagRequired("skey")
 	txRunCmd.MarkFlagRequired("tx-type")
 }
 
@@ -96,6 +97,11 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	}
 	if bodyStr != "" && bodyFile != "" {
 		return fmt.Errorf("--body and --body-file are mutually exclusive")
+	}
+
+	skeyPath, err := cardano.ResolveSkeyPath(skeyPath)
+	if err != nil {
+		return err
 	}
 
 	// Parse metadata flags

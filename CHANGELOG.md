@@ -6,6 +6,14 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Added
+
+- **`andamio wallet create`** — generates a payment/stake key pair entirely offline (via Bursa, already a dependency for `tx sign`) and writes `payment.skey`/`payment.vkey`/`stake.skey`/`stake.vkey` to `~/.andamio/wallet/<name>/` (`--name` defaults to `default`), `0600`. Closes the actual on-ramp gap behind `tx sign`/`tx run`: both commands require `--skey`, but there was never a supported way to produce one — the only prior path was deriving one from a mnemonic via `docker run inputoutput/cardano-addresses`. The mnemonic is written to `mnemonic.txt` (`0600`) alongside the keys by default, since the CLI's commands must all run without a TTY and can't gate on an interactive "did you save it?" confirmation; `--no-write-mnemonic` opts back into shown-once-only. `--network` (default `preprod`) and `--output-dir` for a fully custom location. `--output json` emits `{address, stake_address, payment_skey_path, payment_vkey_path, stake_skey_path, stake_vkey_path, mnemonic_path}`.
+
+### Changed
+
+- **`tx sign --skey` and `tx run --skey` are no longer required flags.** Both fall back to `~/.andamio/wallet/default/payment.skey` (the path `wallet create` writes by default) when `--skey` is omitted, and fail with an actionable error naming `andamio wallet create` if neither the flag nor the default wallet exist. `--skey` still overrides when passed. Additive — existing scripts that always pass `--skey` are unaffected.
+
 ## [1.1.0] - 2026-09-06
 
 ### Added

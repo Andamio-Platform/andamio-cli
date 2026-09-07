@@ -282,3 +282,9 @@ name: skey | shorthand:  | type: string
 andamio user logout
 andamio user me
 andamio user status
+andamio wallet
+andamio wallet create
+name: name | shorthand:  | type: string
+name: network | shorthand:  | type: string
+name: no-write-mnemonic | shorthand:  | type: bool
+name: output-dir | shorthand:  | type: string
