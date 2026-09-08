@@ -102,6 +102,36 @@ func DefaultConfig() *Config {
 	}
 }
 
+// NetworkForBaseURL infers the Cardano network ("preprod" or "mainnet") a
+// gateway BaseURL points at, for commands (like `wallet create`) that need
+// to pick a matching address prefix. Returns "" when the host doesn't
+// unambiguously say — a custom/self-hosted gateway, the `dev.api.andamio.io`
+// environment (API-level "dev" is not a Cardano network in its own right),
+// or an unparseable URL — so callers fall back to their own default rather
+// than guess.
+//
+// "api.andamio.io" (no environment subdomain) is treated as mainnet: it was
+// mainnet's actual BaseURL as of issue #117 (2026-06), and still resolves
+// today to the same host as the now-documented `mainnet.api.andamio.io` —
+// kept as a working alias, not a dead legacy value.
+func NetworkForBaseURL(baseURL string) string {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	host := parsed.Hostname()
+	switch {
+	case strings.Contains(host, "preprod"):
+		return "preprod"
+	case strings.Contains(host, "mainnet"):
+		return "mainnet"
+	case host == "api.andamio.io":
+		return "mainnet"
+	default:
+		return ""
+	}
+}
+
 // ValidateBaseURL checks if the URL is safe to use.
 // Returns nil if valid, error if invalid.
 // Set ANDAMIO_ALLOW_ANY_URL=1 to bypass validation for automation/testing.
