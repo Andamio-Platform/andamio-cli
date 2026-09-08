@@ -218,3 +218,31 @@ func printSecurityWarnings(wallet *cardano.GeneratedWallet, dir, network string,
 	}
 	fmt.Fprintln(os.Stderr)
 }
+
+// printSecurityWarnings echoes key/mnemonic handling guidance to stderr,
+// scaled to what this run actually did (mnemonic written vs. shown-once,
+// preprod/preview vs. mainnet). Always printed regardless of --output —
+// stderr doesn't touch the JSON contract on stdout, and scripted callers
+// are exactly the audience most likely to never see it otherwise.
+func printSecurityWarnings(wallet *cardano.GeneratedWallet, dir, network string, noWriteMnemonic bool, paths map[string]string) {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "SECURITY WARNING: %s (and %s) can sign transactions and move every fund at this address — with no further confirmation from you.\n", paths["payment.skey"], paths["stake.skey"])
+	fmt.Fprintf(os.Stderr, "  - Keep %s private. Never commit it to git, sync it to cloud storage/shared drives, or paste its contents into chat, an issue, a log, or an AI tool.\n", dir)
+	fmt.Fprintln(os.Stderr, "  - The files on disk are 0600, but any copy you make (backup drive, password manager entry) only keeps that protection if you set it yourself — check permissions on copies too.")
+	fmt.Fprintln(os.Stderr, "  - If this key is ever exposed, funds can be moved instantly and irreversibly. There is no support desk, chargeback, or recovery — treat exposure as a total loss of everything at this address.")
+
+	if noWriteMnemonic {
+		fmt.Fprintf(os.Stderr,
+			"\nMnemonic (shown once — not written to disk by this command, will not be shown again):\n\n  %s\n\n",
+			wallet.Mnemonic)
+		fmt.Fprintln(os.Stderr, "Write it down now, offline, before doing anything else. If it's lost, this wallet is unrecoverable — there is no reset and no account recovery.")
+	} else {
+		fmt.Fprintf(os.Stderr, "  - %s is written in plaintext and is even more sensitive than the .skey files: it can regenerate every key derived from it, including any future accounts on this wallet.\n", paths["mnemonic.txt"])
+		fmt.Fprintln(os.Stderr, "    Move it to a password manager or encrypted storage and delete the plaintext copy once it's backed up, or rerun with --no-write-mnemonic to avoid writing it to disk at all.")
+	}
+
+	if network == "mainnet" {
+		fmt.Fprintln(os.Stderr, "  - This is a MAINNET wallet: real ADA, not test funds. For anything beyond small amounts, consider a hardware wallet instead of a CLI-generated hot key.")
+	}
+	fmt.Fprintln(os.Stderr)
+}
