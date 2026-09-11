@@ -40,6 +40,43 @@ CLI command must work without a TTY, so there's no interactive "did you
 save it?" gate this could wait on. Pass --no-write-mnemonic to opt back
 into shown-once-only (e.g. for a mainnet wallet you'd rather not persist).
 
+WHAT THIS WALLET CAN'T DO YET
+
+This is a bare keypair: no funds, no Access Token, and on its own it
+cannot authenticate anywhere. Two more things, neither of them wallet
+files, are required before it's useful for 'user login' / 'dev login':
+
+  Access Token   An on-chain NFT carrying a chosen alias. Both logins work
+                 by signing a nonce with this wallet's key AND the gateway
+                 confirming the wallet holds an Access Token for the alias
+                 claimed — a valid signature from an empty wallet is not
+                 enough. This command mints no token. Get one onto this
+                 wallet with:
+                   andamio tx build /v2/tx/global/user/access-token/mint \
+                     --body '{"alias":"<name>","initiator_data":{"change_address":"<addr>","used_addresses":["<addr>"]}}'
+                 which needs an *already-authenticated* session to call
+                 (not this new wallet — see 'andamio user login') and
+                 needs this wallet funded first (test ADA on preprod, real
+                 ADA on mainnet — see README.md#networks).
+
+  API key        Not minted by this command and not obtainable via the
+                 CLI at all. Get one by connecting the wallet that holds
+                 your Access Token at:
+                   preprod: https://preprod.app.andamio.io/api-setup
+                   mainnet: https://app.andamio.io/api-setup
+                 then store it locally with:
+                   andamio auth login --api-key <key>
+                 Only one key is stored at a time: switching 'andamio
+                 config set-url' between preprod and mainnet does NOT
+                 keep the previous network's key around, and there is no
+                 local backup of it once overwritten — save both keys
+                 somewhere yourself (password manager, etc.) before
+                 switching, or you'll need to re-visit api-setup to
+                 recover the one you left behind.
+
+Until both are in place, this wallet is only good for 'tx sign' / 'tx run'
+on transactions someone else's already-authenticated session built for it.
+
 Examples:
   andamio wallet create
   andamio wallet create --name treasury --network mainnet
