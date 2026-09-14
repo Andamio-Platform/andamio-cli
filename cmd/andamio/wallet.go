@@ -33,7 +33,14 @@ addr1...) and defaults to whatever the configured gateway (BaseURL, see
 'andamio config set-url') looks like rather than always "preprod" — a
 mainnet-configured CLI gets a mainnet wallet with zero flags too. Pass
 --network explicitly to override; if it disagrees with the configured
-gateway, a warning is printed but the wallet is still generated as asked.
+gateway, the wallet is still generated as asked, but a warning is printed
+to stderr AND included as a "warnings" array in --output json — scripted
+and agent callers that only check the JSON result still see it.
+
+Refuses to run if a wallet already exists at the target directory — there
+is no interactive overwrite prompt anywhere in this CLI, so silently
+clobbering an existing (possibly funded) wallet on a re-run or retry is
+not an acceptable default. Pass --force to overwrite anyway.
 
 The mnemonic is written to disk (0600) rather than only shown once: every
 CLI command must work without a TTY, so there's no interactive "did you
@@ -80,7 +87,8 @@ on transactions someone else's already-authenticated session built for it.
 Examples:
   andamio wallet create
   andamio wallet create --name treasury --network mainnet
-  andamio wallet create --output-dir ./payment --output json`,
+  andamio wallet create --output-dir ./payment --output json
+  andamio wallet create --force`,
 	RunE: runWalletCreate,
 }
 
@@ -96,6 +104,8 @@ func init() {
 		String("network", "preprod", "Network to derive the address for (preprod, mainnet, preview) — defaults to the configured gateway's network when not given")
 	walletCreateCmd.Flags().
 		Bool("no-write-mnemonic", false, "Do not write mnemonic.txt — print it once to stderr instead")
+	walletCreateCmd.Flags().
+		Bool("force", false, "Overwrite an existing wallet at the target directory")
 }
 
 func runWalletCreate(cmd *cobra.Command, args []string) error {
@@ -104,7 +114,10 @@ func runWalletCreate(cmd *cobra.Command, args []string) error {
 	network, _ := cmd.Flags().GetString("network")
 	networkExplicit := cmd.Flags().Changed("network")
 	noWriteMnemonic, _ := cmd.Flags().GetBool("no-write-mnemonic")
+	force, _ := cmd.Flags().GetBool("force")
 	isJSON := output.GetFormat() == output.FormatJSON
+
+	var warnings []string
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -118,9 +131,11 @@ func runWalletCreate(cmd *cobra.Command, args []string) error {
 		// configured against instead of always defaulting to preprod.
 		network = configuredNetwork
 	case networkExplicit && configuredNetwork != "" && network != configuredNetwork:
-		fmt.Fprintf(os.Stderr,
-			"Warning: --network %s does not match the configured gateway (%s, which looks like %s). Generating a %s wallet anyway, as requested — run 'andamio config set-url' if that gateway is wrong, or drop --network to match it.\n",
+		msg := fmt.Sprintf(
+			"--network %s does not match the configured gateway (%s, which looks like %s). Generating a %s wallet anyway, as requested — run 'andamio config set-url' if that gateway is wrong, or drop --network to match it.",
 			network, cfg.BaseURL, configuredNetwork, network)
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+		warnings = append(warnings, msg)
 	}
 
 	dir := outputDir
@@ -141,14 +156,14 @@ func runWalletCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	paths, err := wallet.WriteFiles(dir, noWriteMnemonic)
+	paths, err := wallet.WriteFiles(dir, noWriteMnemonic, force)
 	if err != nil {
 		return err
 	}
 
 	printSecurityWarnings(wallet, dir, network, noWriteMnemonic, paths)
 
-	result := map[string]string{
+	result := map[string]interface{}{
 		"address":           wallet.PaymentAddress,
 		"stake_address":     wallet.StakeAddress,
 		"payment_skey_path": paths["payment.skey"],
@@ -158,6 +173,9 @@ func runWalletCreate(cmd *cobra.Command, args []string) error {
 	}
 	if p, ok := paths["mnemonic.txt"]; ok {
 		result["mnemonic_path"] = p
+	}
+	if len(warnings) > 0 {
+		result["warnings"] = warnings
 	}
 
 	if isJSON {

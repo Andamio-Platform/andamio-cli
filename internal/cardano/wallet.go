@@ -60,7 +60,16 @@ func GenerateWallet(network string) (*GeneratedWallet, error) {
 // responsible for showing it to the user some other way (it is not
 // recoverable afterwards). Returns the absolute path written for each file,
 // keyed by filename.
-func (w *GeneratedWallet) WriteFiles(dir string, skipMnemonic bool) (map[string]string, error) {
+//
+// Unless force is set, WriteFiles refuses to run if any target file already
+// exists, and writes nothing. This isn't just a courtesy prompt substitute —
+// there is no interactive "did you mean to overwrite this?" gate anywhere in
+// the CLI (see the no-prompts convention), so an unconditional overwrite is
+// one retried or re-run command away from silently destroying an existing,
+// possibly-funded wallet with no recovery path unless its mnemonic was
+// separately backed up. The pre-check runs before any file is written, so a
+// rejected call never leaves a directory half-overwritten.
+func (w *GeneratedWallet) WriteFiles(dir string, skipMnemonic bool, force bool) (map[string]string, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create wallet directory: %w", err)
 	}
@@ -73,6 +82,17 @@ func (w *GeneratedWallet) WriteFiles(dir string, skipMnemonic bool) (map[string]
 	}
 	if !skipMnemonic {
 		files["mnemonic.txt"] = w.Mnemonic + "\n"
+	}
+
+	if !force {
+		for name := range files {
+			path := filepath.Join(dir, name)
+			if _, err := os.Stat(path); err == nil {
+				return nil, fmt.Errorf("wallet already exists at %s (found %s) — pass --force to overwrite it, or --name/--output-dir to write a new one elsewhere", dir, path)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("failed to check %s: %w", path, err)
+			}
+		}
 	}
 
 	paths := make(map[string]string, len(files))
