@@ -284,6 +284,7 @@ andamio user me
 andamio user status
 andamio wallet
 andamio wallet create
+name: force | shorthand:  | type: bool
 name: name | shorthand:  | type: string
 name: network | shorthand:  | type: string
 name: no-write-mnemonic | shorthand:  | type: bool
