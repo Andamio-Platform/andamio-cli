@@ -66,7 +66,7 @@ func runTxSign(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load key
-	privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
+	signingKey, err := cardano.LoadSigningKey(skeyPath)
 	if err != nil {
 		return err
 	}
@@ -76,7 +76,7 @@ func runTxSign(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sign
-	result, err := cardano.SignTransaction(txHex, privKey, pubKey)
+	result, err := cardano.SignTransaction(txHex, signingKey)
 	if err != nil {
 		return err
 	}

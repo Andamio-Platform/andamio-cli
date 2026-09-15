@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -298,11 +297,11 @@ func runDevLogin(cmd *cobra.Command, args []string) error {
 		alias, _ := cmd.Flags().GetString("alias")
 		address, _ := cmd.Flags().GetString("address")
 
-		privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
+		signingKey, err := cardano.LoadSigningKey(skeyPath)
 		if err != nil {
 			return fmt.Errorf("failed to load signing key: %w", err)
 		}
-		return runDevHeadlessLogin(cmd.Context(), cfg, privKey, pubKey, skeyPath, alias, address)
+		return runDevHeadlessLogin(cmd.Context(), cfg, signingKey, skeyPath, alias, address)
 	default:
 		// Partial-flag invocation. Name both modes so the operator can fix
 		// forward in either direction without re-reading the help text.
@@ -373,7 +372,7 @@ type secureLoginResponse struct {
 //
 // Wire shape sourced from andamio-api #410 (`auth_viewmodels.LoginSessionRequest`,
 // `LoginCompleteRequest`, `SecureLoginResponse`).
-func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed25519.PrivateKey, pubKey ed25519.PublicKey, skeyPath, alias, address string) error {
+func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, signingKey *cardano.SigningKey, skeyPath, alias, address string) error {
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Pre-flight: API key required (dual-credential dev-portal contract).
@@ -427,7 +426,7 @@ func runDevHeadlessLogin(ctx context.Context, cfg *config.Config, privKey ed2551
 	if !isJSON {
 		fmt.Fprintf(os.Stderr, "Signing nonce with %s...\n", skeyPath)
 	}
-	signResult, err := cardano.SignMessage([]byte(session.Nonce), privKey, pubKey)
+	signResult, err := cardano.SignMessage([]byte(session.Nonce), signingKey)
 	if err != nil {
 		return fmt.Errorf("failed to sign nonce: %w", err)
 	}

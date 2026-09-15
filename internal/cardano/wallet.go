@@ -42,14 +42,36 @@ func GenerateWallet(network string) (*GeneratedWallet, error) {
 		return nil, fmt.Errorf("failed to encode key files: %w", err)
 	}
 
+	// Deliberately NOT keyFiles["payment.skey"]/["stake.skey"]: Bursa writes
+	// those under the type "PaymentSigningKeyShelley_ed25519" — the label
+	// for a genuinely random 32-byte Ed25519 seed — but the bytes it puts
+	// there are actually just kL, the first half of the BIP32-derived
+	// (kL, kR) pair (see Bursa's getSigningKeyFile: "Use first 32 bytes
+	// (k_L) of the 64-byte extended private key"). kR is silently dropped.
+	// Any correctly-behaving loader (including Bursa's own
+	// LoadKeyFromFile) sees the "PaymentSigningKeyShelley_ed25519" label
+	// and treats those 32 bytes as a seed to re-hash via RFC 8032 — which
+	// for a real seed is right, but for a bare kL produces a completely
+	// different, wrong keypair than the one that actually owns this
+	// wallet's address. There is no way to sign correctly from the
+	// mislabeled file at all: kR isn't in it.
+	//
+	// keyFiles["paymentExtended.skey"]/["stakeExtended.skey"] are Bursa's
+	// OTHER output for the same derived key: the full 128-byte cardano-cli
+	// extended format (kL||kR||pubkey||chaincode) under the correct
+	// "...ExtendedSigningKeyShelley_ed25519_bip32" label, which
+	// LoadSigningKey's extended-key path (internal/cardano/sign.go) signs
+	// correctly. Written to disk as payment.skey/stake.skey regardless —
+	// the .skey filename and cardano-cli JSON envelope shape are unchanged,
+	// only which of Bursa's two outputs backs them.
 	return &GeneratedWallet{
 		Mnemonic:       wallet.Mnemonic,
 		PaymentAddress: wallet.PaymentAddress,
 		StakeAddress:   wallet.StakeAddress,
 		PaymentVKey:    keyFiles["payment.vkey"],
-		PaymentSKey:    keyFiles["payment.skey"],
+		PaymentSKey:    keyFiles["paymentExtended.skey"],
 		StakeVKey:      keyFiles["stake.vkey"],
-		StakeSKey:      keyFiles["stake.skey"],
+		StakeSKey:      keyFiles["stakeExtended.skey"],
 	}, nil
 }
 

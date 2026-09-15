@@ -1,10 +1,15 @@
 package cardano
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/blinklabs-io/bursa"
 	"github.com/fxamacker/cbor/v2"
 )
 
@@ -110,8 +115,9 @@ func TestSignTransaction_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate key: %v", err)
 	}
+	key := &SigningKey{std: priv, PubKey: pub}
 
-	result, err := SignTransaction(txHex, priv, pub)
+	result, err := SignTransaction(txHex, key)
 	if err != nil {
 		t.Fatalf("SignTransaction failed: %v", err)
 	}
@@ -167,7 +173,8 @@ func TestSignTransaction_RoundTrip(t *testing.T) {
 
 func TestSignTransaction_InvalidHex(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	_, err := SignTransaction("not-hex", priv, pub)
+	key := &SigningKey{std: priv, PubKey: pub}
+	_, err := SignTransaction("not-hex", key)
 	if err == nil {
 		t.Fatal("expected error for invalid hex")
 	}
@@ -175,7 +182,8 @@ func TestSignTransaction_InvalidHex(t *testing.T) {
 
 func TestSignTransaction_InvalidCBOR(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(nil)
-	_, err := SignTransaction("ffff", priv, pub)
+	key := &SigningKey{std: priv, PubKey: pub}
+	_, err := SignTransaction("ffff", key)
 	if err == nil {
 		t.Fatal("expected error for invalid CBOR")
 	}
@@ -226,6 +234,116 @@ func TestAssembleSignedTx_PreservesExistingWitnesses(t *testing.T) {
 	}
 	if _, ok := resultWitnesses[1]; !ok {
 		t.Error("Script witnesses (key 1) were removed — should have been preserved")
+	}
+}
+
+// TestLoadSigningKey_ExtendedKeyMatchesWalletVKey is a regression test for a
+// bug where LoadSigningKey mis-derived the public key for BIP32-extended
+// keys (the kind 'wallet create' writes): it took the raw scalar bytes and
+// ran them through ed25519.NewKeyFromSeed as if they were a fresh seed,
+// producing a completely different — but internally self-consistent —
+// keypair. A plain sign-then-verify round trip against LoadSigningKey's own
+// output does NOT catch this, because the wrong keypair still verifies
+// against itself; it only surfaces as MissingVKeyWitnessesUTXOW once the
+// signature reaches a real network and gets checked against the address's
+// actual key hash. This test instead cross-checks LoadSigningKey's PubKey
+// against the ground-truth vkey Bursa itself decoded from GenerateWallet's
+// output, independent of whatever LoadSigningKey does internally.
+func TestLoadSigningKey_ExtendedKeyMatchesWalletVKey(t *testing.T) {
+	wallet, err := GenerateWallet("preprod")
+	if err != nil {
+		t.Fatalf("GenerateWallet failed: %v", err)
+	}
+
+	dir := t.TempDir()
+	if _, err := wallet.WriteFiles(dir, true, false); err != nil {
+		t.Fatalf("WriteFiles failed: %v", err)
+	}
+
+	wantVKey, err := bursa.LoadKeyFromFile(filepath.Join(dir, "payment.vkey"))
+	if err != nil {
+		t.Fatalf("failed to load ground-truth vkey: %v", err)
+	}
+	if len(wantVKey.VKey) != 32 {
+		t.Fatalf("ground-truth vkey: expected 32 bytes, got %d", len(wantVKey.VKey))
+	}
+
+	key, err := LoadSigningKey(filepath.Join(dir, "payment.skey"))
+	if err != nil {
+		t.Fatalf("LoadSigningKey failed: %v", err)
+	}
+
+	if !bytes.Equal(key.PubKey, wantVKey.VKey) {
+		t.Fatalf("LoadSigningKey derived the WRONG public key for an extended skey\n  got:  %x\n  want: %x (the wallet's real payment.vkey)",
+			key.PubKey, wantVKey.VKey)
+	}
+
+	// And the signature it produces must actually verify against that real
+	// public key — proving the whole chain (load -> sign) is consistent
+	// with the wallet's actual on-chain identity, not just with itself.
+	msg := []byte("regression check")
+	sig := key.Sign(msg)
+	if !ed25519.Verify(ed25519.PublicKey(wantVKey.VKey), msg, sig) {
+		t.Fatal("signature from an extended key does not verify against the wallet's real vkey")
+	}
+}
+
+// TestLoadSigningKey_PlainExternalKey covers the OTHER key shape LoadSigningKey
+// must handle correctly: a genuinely non-HD key someone supplies themselves —
+// e.g. one made with plain `cardano-cli address key-gen`, unrelated to
+// 'wallet create' or any mnemonic. This is a real random 32-byte seed under
+// the standard "PaymentSigningKeyShelley_ed25519" envelope, which is the
+// correct case for crypto/ed25519's NewKeyFromSeed/Sign — the extended-key
+// path must NOT be taken here. A first version of the extended-vs-standard
+// fix dispatched on SKey's byte length (both shapes come back from Bursa's
+// LoadKeyFromFile as a 64-byte SKey, since Go's ed25519.NewKeyFromSeed
+// output is itself seed(32)||pubkey(32) = 64 bytes) rather than the key's
+// declared type, and would have wrongly routed this into signExtended.
+func TestLoadSigningKey_PlainExternalKey(t *testing.T) {
+	seed := make([]byte, 32)
+	for i := range seed {
+		seed[i] = byte(i + 1) // deterministic, not that it matters
+	}
+	wantPriv := ed25519.NewKeyFromSeed(seed)
+	wantPub := wantPriv.Public().(ed25519.PublicKey)
+
+	seedCbor, err := cbor.Marshal(seed)
+	if err != nil {
+		t.Fatalf("failed to CBOR-encode seed: %v", err)
+	}
+	envelope, err := json.Marshal(map[string]string{
+		"type":        "PaymentSigningKeyShelley_ed25519",
+		"description": "Payment Signing Key",
+		"cborHex":     hex.EncodeToString(seedCbor),
+	})
+	if err != nil {
+		t.Fatalf("failed to build key envelope: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "payment.skey")
+	if err := os.WriteFile(path, envelope, 0600); err != nil {
+		t.Fatalf("failed to write test skey: %v", err)
+	}
+
+	key, err := LoadSigningKey(path)
+	if err != nil {
+		t.Fatalf("LoadSigningKey failed on a plain external key: %v", err)
+	}
+
+	if !bytes.Equal(key.PubKey, wantPub) {
+		t.Fatalf("LoadSigningKey derived the wrong pubkey for a plain seed key\n  got:  %x\n  want: %x",
+			key.PubKey, wantPub)
+	}
+
+	msg := []byte("plain key regression check")
+	sig := key.Sign(msg)
+	if !ed25519.Verify(wantPub, msg, sig) {
+		t.Fatal("signature from a plain seed key does not verify")
+	}
+	// And it must match exactly what crypto/ed25519 itself would produce —
+	// ruling out the extended path silently taking over here.
+	if !bytes.Equal(sig, ed25519.Sign(wantPriv, msg)) {
+		t.Fatal("SigningKey.Sign for a plain key diverges from ed25519.Sign — extended path was taken by mistake")
 	}
 }
 

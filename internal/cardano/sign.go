@@ -3,11 +3,14 @@ package cardano
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
+	"filippo.io/edwards25519"
 	"github.com/blinklabs-io/bursa"
 	"github.com/fxamacker/cbor/v2"
 	"golang.org/x/crypto/blake2b"
@@ -19,36 +22,151 @@ type SignResult struct {
 	TxHash   string `json:"tx_hash"`
 }
 
-// LoadSigningKey loads a Cardano .skey file and returns the raw ed25519 private key and public key.
-func LoadSigningKey(path string) (ed25519.PrivateKey, ed25519.PublicKey, error) {
+// SigningKey wraps a loaded Cardano signing key. Bursa writes two distinct
+// on-disk key shapes and they are NOT interchangeable at the crypto layer:
+//
+//   - Standard ("PaymentSigningKeyShelley_ed25519"): a 32-byte seed. RFC 8032
+//     derives the actual (scalar, prefix) pair from it via SHA-512 — this is
+//     what crypto/ed25519's Sign/NewKeyFromSeed already implement correctly.
+//   - Extended/BIP32 ("PaymentExtendedSigningKeyShelley_ed25519_bip32", as
+//     written by 'wallet create' for every mnemonic-derived wallet): the
+//     on-disk bytes already ARE the derived scalar (kL, 32B) and nonce
+//     prefix (kR, 32B) — there is no seed to hash. Feeding kL through
+//     NewKeyFromSeed re-hashes it via SHA-512 as if it were a fresh seed,
+//     silently producing a completely different (and wrong) keypair than
+//     the one that actually owns the wallet's address. That mismatch is
+//     invisible locally — SignTransaction's own ed25519.Verify self-check
+//     still passes, because the wrongly-derived priv/pub pair is at least
+//     internally consistent — and only surfaces on-chain as
+//     MissingVKeyWitnessesUTXOW when the network checks the signature
+//     against the address's real key hash.
+//
+// Extended keys need their own signing path (signExtended) that uses kL/kR
+// directly instead of routing through crypto/ed25519.
+type SigningKey struct {
+	extended bool
+	scalar   []byte // kL, 32 bytes — extended keys only
+	prefix   []byte // kR, 32 bytes — extended keys only
+	std      ed25519.PrivateKey
+	PubKey   ed25519.PublicKey
+}
+
+// Sign produces a 64-byte Ed25519 signature over message, using whichever
+// derivation this key actually requires.
+func (k *SigningKey) Sign(message []byte) []byte {
+	if k.extended {
+		return signExtended(k.scalar, k.prefix, k.PubKey, message)
+	}
+	return ed25519.Sign(k.std, message)
+}
+
+// NewStandardSigningKey wraps an already-loaded standard (non-extended)
+// Ed25519 key pair as a SigningKey. For callers that hold a raw keypair
+// directly rather than a .skey path — tests, mainly.
+func NewStandardSigningKey(priv ed25519.PrivateKey) *SigningKey {
+	return &SigningKey{std: priv, PubKey: priv.Public().(ed25519.PublicKey)}
+}
+
+// LoadSigningKey loads a Cardano .skey file (standard or BIP32-extended)
+// and returns a SigningKey ready to sign with the correct algorithm for
+// its actual key shape.
+func LoadSigningKey(path string) (*SigningKey, error) {
 	checkKeyFilePermissions(path)
 
 	loaded, err := bursa.LoadKeyFromFile(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse .skey file: %w", err)
+		return nil, fmt.Errorf("failed to parse .skey file: %w", err)
+	}
+
+	// Dispatch on the key's declared type, not on SKey's byte length:
+	// Bursa's LoadKeyFromFile returns a 64-byte SKey for BOTH a genuine
+	// plain-seed key (Go's ed25519.NewKeyFromSeed output is seed(32) ||
+	// pubkey(32) = 64 bytes) and would return the same shape for other
+	// non-extended types — 64 bytes alone doesn't imply extended. Only a
+	// real BIP32-extended key decodes to a 96-byte SKey (privKey(64:
+	// kL||kR) || chainCode(32)), via decodeExtendedCborKey — and the
+	// on-disk "type" field is what actually says which one it is.
+	if strings.HasSuffix(loaded.Type, "_bip32") {
+		if len(loaded.VKey) != 32 || len(loaded.SKey) < 64 {
+			return nil, fmt.Errorf("invalid extended signing key %q: unexpected key shape (vkey=%dB, skey=%dB)", loaded.Type, len(loaded.VKey), len(loaded.SKey))
+		}
+		return &SigningKey{
+			extended: true,
+			scalar:   append([]byte{}, loaded.SKey[0:32]...),
+			prefix:   append([]byte{}, loaded.SKey[32:64]...),
+			PubKey:   ed25519.PublicKey(loaded.VKey),
+		}, nil
 	}
 
 	if len(loaded.SKey) < 32 {
-		return nil, nil, fmt.Errorf("invalid signing key: expected at least 32 bytes, got %d", len(loaded.SKey))
+		return nil, fmt.Errorf("invalid signing key: expected at least 32 bytes, got %d", len(loaded.SKey))
 	}
 
-	// Bursa may return 64-byte extended keys or 32-byte seed keys.
-	// ed25519.NewKeyFromSeed expects 32 bytes.
+	// Standard (non-extended) key: a plain 32-byte seed.
 	seed := loaded.SKey
 	if len(seed) > 32 {
 		seed = seed[:32]
 	}
-
 	privKey := ed25519.NewKeyFromSeed(seed)
-	pubKey := privKey.Public().(ed25519.PublicKey)
+	return &SigningKey{
+		std:    privKey,
+		PubKey: privKey.Public().(ed25519.PublicKey),
+	}, nil
+}
 
-	return privKey, pubKey, nil
+// signExtended implements BIP32-Ed25519 ("extended key") signing: kL/kR are
+// used directly rather than being re-derived from a seed via SHA-512. This
+// is the standard extended-Ed25519 scheme (Khovratovich & Law), the same
+// algorithm cardano-crypto/cardano-serialization-lib use for HD wallet
+// keys:
+//
+//	r     = SHA512(kR || message)              (mod L)
+//	R     = r*B                                (point, encoded 32B)
+//	hram  = SHA512(R || A || message)          (mod L), A = public key
+//	S     = r + hram*kL                        (mod L)
+//	sig   = R || S
+//
+// kL (32 bytes) is a clamped scalar, not necessarily < L, but scalar
+// multiplication on a group of order L is periodic mod L, so reducing it
+// mod L first (via SetUniformBytes on a zero-padded 64-byte buffer) is
+// safe and required before it can be used in edwards25519.Scalar
+// arithmetic, which only accepts canonical (< L) values.
+func signExtended(scalar, prefix, pubKey, message []byte) []byte {
+	kLBuf := make([]byte, 64)
+	copy(kLBuf, scalar)
+	kL, err := edwards25519.NewScalar().SetUniformBytes(kLBuf)
+	if err != nil {
+		panic(fmt.Sprintf("signExtended: reducing kL mod L: %v", err))
+	}
+
+	rHash := sha512.Sum512(append(append([]byte{}, prefix...), message...))
+	r, err := edwards25519.NewScalar().SetUniformBytes(rHash[:])
+	if err != nil {
+		panic(fmt.Sprintf("signExtended: reducing r mod L: %v", err))
+	}
+
+	R := new(edwards25519.Point).ScalarBaseMult(r)
+	RBytes := R.Bytes()
+
+	hramInput := append(append(append([]byte{}, RBytes...), pubKey...), message...)
+	hramHash := sha512.Sum512(hramInput)
+	hram, err := edwards25519.NewScalar().SetUniformBytes(hramHash[:])
+	if err != nil {
+		panic(fmt.Sprintf("signExtended: reducing hram mod L: %v", err))
+	}
+
+	S := edwards25519.NewScalar().MultiplyAdd(hram, kL, r)
+
+	sig := make([]byte, 64)
+	copy(sig[:32], RBytes)
+	copy(sig[32:], S.Bytes())
+	return sig
 }
 
 // SignTransaction signs an unsigned Cardano transaction CBOR hex string.
 // It extracts the body bytes without re-encoding, signs with Blake2b-256 + ed25519,
 // merges the VKey witness into the existing witness set, and returns the signed tx + hash.
-func SignTransaction(unsignedCBORHex string, privKey ed25519.PrivateKey, pubKey ed25519.PublicKey) (*SignResult, error) {
+func SignTransaction(unsignedCBORHex string, key *SigningKey) (*SignResult, error) {
 	txBytes, err := hex.DecodeString(unsignedCBORHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid CBOR hex: %w", err)
@@ -65,18 +183,18 @@ func SignTransaction(unsignedCBORHex string, privKey ed25519.PrivateKey, pubKey 
 	bodyHash := Blake2b256(bodyBytes)
 
 	// Sign the hash
-	signature := ed25519.Sign(privKey, bodyHash)
+	signature := key.Sign(bodyHash)
 
 	// Verify before proceeding
-	if !ed25519.Verify(pubKey, bodyHash, signature) {
+	if !ed25519.Verify(key.PubKey, bodyHash, signature) {
 		return nil, fmt.Errorf("signature verification failed — possible key corruption")
 	}
 
 	// Pre-flight: check required_signers if present
-	checkRequiredSigners(bodyBytes, pubKey)
+	checkRequiredSigners(bodyBytes, key.PubKey)
 
 	// Decode the full transaction to merge witness
-	signedTx, err := assembleSignedTx(txBytes, pubKey, signature)
+	signedTx, err := assembleSignedTx(txBytes, key.PubKey, signature)
 	if err != nil {
 		return nil, fmt.Errorf("failed to assemble signed transaction: %w", err)
 	}
@@ -220,7 +338,8 @@ type MessageSignResult struct {
 // SignMessage produces a CIP-8/CIP-30 compatible message signature.
 // It builds a COSE_Sign1 structure and a COSE_Key, matching the output
 // of the CIP-30 wallet signData API.
-func SignMessage(message []byte, privKey ed25519.PrivateKey, pubKey ed25519.PublicKey) (*MessageSignResult, error) {
+func SignMessage(message []byte, key *SigningKey) (*MessageSignResult, error) {
+	pubKey := key.PubKey
 	keyHash := blake2b224(pubKey)
 
 	// Build protected headers as a CBOR map:
@@ -252,7 +371,7 @@ func SignMessage(message []byte, privKey ed25519.PrivateKey, pubKey ed25519.Publ
 	}
 
 	// Sign the SigStructure directly (CIP-8 signs the raw bytes, not a hash)
-	signature := ed25519.Sign(privKey, sigStructureBytes)
+	signature := key.Sign(sigStructureBytes)
 
 	// Build COSE_Sign1: [protected, unprotected, payload, signature]
 	// CIP-30 uses a 4-element array with Tag 18

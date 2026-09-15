@@ -120,12 +120,12 @@ func executeTxLifecycle(ctx context.Context, c *client.Client, cfg *config.Confi
 	result.Step = "sign"
 	mu.Unlock()
 
-	privKey, pubKey, err := cardano.LoadSigningKey(params.SkeyPath)
+	signingKey, err := cardano.LoadSigningKey(params.SkeyPath)
 	if err != nil {
 		return result, fail("sign_failed", "sign failed", err)
 	}
 
-	signResult, err := cardano.SignTransaction(unsignedTx, privKey, pubKey)
+	signResult, err := cardano.SignTransaction(unsignedTx, signingKey)
 	if err != nil {
 		return result, fail("sign_failed", "sign failed", err)
 	}
