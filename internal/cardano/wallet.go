@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	ouroboros "github.com/blinklabs-io/gouroboros"
+	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 
 	"github.com/blinklabs-io/bursa"
 )
@@ -101,6 +105,12 @@ func (w *GeneratedWallet) WriteFiles(dir string, skipMnemonic bool, force bool) 
 		"payment.skey": w.PaymentSKey,
 		"stake.vkey":   w.StakeVKey,
 		"stake.skey":   w.StakeSKey,
+		// Public info (bursa derives it from the account xprv at wallet
+		// creation and hands it back as PaymentAddress) — persisted here so
+		// ResolveWalletAddress can just read it back rather than
+		// re-deriving it from the vkeys later. Previously wallet create
+		// only ever printed this once and threw it away.
+		"address.txt": w.PaymentAddress + "\n",
 	}
 	if !skipMnemonic {
 		files["mnemonic.txt"] = w.Mnemonic + "\n"
@@ -160,4 +170,79 @@ func ResolveSkeyPath(flagValue string) (string, error) {
 		return "", fmt.Errorf("failed to check default wallet: %w", err)
 	}
 	return path, nil
+}
+
+// AddressFromVKeys derives a bech32 Shelley base address (payment + stake
+// credential) from a payment.vkey/stake.vkey pair on disk. It reads only
+// the public verification keys — never a .skey or mnemonic — since a base
+// address is fully determined by the payment and stake key *hashes* alone.
+// This is the same construction bursa.GetAddress uses internally, without
+// needing the extended private key bursa.GetAddress requires: wallet
+// create never persists an existing wallet's address anywhere (see
+// clients/projects/andamio/NOTES.md, "Known UX Gaps" #5), so this is the
+// fallback for recovering it from what *is* on disk.
+func AddressFromVKeys(paymentVKeyPath, stakeVKeyPath, network string) (string, error) {
+	paymentVKey, err := bursa.LoadKeyFromFile(paymentVKeyPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to load %s: %w", paymentVKeyPath, err)
+	}
+	stakeVKey, err := bursa.LoadKeyFromFile(stakeVKeyPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to load %s: %w", stakeVKeyPath, err)
+	}
+
+	net, ok := ouroboros.NetworkByName(network)
+	if !ok {
+		return "", fmt.Errorf("invalid network %q", network)
+	}
+
+	addr, err := lcommon.NewAddressFromParts(
+		lcommon.AddressTypeKeyKey,
+		net.Id,
+		blake2b224(paymentVKey.VKey),
+		blake2b224(stakeVKey.VKey),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to build address: %w", err)
+	}
+	return addr.String(), nil
+}
+
+// ResolveWalletAddress returns flagValue unchanged if set. Otherwise it
+// falls back to the default wallet (~/.andamio/wallet/default/):
+// address.txt if present (written by WriteFiles at creation time), or
+// derived from payment.vkey/stake.vkey via AddressFromVKeys if not — the
+// vkey path exists only to cover a wallet created before address.txt was
+// introduced, since re-deriving is strictly worse than reading the value
+// bursa already computed (extra decode work, and a second place the
+// network/address-type logic could drift from bursa's own). Returns an
+// error that tells the user how to get a wallet if none of the above
+// exist — never prompts, never reads stdin. Mirrors ResolveSkeyPath.
+func ResolveWalletAddress(flagValue, network string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+
+	dir, err := DefaultWalletDir("default")
+	if err != nil {
+		return "", err
+	}
+
+	addressPath := filepath.Join(dir, "address.txt")
+	if data, err := os.ReadFile(addressPath); err == nil {
+		return strings.TrimSpace(string(data)), nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("failed to read %s: %w", addressPath, err)
+	}
+
+	paymentVKeyPath := filepath.Join(dir, "payment.vkey")
+	stakeVKeyPath := filepath.Join(dir, "stake.vkey")
+	if _, err := os.Stat(paymentVKeyPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("--address not given and no default wallet found at %s — run 'andamio wallet create' first, or pass --address explicitly", dir)
+		}
+		return "", fmt.Errorf("failed to check default wallet: %w", err)
+	}
+
+	return AddressFromVKeys(paymentVKeyPath, stakeVKeyPath, network)
 }

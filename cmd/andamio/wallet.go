@@ -21,8 +21,9 @@ var walletCreateCmd = &cobra.Command{
 	Long: `Generate a new Cardano payment/stake key pair entirely offline, for
 use with 'tx sign --skey' and 'tx run --skey'.
 
-Writes payment.skey, payment.vkey, stake.skey, stake.vkey (and, unless
---no-write-mnemonic is set, mnemonic.txt) into a wallet directory. By
+Writes payment.skey, payment.vkey, stake.skey, stake.vkey, address.txt
+(and, unless --no-write-mnemonic is set, mnemonic.txt) into a wallet
+directory. By
 default this is ~/.andamio/wallet/<name>/ (--name defaults to "default"),
 so a fresh install has a usable signing key with zero flags — 'tx sign'
 and 'tx run' fall back to this path when --skey is omitted. Use
@@ -165,6 +166,7 @@ func runWalletCreate(cmd *cobra.Command, args []string) error {
 
 	result := map[string]interface{}{
 		"address":           wallet.PaymentAddress,
+		"address_path":      paths["address.txt"],
 		"stake_address":     wallet.StakeAddress,
 		"payment_skey_path": paths["payment.skey"],
 		"payment_vkey_path": paths["payment.vkey"],
