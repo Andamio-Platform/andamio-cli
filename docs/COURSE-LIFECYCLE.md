@@ -103,9 +103,6 @@ compiled/my-course/101/
 ---
 title: "Module 101: Foundations"
 code: "101"
-description: "Introduction to core concepts"
-image_url: ""
-video_url: ""
 ---
 
 ## SLTs
@@ -115,7 +112,23 @@ video_url: ""
 3. Verify credential hashes
 ```
 
+`title` and `code` are the only `outline.md` frontmatter keys import reads.
+
 Each `lesson-N.md` corresponds to the Nth SLT. The first `# Heading` in each file becomes the lesson title; the remaining content becomes the body.
+
+To give a lesson a video, open its file with a `video_url` frontmatter block:
+
+```markdown
+---
+video_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+---
+
+# Describe the protocol architecture
+
+Lesson body...
+```
+
+A URL sets the lesson's video, `video_url: ""` clears it, and a file with no `video_url` key keeps whatever the module already has. `video_url` is the only key a lesson file supports; another key or an invalid URL fails the import before anything is sent. The Andamio app embeds YouTube links only, so import warns on other URLs and still sends them. `course export` writes the block back for every lesson that has a video.
 
 ### Step 4: Import content to create a DRAFT module
 
