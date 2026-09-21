@@ -555,7 +555,7 @@ func convertLessonToMarkdown(lesson map[string]interface{}) (string, []string) {
 	// shows the video on disk.
 	var frontmatterBlock string
 	if videoURL, ok := lesson["video_url"].(string); ok {
-		if videoURL = sanitizeTitle(videoURL); videoURL != "" {
+		if videoURL = strings.TrimSpace(videoURL); videoURL != "" {
 			frontmatterBlock = fmt.Sprintf("---\n%s: %q\n---\n\n", lessonVideoURLKey, videoURL)
 		}
 	}

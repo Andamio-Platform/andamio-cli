@@ -138,7 +138,7 @@ func TestLessonFrontmatter_Errors(t *testing.T) {
 		block string
 		want  []string
 	}{
-		{"unknown key", "video-url: " + lessonVideoNew, []string{"lesson-1.md", "video-url", "video_url"}},
+		{"unknown key", "video-url: " + lessonVideoNew, []string{"lesson-1.md", "video-url", "video_url", "***"}},
 		{"extra key", "video_url: " + lessonVideoNew + "\nimage_url: https://cdn/x.png", []string{"lesson-1.md", "image_url"}},
 		{"not a url", "video_url: not a url", []string{"lesson-1.md", "video_url"}},
 		{"ftp scheme", "video_url: ftp://host/v.mp4", []string{"lesson-1.md", "http"}},
@@ -171,6 +171,8 @@ func TestLessonFrontmatter_NonFrontmatterFilesUnchanged(t *testing.T) {
 		"unclosed rule":       "---\n\n# Intro\n\nHello.\n",
 		"two rules and prose": "---\n\nFirst para.\n\n---\n\nSecond para.\n",
 		"blank lines first":   "\n\n# Intro\n\nHello.\n",
+		"empty block":         "---\n---\n\n# Intro\n\nHello.\n",
+		"heading in block":    "---\n# Intro\n---\n\nHello.\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			data, err := readCompiledModule(writeLessonModuleDir(t, md))
@@ -236,7 +238,7 @@ func TestLessonFrontmatter_ReportsOnlyChanges(t *testing.T) {
 	})
 }
 
-// R11: a URL the app cannot embed is sent, with a warning in every mode.
+// R11: a URL the app cannot embed is sent, and recorded as a warning.
 func TestLessonFrontmatter_WarnsOnNonYouTubeURL(t *testing.T) {
 	tests := []struct {
 		url  string
@@ -252,24 +254,52 @@ func TestLessonFrontmatter_WarnsOnNonYouTubeURL(t *testing.T) {
 		{"https://m.youtube.com/watch?v=dQw4w9WgXcQ&t=10", false},
 		{"https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", false},
 	}
-	for _, format := range []output.Format{output.FormatText, output.FormatJSON} {
-		for _, tt := range tests {
-			t.Run(string(format)+" "+tt.url, func(t *testing.T) {
-				old := output.GetFormat()
-				_ = output.SetFormat(string(format))
-				t.Cleanup(func() { _ = output.SetFormat(string(old)) })
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			md := "---\nvideo_url: \"" + tt.url + "\"\n---\n\n# Intro\n\nHello.\n"
+			data, err := readCompiledModule(writeLessonModuleDir(t, md))
+			if err != nil {
+				t.Fatalf("readCompiledModule: %v", err)
+			}
+			if got := data.Lessons[0].VideoURL; got != tt.url {
+				t.Errorf("VideoURL = %q, want it kept as %s", got, tt.url)
+			}
+			warned := len(data.VideoWarnings) == 1 &&
+				strings.Contains(data.VideoWarnings[0], "lesson-1.md") && strings.Contains(data.VideoWarnings[0], "YouTube")
+			if warned != tt.warn {
+				t.Errorf("warned = %v, want %v; warnings %q", warned, tt.warn, data.VideoWarnings)
+			}
+		})
+	}
+}
 
-				md := "---\nvideo_url: \"" + tt.url + "\"\n---\n\n# Intro\n\nHello.\n"
-				var lesson map[string]interface{}
-				stderr := captureStderr(t, func() { lesson = payloadLesson(t, md, existingWithLessonVideo(tt.url)) })
-				if lesson["video_url"] != tt.url {
-					t.Errorf("video_url = %v, want it sent as %s", lesson["video_url"], tt.url)
-				}
-				warned := strings.Contains(stderr, "Warning: lesson-1.md") && strings.Contains(stderr, "YouTube")
-				if warned != tt.warn {
-					t.Errorf("warned = %v, want %v; stderr %q", warned, tt.warn, stderr)
-				}
+// R11: importModule prints the warning exactly once, in every output mode.
+func TestImportModule_PrintsVideoWarningOnce(t *testing.T) {
+	md := "---\nvideo_url: https://vimeo.com/123\n---\n\n# Intro\n\nHello.\n"
+	for _, format := range []output.Format{output.FormatText, output.FormatJSON} {
+		t.Run(string(format), func(t *testing.T) {
+			old := output.GetFormat()
+			_ = output.SetFormat(string(format))
+			t.Cleanup(func() { _ = output.SetFormat(string(old)) })
+
+			stub := &assignmentStub{listBodies: []string{listBody(t, nil, "")}}
+			c, _ := stub.serve(t)
+			var stderr string
+			stdout := captureStdout(t, func() {
+				stderr = captureStderr(t, func() {
+					_, err := importModule(ImportParams{
+						Ctx: context.Background(), Client: c, CourseID: "course-1",
+						ModuleDir: writeLessonModuleDir(t, md), DryRun: true, Quiet: true,
+					})
+					if err != nil {
+						t.Errorf("importModule: %v", err)
+					}
+				})
 			})
-		}
+			_ = stdout
+			if n := strings.Count(stderr, "Warning: lesson-1.md"); n != 1 {
+				t.Errorf("warning printed %d times, want 1; stderr %q", n, stderr)
+			}
+		})
 	}
 }

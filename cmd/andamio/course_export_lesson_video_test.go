@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -71,8 +72,54 @@ func TestExportLesson_VideoURLWithoutContent(t *testing.T) {
 	if !strings.Contains(got, "video_url: \""+lessonVideoNew+"\"") {
 		t.Errorf("lesson-1.md = %q, want the frontmatter block", got)
 	}
-	if _, err := readCompiledModule(dir); err != nil {
-		t.Errorf("re-import failed: %v", err)
+	data, err := readCompiledModule(dir)
+	if err != nil {
+		t.Fatalf("re-import failed: %v", err)
+	}
+	if l := data.Lessons[0]; !l.VideoURLSet || l.VideoURL != lessonVideoNew || l.Title != "" {
+		t.Errorf("re-imported lesson = %+v, want the video and no title", l)
+	}
+}
+
+// fetchModuleData must carry video_url from the gateway's slt.lesson object
+// through to the file on disk.
+func TestFetchModuleData_CarriesLessonVideoURL(t *testing.T) {
+	content := map[string]interface{}{
+		"course_module_code": "101",
+		"title":              "Module 101",
+		"module_status":      "DRAFT",
+		"slts": []interface{}{
+			map[string]interface{}{
+				"slt_text": "Do a thing",
+				"lesson": map[string]interface{}{
+					"title": "Intro", "content_json": lessonDoc("Hello."), "video_url": lessonVideoNew,
+				},
+			},
+			map[string]interface{}{"slt_text": "Do another", "lesson": map[string]interface{}{"title": "Two", "content_json": lessonDoc("Hi.")}},
+		},
+	}
+	body, err := json.Marshal(map[string]interface{}{"data": []interface{}{map[string]interface{}{"content": content}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := &assignmentStub{listBodies: []string{string(body)}}
+	c, _ := stub.serve(t)
+
+	data, err := fetchModuleData(context.Background(), c, "course-1", "101")
+	if err != nil {
+		t.Fatalf("fetchModuleData: %v", err)
+	}
+	dir := t.TempDir()
+	if _, err := writeCompiledModule(dir, data); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := os.ReadFile(filepath.Join(dir, "lesson-1.md"))
+	two, _ := os.ReadFile(filepath.Join(dir, "lesson-2.md"))
+	if !strings.HasPrefix(string(one), "---\nvideo_url: \""+lessonVideoNew+"\"\n---\n\n# Intro") {
+		t.Errorf("lesson-1.md = %q, want the video frontmatter", one)
+	}
+	if strings.Contains(string(two), "video_url") {
+		t.Errorf("lesson-2.md = %q, want no frontmatter", two)
 	}
 }
 

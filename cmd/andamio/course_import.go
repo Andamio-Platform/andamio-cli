@@ -102,6 +102,9 @@ type ImportData struct {
 	AssignmentQuiz *quiz.Summary
 	ImageWarnings  []string
 	ImageManifest  map[string]string // filename → original URL from .image-manifest.json
+	// VideoWarnings are lesson video_url values the Andamio app cannot embed.
+	// importModule prints them once, in every output mode.
+	VideoWarnings []string
 }
 
 // LessonImport holds a single lesson's data
@@ -178,6 +181,12 @@ func importModule(p ImportParams) (*ImportResult, error) {
 	data, err := readCompiledModule(p.ModuleDir)
 	if err != nil {
 		return nil, err
+	}
+
+	// Printed here rather than in the parser: the directory is read again
+	// after image uploads, and the warning should appear once.
+	for _, w := range data.VideoWarnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
 	if !p.Quiet && len(data.ImageManifest) > 0 {
@@ -579,9 +588,12 @@ func readCompiledModule(dir string) (*ImportData, error) {
 			return nil, fmt.Errorf("failed to read %s: %w", filepath.Base(lessonFile), err)
 		}
 
-		lessonMD, videoURL, videoURLSet, err := parseLessonFrontmatter(string(content), filepath.Base(lessonFile))
+		lessonMD, video, err := parseLessonFrontmatter(string(content), filepath.Base(lessonFile))
 		if err != nil {
 			return nil, err
+		}
+		if video.Warning != "" {
+			data.VideoWarnings = append(data.VideoWarnings, video.Warning)
 		}
 
 		// Extract H1 as title, convert remaining body to Tiptap (matches app behavior)
@@ -598,8 +610,8 @@ func readCompiledModule(dir string) (*ImportData, error) {
 			Index:       lessonNum,
 			Title:       title,
 			TiptapJSON:  tiptap,
-			VideoURLSet: videoURLSet,
-			VideoURL:    videoURL,
+			VideoURLSet: video.Set,
+			VideoURL:    video.URL,
 		})
 	}
 
@@ -800,9 +812,18 @@ func leadingFrontmatterBlock(md string) (block string, ok bool) {
 	return "", false
 }
 
+// lessonVideo is what a lesson file's frontmatter says about its video. Set
+// is false when there is no block or no video_url key; Set with an empty URL
+// means clear. Warning is non-empty when the app cannot embed URL.
+type lessonVideo struct {
+	Set     bool
+	URL     string
+	Warning string
+}
+
 // parseLessonFrontmatter splits an optional YAML frontmatter block off a
 // lesson file and returns the remaining Markdown plus the video_url it
-// carried. videoURLSet is false when there is no block or no video_url key.
+// carried.
 //
 // A lesson may legitimately open with a thematic break and contain a second
 // one, which is indistinguishable from a frontmatter block by delimiters
@@ -810,61 +831,63 @@ func leadingFrontmatterBlock(md string) (block string, ok bool) {
 // YAML mapping; anything else is returned untouched as Markdown. The exception
 // is a block that mentions video_url and fails to decode: that is an author's
 // broken frontmatter, and importing it as body text would hide the mistake.
-func parseLessonFrontmatter(md, name string) (body, videoURL string, videoURLSet bool, err error) {
+func parseLessonFrontmatter(md, name string) (string, lessonVideo, error) {
 	block, ok := leadingFrontmatterBlock(md)
 	if !ok {
-		return md, "", false, nil
+		return md, lessonVideo{}, nil
 	}
 
 	var fm map[string]interface{}
 	rest, parseErr := frontmatter.Parse(strings.NewReader(md), &fm)
 	if parseErr != nil {
 		if strings.Contains(block, lessonVideoURLKey) {
-			return "", "", false, fmt.Errorf("invalid frontmatter in %s: %w", name, parseErr)
+			return "", lessonVideo{}, fmt.Errorf("invalid frontmatter in %s: %w", name, parseErr)
 		}
-		return md, "", false, nil
+		return md, lessonVideo{}, nil
 	}
 	if len(fm) == 0 {
-		return md, "", false, nil
+		return md, lessonVideo{}, nil
 	}
 
 	for key := range fm {
 		if key != lessonVideoURLKey {
-			return "", "", false, fmt.Errorf("unsupported frontmatter key %q in %s: lesson files support only %s", key, name, lessonVideoURLKey)
+			return "", lessonVideo{}, fmt.Errorf("unsupported frontmatter key %q in %s: lesson files support only %s (if this is lesson text between two thematic breaks, write the first break as *** instead of ---)", key, name, lessonVideoURLKey)
 		}
 	}
 
+	video := lessonVideo{Set: true}
 	switch v := fm[lessonVideoURLKey].(type) {
 	case nil:
 	case string:
-		videoURL = strings.TrimSpace(v)
+		video.URL = strings.TrimSpace(v)
 	default:
-		return "", "", false, fmt.Errorf("invalid %s in %s: expected a URL string, got %T", lessonVideoURLKey, name, v)
+		return "", lessonVideo{}, fmt.Errorf("invalid %s in %s: expected a URL string, got %T", lessonVideoURLKey, name, v)
 	}
-	if videoURL != "" {
-		if err := validateLessonVideoURL(videoURL); err != nil {
-			return "", "", false, fmt.Errorf("invalid %s in %s: %w", lessonVideoURLKey, name, err)
+	if video.URL != "" {
+		u, err := validateLessonVideoURL(video.URL)
+		if err != nil {
+			return "", lessonVideo{}, fmt.Errorf("invalid %s in %s: %w", lessonVideoURLKey, name, err)
 		}
-		if !isYouTubeVideoURL(videoURL) {
-			fmt.Fprintf(os.Stderr, "Warning: %s: %s %q is not a YouTube video link. The Andamio app embeds only YouTube videos, so learners will not see it there.\n", name, lessonVideoURLKey, videoURL)
+		if !isYouTubeVideoURL(u) {
+			video.Warning = fmt.Sprintf("%s: %s %q is not a YouTube video link. The Andamio app embeds only YouTube videos, so learners will not see it there.", name, lessonVideoURLKey, video.URL)
 		}
 	}
-	return string(rest), videoURL, true, nil
+	return string(rest), video, nil
 }
 
 // validateLessonVideoURL requires an absolute http or https URL with a host.
-func validateLessonVideoURL(raw string) error {
+func validateLessonVideoURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("%q is not a URL", raw)
+		return nil, fmt.Errorf("%q is not a URL", raw)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("%q must be an absolute http or https URL", raw)
+		return nil, fmt.Errorf("%q must be an absolute http or https URL", raw)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("%q has no host", raw)
+		return nil, fmt.Errorf("%q has no host", raw)
 	}
-	return nil
+	return u, nil
 }
 
 var (
@@ -880,16 +903,16 @@ var (
 	youTubeIDPathPrefix = []string{"/shorts/", "/embed/", "/live/", "/v/"}
 )
 
-// isYouTubeVideoURL reports whether the Andamio app can embed raw. It mirrors
+// isYouTubeVideoURL reports whether the Andamio app can embed u. It mirrors
 // parseYouTubeVideoId in andamio-app-v2 src/lib/youtube-embed.ts: an exact
 // host allow-list and an 11-character video id. A rule change there is
 // re-mirrored by hand.
-func isYouTubeVideoURL(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil || !youTubeHosts[strings.ToLower(u.Hostname())] {
+func isYouTubeVideoURL(u *url.URL) bool {
+	host := strings.ToLower(u.Hostname())
+	if !youTubeHosts[host] {
 		return false
 	}
-	if strings.ToLower(u.Hostname()) == "youtu.be" {
+	if host == "youtu.be" {
 		id, _, _ := strings.Cut(strings.TrimPrefix(u.Path, "/"), "/")
 		return youTubeVideoIDRe.MatchString(id)
 	}
@@ -1529,7 +1552,7 @@ func updateModuleContent(ctx context.Context, c *client.Client, courseID string,
 
 		// Frontmatter video_url wins over the preserved value; empty clears it.
 		if lesson.VideoURLSet {
-			existingVideo, _ := l["video_url"].(string)
+			existingVideo, _ := existing.Lessons[lesson.Index]["video_url"].(string)
 			delete(l, "video_url")
 			if lesson.VideoURL != "" {
 				l["video_url"] = lesson.VideoURL
