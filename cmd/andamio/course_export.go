@@ -37,6 +37,9 @@ This creates a directory structure that can be edited locally and re-imported:
   ├── assignment.quiz.json  # Module assignment when it is a quiz envelope
   └── assets/             # Downloaded images
 
+A lesson that has a video opens with a YAML frontmatter block holding its
+video_url, which import reads back.
+
 A quiz assignment (content_json type "quiz") is written verbatim to
 assignment.quiz.json and no assignment.md is produced — converting it to
 Markdown would lose it. Import sends assignment.quiz.json back verbatim
@@ -292,7 +295,7 @@ func fetchModuleData(ctx context.Context, c *client.Client, courseID, moduleCode
 
 		// Extract embedded lesson content (LessonV2 with content_json + title)
 		var lessonContent map[string]interface{}
-		var lessonTitle string
+		var lessonTitle, lessonVideoURL string
 		if lesson, ok := sltMap["lesson"].(map[string]interface{}); ok {
 			if contentJSON, ok := lesson["content_json"].(map[string]interface{}); ok {
 				lessonContent = contentJSON
@@ -300,12 +303,15 @@ func fetchModuleData(ctx context.Context, c *client.Client, courseID, moduleCode
 			if t, ok := lesson["title"].(string); ok {
 				lessonTitle = t
 			}
+			if v, ok := lesson["video_url"].(string); ok {
+				lessonVideoURL = v
+			}
 		}
 
 		data.SLTs[i] = SLTData{
 			Index:  sltIndex,
 			Text:   sltText,
-			Lesson: map[string]interface{}{"content_json": lessonContent, "title": lessonTitle},
+			Lesson: map[string]interface{}{"content_json": lessonContent, "title": lessonTitle, "video_url": lessonVideoURL},
 		}
 	}
 
@@ -544,8 +550,18 @@ func convertLessonToMarkdown(lesson map[string]interface{}) (string, []string) {
 		}
 	}
 
+	// A video_url becomes the frontmatter block import reads back. It is built
+	// before the no-content return so a lesson with a video and no body still
+	// shows the video on disk.
+	var frontmatterBlock string
+	if videoURL, ok := lesson["video_url"].(string); ok {
+		if videoURL = sanitizeTitle(videoURL); videoURL != "" {
+			frontmatterBlock = fmt.Sprintf("---\n%s: %q\n---\n\n", lessonVideoURLKey, videoURL)
+		}
+	}
+
 	if contentJSON == nil {
-		return "", nil
+		return frontmatterBlock, nil
 	}
 
 	md, urls := tiptapToMarkdown(contentJSON)
@@ -555,7 +571,7 @@ func convertLessonToMarkdown(lesson map[string]interface{}) (string, []string) {
 		md = "# " + sanitizeTitle(title) + "\n\n" + md
 	}
 
-	return md, urls
+	return frontmatterBlock + md, urls
 }
 
 // sanitizeTitle strips newlines and trims whitespace from a title string.
