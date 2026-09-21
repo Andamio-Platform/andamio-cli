@@ -300,6 +300,7 @@ Import automatically:
 - Extracts `# H1` headings as titles for lessons, introduction, and assignment
 - Uploads new images to the CDN (PNG, JPG, GIF, WebP — max 5MB each)
 - Preserves existing CDN image URLs via the image manifest
+- Reads an optional `video_url` from each lesson's frontmatter (set, clear, or leave unchanged — see File Format)
 - Preserves existing metadata (description, image_url, video_url) not present in markdown
 - Skips SLT updates for approved/published modules (SLTs are locked after approval)
 
@@ -348,6 +349,25 @@ A blockchain is a distributed ledger...
 - Decentralization
 - Immutability
 ```
+
+A lesson may open with YAML frontmatter holding `video_url`, the only supported key:
+```markdown
+---
+video_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+---
+
+# Understanding Blockchain
+
+A blockchain is a distributed ledger...
+```
+
+| Frontmatter | Effect on import |
+|---|---|
+| `video_url: "<url>"` | Sets the lesson's video, replacing the stored one |
+| `video_url: ""` | Clears the lesson's video |
+| no `video_url` key, or no frontmatter | Leaves the stored video unchanged |
+
+The URL must be an absolute `http` or `https` URL; any other key, or an invalid URL, fails the import before anything is sent. The Andamio app embeds YouTube links only (`youtube.com`, `youtu.be`, `youtube-nocookie.com`), so import warns on any other URL and still sends it. `course export` writes the block for every lesson that has a video. A lesson that opens with a `---` thematic break is still read as Markdown: a leading `---` … `---` block counts as frontmatter only when it parses as YAML keys.
 
 **introduction.md** / **assignment.md** — Same format as lessons (H1 = title).
 

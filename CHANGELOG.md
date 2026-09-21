@@ -6,6 +6,16 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Added
+
+- **`video_url` frontmatter on `lesson-N.md`.** A teacher can now set a lesson's video from the CLI. `course import` reads an optional YAML block at the top of a lesson file: `video_url: "<url>"` sets the lesson's video, `video_url: ""` clears it, and a file with no `video_url` key keeps the stored value, as before. `video_url` is the only supported key; another key, or a value that is not an absolute `http`/`https` URL, fails the import before any request and names the file. `course export` writes the block for each lesson that has a video, so export followed by import leaves the module unchanged. Lesson files without frontmatter import and export exactly as they did, including a lesson that opens with a `---` thematic break.
+
+  The Andamio app embeds YouTube links only, so import warns on stderr (in every output mode) when the URL is anything else, and still sends it. In text modes import also prints a line for each lesson whose stored video it changes.
+
+### Fixed
+
+- `docs/COURSE-LIFECYCLE.md` showed `description`, `image_url` and `video_url` keys in the `outline.md` example. Import has only ever read `title` and `code` there; the example now says so.
+
 ## [1.1.0] - 2026-09-06
 
 ### Added
