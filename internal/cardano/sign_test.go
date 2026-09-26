@@ -346,4 +346,3 @@ func TestLoadSigningKey_PlainExternalKey(t *testing.T) {
 		t.Fatal("SigningKey.Sign for a plain key diverges from ed25519.Sign — extended path was taken by mistake")
 	}
 }
-

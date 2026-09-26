@@ -107,7 +107,7 @@ func (w *GeneratedWallet) WriteFiles(dir string, skipMnemonic bool, force bool) 
 		"stake.skey":   w.StakeSKey,
 		// Public info (bursa derives it from the account xprv at wallet
 		// creation and hands it back as PaymentAddress) — persisted here so
-		// ResolveWalletAddress can just read it back rather than
+		// WalletAddress can just read it back rather than
 		// re-deriving it from the vkeys later. Previously wallet create
 		// only ever printed this once and threw it away.
 		"address.txt": w.PaymentAddress + "\n",
@@ -116,14 +116,32 @@ func (w *GeneratedWallet) WriteFiles(dir string, skipMnemonic bool, force bool) 
 		files["mnemonic.txt"] = w.Mnemonic + "\n"
 	}
 
+	// mnemonic.txt is checked even when skipMnemonic is set: a directory
+	// holding only an old mnemonic still belongs to an existing wallet.
 	if !force {
+		existing := []string{"mnemonic.txt"}
 		for name := range files {
+			if name != "mnemonic.txt" {
+				existing = append(existing, name)
+			}
+		}
+		for _, name := range existing {
 			path := filepath.Join(dir, name)
 			if _, err := os.Stat(path); err == nil {
 				return nil, fmt.Errorf("wallet already exists at %s (found %s) — pass --force to overwrite it, or --name/--output-dir to write a new one elsewhere", dir, path)
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return nil, fmt.Errorf("failed to check %s: %w", path, err)
 			}
+		}
+	}
+
+	// A forced overwrite with skipMnemonic writes no mnemonic.txt, so any
+	// existing one is the previous wallet's. Left in place it would sit
+	// next to the new keys and restore the old wallet, not this one.
+	if skipMnemonic {
+		stale := filepath.Join(dir, "mnemonic.txt")
+		if err := os.Remove(stale); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("failed to remove previous wallet's %s: %w", stale, err)
 		}
 	}
 
@@ -177,10 +195,9 @@ func ResolveSkeyPath(flagValue string) (string, error) {
 // the public verification keys — never a .skey or mnemonic — since a base
 // address is fully determined by the payment and stake key *hashes* alone.
 // This is the same construction bursa.GetAddress uses internally, without
-// needing the extended private key bursa.GetAddress requires: wallet
-// create never persists an existing wallet's address anywhere (see
-// clients/projects/andamio/NOTES.md, "Known UX Gaps" #5), so this is the
-// fallback for recovering it from what *is* on disk.
+// needing the extended private key bursa.GetAddress requires. WalletAddress
+// uses it for wallets created before 'wallet create' started writing
+// address.txt.
 func AddressFromVKeys(paymentVKeyPath, stakeVKeyPath, network string) (string, error) {
 	paymentVKey, err := bursa.LoadKeyFromFile(paymentVKeyPath)
 	if err != nil {
@@ -208,41 +225,34 @@ func AddressFromVKeys(paymentVKeyPath, stakeVKeyPath, network string) (string, e
 	return addr.String(), nil
 }
 
-// ResolveWalletAddress returns flagValue unchanged if set. Otherwise it
-// falls back to the default wallet (~/.andamio/wallet/default/):
+// WalletAddress returns the payment address of the wallet in dir: read from
 // address.txt if present (written by WriteFiles at creation time), or
-// derived from payment.vkey/stake.vkey via AddressFromVKeys if not — the
-// vkey path exists only to cover a wallet created before address.txt was
-// introduced, since re-deriving is strictly worse than reading the value
-// bursa already computed (extra decode work, and a second place the
-// network/address-type logic could drift from bursa's own). Returns an
-// error that tells the user how to get a wallet if none of the above
-// exist — never prompts, never reads stdin. Mirrors ResolveSkeyPath.
-func ResolveWalletAddress(flagValue, network string) (string, error) {
-	if flagValue != "" {
-		return flagValue, nil
-	}
-
-	dir, err := DefaultWalletDir("default")
-	if err != nil {
-		return "", err
-	}
-
+// derived from payment.vkey/stake.vkey via AddressFromVKeys if not. derived
+// reports which one happened. The vkey path only covers wallets created
+// before address.txt existed, since re-deriving is strictly worse than
+// reading the value bursa already computed (a second place the
+// network/address-type logic could drift from bursa's own); network is only
+// used on that path. Reads public files only, never a .skey or mnemonic.
+func WalletAddress(dir, network string) (address string, derived bool, err error) {
 	addressPath := filepath.Join(dir, "address.txt")
 	if data, err := os.ReadFile(addressPath); err == nil {
-		return strings.TrimSpace(string(data)), nil
+		return strings.TrimSpace(string(data)), false, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("failed to read %s: %w", addressPath, err)
+		return "", false, fmt.Errorf("failed to read %s: %w", addressPath, err)
 	}
 
 	paymentVKeyPath := filepath.Join(dir, "payment.vkey")
 	stakeVKeyPath := filepath.Join(dir, "stake.vkey")
 	if _, err := os.Stat(paymentVKeyPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("--address not given and no default wallet found at %s — run 'andamio wallet create' first, or pass --address explicitly", dir)
+			return "", false, fmt.Errorf("no wallet found at %s — run 'andamio wallet create' first, or pass --name/--dir to point at an existing one", dir)
 		}
-		return "", fmt.Errorf("failed to check default wallet: %w", err)
+		return "", false, fmt.Errorf("failed to check wallet at %s: %w", dir, err)
 	}
 
-	return AddressFromVKeys(paymentVKeyPath, stakeVKeyPath, network)
+	address, err = AddressFromVKeys(paymentVKeyPath, stakeVKeyPath, network)
+	if err != nil {
+		return "", false, err
+	}
+	return address, true, nil
 }

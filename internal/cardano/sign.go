@@ -394,9 +394,9 @@ func SignMessage(message []byte, key *SigningKey) (*MessageSignResult, error) {
 
 	// Build COSE_Key: { 1: 1 (OKP), 3: -8 (EdDSA), -1: 6 (Ed25519), -2: pubKey }
 	coseKey := map[int]interface{}{
-		1:  1,             // kty: OKP
-		3:  -8,            // alg: EdDSA
-		-1: 6,             // crv: Ed25519
+		1:  1,              // kty: OKP
+		3:  -8,             // alg: EdDSA
+		-1: 6,              // crv: Ed25519
 		-2: []byte(pubKey), // x: public key bytes
 	}
 	coseKeyBytes, err := cbor.Marshal(coseKey)

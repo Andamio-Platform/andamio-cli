@@ -93,9 +93,34 @@ Examples:
 	RunE: runWalletCreate,
 }
 
+var walletAddressCmd = &cobra.Command{
+	Use:   "address",
+	Short: "Print a local wallet's payment address",
+	Long: `Print the payment address of a wallet made by 'andamio wallet create'
+(~/.andamio/wallet/<name>/, --name defaults to "default"), or of the wallet
+in --dir. Use it to fund the wallet, look it up on an explorer, or fill the
+change_address/used_addresses fields of a tx body.
+
+Reads address.txt, which 'wallet create' writes. Wallets created before
+address.txt existed don't have one; for those the address is derived from
+payment.vkey and stake.vkey instead, for --network (defaults to the
+configured gateway's network, else preprod). Only public files are read,
+never a .skey or the mnemonic.
+
+Text output is the bare address on stdout, so it can be captured directly:
+  addr=$(andamio wallet address)
+
+Examples:
+  andamio wallet address
+  andamio wallet address --name treasury
+  andamio wallet address --dir ./payment --output json`,
+	RunE: runWalletAddress,
+}
+
 func init() {
 	rootCmd.AddCommand(walletCmd)
 	walletCmd.AddCommand(walletCreateCmd)
+	walletCmd.AddCommand(walletAddressCmd)
 
 	walletCreateCmd.Flags().
 		String("name", "default", "Wallet name — stored under ~/.andamio/wallet/<name>/")
@@ -107,6 +132,13 @@ func init() {
 		Bool("no-write-mnemonic", false, "Do not write mnemonic.txt — print it once to stderr instead")
 	walletCreateCmd.Flags().
 		Bool("force", false, "Overwrite an existing wallet at the target directory")
+
+	walletAddressCmd.Flags().
+		String("name", "default", "Wallet name — read from ~/.andamio/wallet/<name>/")
+	walletAddressCmd.Flags().
+		String("dir", "", "Read the wallet in this directory instead (mutually exclusive with --name)")
+	walletAddressCmd.Flags().
+		String("network", "preprod", "Network to derive the address for when the wallet has no address.txt (preprod, mainnet, preview) — defaults to the configured gateway's network when not given")
 }
 
 func runWalletCreate(cmd *cobra.Command, args []string) error {
@@ -191,32 +223,54 @@ func runWalletCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// printSecurityWarnings echoes key/mnemonic handling guidance to stderr,
-// scaled to what this run actually did (mnemonic written vs. shown-once,
-// preprod/preview vs. mainnet). Always printed regardless of --output —
-// stderr doesn't touch the JSON contract on stdout, and scripted callers
-// are exactly the audience most likely to never see it otherwise.
-func printSecurityWarnings(wallet *cardano.GeneratedWallet, dir, network string, noWriteMnemonic bool, paths map[string]string) {
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "SECURITY WARNING: %s (and %s) can sign transactions and move every fund at this address — with no further confirmation from you.\n", paths["payment.skey"], paths["stake.skey"])
-	fmt.Fprintf(os.Stderr, "  - Keep %s private. Never commit it to git, sync it to cloud storage/shared drives, or paste its contents into chat, an issue, a log, or an AI tool.\n", dir)
-	fmt.Fprintln(os.Stderr, "  - The files on disk are 0600, but any copy you make (backup drive, password manager entry) only keeps that protection if you set it yourself — check permissions on copies too.")
-	fmt.Fprintln(os.Stderr, "  - If this key is ever exposed, funds can be moved instantly and irreversibly. There is no support desk, chargeback, or recovery — treat exposure as a total loss of everything at this address.")
+func runWalletAddress(cmd *cobra.Command, args []string) error {
+	name, _ := cmd.Flags().GetString("name")
+	dir, _ := cmd.Flags().GetString("dir")
+	network, _ := cmd.Flags().GetString("network")
 
-	if noWriteMnemonic {
-		fmt.Fprintf(os.Stderr,
-			"\nMnemonic (shown once — not written to disk by this command, will not be shown again):\n\n  %s\n\n",
-			wallet.Mnemonic)
-		fmt.Fprintln(os.Stderr, "Write it down now, offline, before doing anything else. If it's lost, this wallet is unrecoverable — there is no reset and no account recovery.")
-	} else {
-		fmt.Fprintf(os.Stderr, "  - %s is written in plaintext and is even more sensitive than the .skey files: it can regenerate every key derived from it, including any future accounts on this wallet.\n", paths["mnemonic.txt"])
-		fmt.Fprintln(os.Stderr, "    Move it to a password manager or encrypted storage and delete the plaintext copy once it's backed up, or rerun with --no-write-mnemonic to avoid writing it to disk at all.")
+	if cmd.Flags().Changed("name") && cmd.Flags().Changed("dir") {
+		return fmt.Errorf("--name and --dir are mutually exclusive")
 	}
 
-	if network == "mainnet" {
-		fmt.Fprintln(os.Stderr, "  - This is a MAINNET wallet: real ADA, not test funds. For anything beyond small amounts, consider a hardware wallet instead of a CLI-generated hot key.")
+	if !cmd.Flags().Changed("network") {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if configured := config.NetworkForBaseURL(cfg.BaseURL); configured != "" {
+			network = configured
+		}
 	}
-	fmt.Fprintln(os.Stderr)
+
+	if dir == "" {
+		var err error
+		dir, err = cardano.DefaultWalletDir(name)
+		if err != nil {
+			return err
+		}
+	}
+
+	address, derived, err := cardano.WalletAddress(dir, network)
+	if err != nil {
+		return err
+	}
+
+	source := "address.txt"
+	if derived {
+		source = "vkeys"
+		fmt.Fprintf(os.Stderr, "Note: %s has no address.txt (created before it was added); derived the %s address from payment.vkey/stake.vkey.\n", dir, network)
+	}
+
+	if output.GetFormat() == output.FormatJSON {
+		return output.PrintJSON(map[string]interface{}{
+			"address":    address,
+			"wallet_dir": dir,
+			"source":     source,
+		})
+	}
+
+	fmt.Println(address)
+	return nil
 }
 
 // printSecurityWarnings echoes key/mnemonic handling guidance to stderr,
