@@ -259,6 +259,15 @@ want that.
 - `tx types` — List transaction types
 - `tx status <tx-hash>` — Get transaction status
 
+### `andamio wallet`
+
+- `wallet create` — Generate a local payment/stake key pair offline, written to `~/.andamio/wallet/<name>/` (`--name` defaults to `default`, `--output-dir` for elsewhere). Network follows the configured gateway unless `--network` is given. Refuses to overwrite an existing wallet without `--force`
+- `wallet address` — Print a wallet's payment address (`--name` or `--dir`); bare address on stdout, so `addr=$(andamio wallet address)` works
+
+`tx sign` and `tx run` use the `default` wallet's `payment.skey` when `--skey` is omitted.
+
+A new wallet has no funds and no Access Token, so it can't log in or build transactions on its own yet. `andamio wallet create --help` walks through funding it, minting an Access Token onto it, and getting an API key. The key files and `mnemonic.txt` can move every fund at the address: keep them out of git, cloud sync and chat.
+
 ### `andamio apikey`
 
 - `apikey usage` — Get API key usage stats

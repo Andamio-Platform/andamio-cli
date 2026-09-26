@@ -346,3 +346,60 @@ func TestLoadSigningKey_PlainExternalKey(t *testing.T) {
 		t.Fatal("SigningKey.Sign for a plain key diverges from ed25519.Sign — extended path was taken by mistake")
 	}
 }
+
+// TestLoadSigningKey_RejectsExtendedKeyWithMismatchedPubKey covers the
+// consistency check in LoadSigningKey: the extended .skey stores kL and the
+// public key side by side, and a file where they disagree must be refused
+// at load time rather than producing signatures the chain will reject.
+func TestLoadSigningKey_RejectsExtendedKeyWithMismatchedPubKey(t *testing.T) {
+	wallet, err := GenerateWallet("preprod")
+	if err != nil {
+		t.Fatalf("GenerateWallet failed: %v", err)
+	}
+	dir := t.TempDir()
+	if _, err := wallet.WriteFiles(dir, true, false); err != nil {
+		t.Fatalf("WriteFiles failed: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "payment.skey"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]string
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+
+	// cborHex is a 2-byte CBOR header (5880) then kL(32) || kR(32) ||
+	// pubkey(32) || chaincode(32).
+	const header = 2
+	cases := map[string]int{
+		"kL byte flipped":     header + 5,
+		"pubkey byte flipped": header + 64 + 5,
+	}
+	for name, offset := range cases {
+		t.Run(name, func(t *testing.T) {
+			b, err := hex.DecodeString(envelope["cborHex"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			b[offset] ^= 0x01
+			tampered := map[string]string{}
+			for k, v := range envelope {
+				tampered[k] = v
+			}
+			tampered["cborHex"] = hex.EncodeToString(b)
+			out, err := json.Marshal(tampered)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "payment.skey")
+			if err := os.WriteFile(path, out, 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := LoadSigningKey(path); err == nil {
+				t.Fatal("LoadSigningKey accepted an extended key whose kL and stored pubkey disagree")
+			}
+		})
+	}
+}

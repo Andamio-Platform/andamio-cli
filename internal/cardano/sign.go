@@ -90,9 +90,19 @@ func LoadSigningKey(path string) (*SigningKey, error) {
 		if len(loaded.VKey) != 32 || len(loaded.SKey) < 64 {
 			return nil, fmt.Errorf("invalid extended signing key %q: unexpected key shape (vkey=%dB, skey=%dB)", loaded.Type, len(loaded.VKey), len(loaded.SKey))
 		}
+		// The file stores the public key alongside kL, and nothing checks
+		// the two agree. A mismatch (corrupted, mislabeled or mis-sliced
+		// key material) would sign with one key and claim another, which
+		// the local ed25519.Verify self-check can't catch: it only
+		// surfaces on-chain as MissingVKeyWitnessesUTXOW. A = kL*B is the
+		// defining relation for an extended key, so check it here.
+		scalar := loaded.SKey[0:32]
+		if !bytes.Equal(extendedPublicKey(scalar), loaded.VKey) {
+			return nil, fmt.Errorf("invalid extended signing key %s: its private scalar does not match the public key stored with it — the file is corrupted or was assembled from mismatched key material, and signatures from it would be rejected on-chain", path)
+		}
 		return &SigningKey{
 			extended: true,
-			scalar:   append([]byte{}, loaded.SKey[0:32]...),
+			scalar:   append([]byte{}, scalar...),
 			prefix:   append([]byte{}, loaded.SKey[32:64]...),
 			PubKey:   ed25519.PublicKey(loaded.VKey),
 		}, nil
@@ -132,12 +142,7 @@ func LoadSigningKey(path string) (*SigningKey, error) {
 // safe and required before it can be used in edwards25519.Scalar
 // arithmetic, which only accepts canonical (< L) values.
 func signExtended(scalar, prefix, pubKey, message []byte) []byte {
-	kLBuf := make([]byte, 64)
-	copy(kLBuf, scalar)
-	kL, err := edwards25519.NewScalar().SetUniformBytes(kLBuf)
-	if err != nil {
-		panic(fmt.Sprintf("signExtended: reducing kL mod L: %v", err))
-	}
+	kL := reduceKL(scalar)
 
 	rHash := sha512.Sum512(append(append([]byte{}, prefix...), message...))
 	r, err := edwards25519.NewScalar().SetUniformBytes(rHash[:])
@@ -161,6 +166,24 @@ func signExtended(scalar, prefix, pubKey, message []byte) []byte {
 	copy(sig[:32], RBytes)
 	copy(sig[32:], S.Bytes())
 	return sig
+}
+
+// reduceKL reduces an extended key's 32-byte kL mod L so it can be used in
+// edwards25519.Scalar arithmetic (see signExtended for why that's safe).
+func reduceKL(scalar []byte) *edwards25519.Scalar {
+	kLBuf := make([]byte, 64)
+	copy(kLBuf, scalar)
+	kL, err := edwards25519.NewScalar().SetUniformBytes(kLBuf)
+	if err != nil {
+		panic(fmt.Sprintf("reduceKL: reducing kL mod L: %v", err))
+	}
+	return kL
+}
+
+// extendedPublicKey returns A = kL*B, the public key an extended key's kL
+// actually corresponds to.
+func extendedPublicKey(scalar []byte) []byte {
+	return new(edwards25519.Point).ScalarBaseMult(reduceKL(scalar)).Bytes()
 }
 
 // SignTransaction signs an unsigned Cardano transaction CBOR hex string.
