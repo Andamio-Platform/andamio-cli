@@ -68,19 +68,20 @@ files, are required before it's useful for 'user login' / 'dev login':
                  ADA on mainnet — see README.md#networks).
 
   API key        Not minted by this command and not obtainable via the
-                 CLI at all. Get one by connecting the wallet that holds
-                 your Access Token at:
-                   preprod: https://preprod.app.andamio.io/api-setup
-                   mainnet: https://app.andamio.io/api-setup
-                 then store it locally with:
+                 CLI. API keys come from an Andamio developer account,
+                 and registering one requires a MAINNET Access Token,
+                 even if you only ever work on preprod. Create keys for
+                 either network at https://app.andamio.io/api-setup
+                 (network selector; the preprod app's /api-setup
+                 redirects by design), then store one with:
                    andamio auth login --api-key <key>
                  Only one key is stored at a time: switching 'andamio
                  config set-url' between preprod and mainnet does NOT
                  keep the previous network's key around, and there is no
                  local backup of it once overwritten — save both keys
                  somewhere yourself (password manager, etc.) before
-                 switching, or you'll need to re-visit api-setup to
-                 recover the one you left behind.
+                 switching. A key's value is shown only once, at
+                 creation, so a lost one means creating a new key.
 
 Until both are in place, this wallet is only good for 'tx sign' / 'tx run'
 on transactions someone else's already-authenticated session built for it.
