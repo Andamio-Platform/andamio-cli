@@ -74,6 +74,11 @@ document to Markdown for you. Do **not** walk `content.evidence` yourself; that
 field is the raw hash-bearing document and exists for hash verification, not
 for reading. The student is identified by `student_alias`.
 
+For a **prompts** assignment (a written assignment asked in parts), the CLI
+also adds `content.evidence_answers`: `[{prompt_id, label, question, answer}]`,
+one record per part. Assess each answer against the SLTs it speaks to, and quote
+the answer by its `label`.
+
 **If a command fails**, branch on the exit code rather than the message: 0 with
 an empty `.data` means nothing is awaiting review, 3 means not permitted, 5
 means the service is unreachable. Run `andamio help exit-codes` for the table.

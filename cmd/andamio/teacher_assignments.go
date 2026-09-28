@@ -63,23 +63,46 @@ Machine-readable output contract (--output json):
   .data[].content                 present with --course; absent on the
                                   no-filter summary
   .data[].content.commitment_status  raw gateway enum (see above)
-  .data[].content.evidence        the submission as a Tiptap JSON document,
-                                  passed through verbatim — this is the
-                                  hash-bearing form
+  .data[].content.evidence        the submission, passed through verbatim.
+                                  This is the hash-bearing form: a Tiptap
+                                  document for written work, or a
+                                  prompts-evidence envelope for a prompts
+                                  assignment
   .data[].content.evidence_text   the same submission rendered as Markdown,
-                                  added by the CLI. Absent when there is no
-                                  evidence. Read this to get the prose; read
-                                  .content.evidence to verify a hash.
+                                  added by the CLI. For prompts, one block
+                                  per answer: "**<label>.** <question>" and
+                                  the answer on the next line. Absent when
+                                  there is nothing to show. Read this to get
+                                  the prose; read .content.evidence to verify
+                                  a hash.
+  .data[].content.evidence_answers  prompts assignments only, added by the
+                                  CLI: [{prompt_id, label, question, answer}]
+                                  in submitted order. Absent otherwise.
 
-Read a submission without walking the Tiptap tree:
+Read a submission without walking the evidence:
   andamio teacher assignments list --course <id> --output json \
     | jq -r '.data[] | select(.content.commitment_status=="SUBMITTED")
              | "\(.student_alias): \(.content.evidence_text)"'
 
+Pull every answer from a prompts assignment as tab-separated rows:
+  andamio teacher assignments list --course <id> --module <code> --output json \
+    | jq -r '.data[] | .student_alias as $s
+             | .content.evidence_answers[]? | [$s, .prompt_id, .answer] | @tsv'
+
+--output csv writes one row per answer: student_alias, course_module_code,
+status, prompt_id, label, question, answer. A written submission is one row
+with blank prompt columns and its Markdown in answer. Add --wide for one row
+per student and one column per prompt id. --wide needs every row from one
+prompts module, so pass --course and --module with it. --output markdown
+writes one section per student.
+
+--module keeps only that module's rows, in every output format.
+
 Examples:
   andamio teacher assignments list
   andamio teacher assignments list --course <course-id>
-  andamio teacher assignments list --course <course-id> --output json`,
+  andamio teacher assignments list --course <course-id> --output json
+  andamio teacher assignments list --course <course-id> --module <code> --output csv --wide`,
 	RunE: runTeacherAssignmentsList,
 }
 
@@ -89,9 +112,10 @@ var teacherAssignmentsGetCmd = &cobra.Command{
 	Long: `Get full details for a specific student's assignment commitment.
 
 Emits the matched row from 'teacher assignments list', including
-content.evidence_text — the submission rendered as Markdown alongside the
-raw Tiptap document in content.evidence. See 'teacher assignments list --help'
-for the full output contract.
+content.evidence_text (the submission rendered as Markdown) beside the raw
+evidence in content.evidence, and content.evidence_answers for a prompts
+assignment. --output csv and --output markdown render the same way as list.
+See 'teacher assignments list --help' for the full output contract.
 
 Read one submission:
   andamio teacher assignments get <course-id> <module-code> <student-alias> \
