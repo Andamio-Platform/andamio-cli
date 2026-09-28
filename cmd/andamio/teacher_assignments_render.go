@@ -81,7 +81,9 @@ func renderTeacherAssignmentsCSV(data []interface{}, wide bool, w io.Writer) err
 	} else {
 		records = longAssignmentsCSV(views)
 	}
-	for _, record := range records[1:] {
+	// Every cell, header included: the --wide header is built from prompt ids,
+	// which come from learner-submitted evidence.
+	for _, record := range records {
 		for i, cell := range record {
 			record[i] = neutralizeCSVFormula(cell)
 		}
@@ -97,10 +99,12 @@ func renderTeacherAssignmentsCSV(data []interface{}, wide bool, w io.Writer) err
 // a character spreadsheet apps read as the start of a formula (=, +, -, @, tab,
 // carriage return). Answers are learner-typed, and this CSV exists to be opened
 // in Excel or Sheets, where "=HYPERLINK(...)" would otherwise run. The quote
-// makes the apps treat the cell as text. Header cells are CLI-authored and left
-// alone.
+// makes the apps treat the cell as text. Leading spaces are looked past,
+// because some importers (LibreOffice with "Trim spaces") strip them before
+// deciding.
 func neutralizeCSVFormula(cell string) string {
-	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+	trimmed := strings.TrimLeft(cell, " ")
+	if trimmed != "" && strings.ContainsRune("=+-@\t\r", rune(trimmed[0])) {
 		return "'" + cell
 	}
 	return cell
@@ -127,7 +131,9 @@ func longAssignmentsCSV(views []commitmentView) [][]string {
 // same thing on every row. A row in that module with written (Tiptap)
 // evidence, submitted before the module switched to prompts, keeps blank
 // prompt cells and gets its Markdown in a trailing evidence_text column, which
-// exists only when such a row does. All checks run before anything is written.
+// exists only when such a row does. Prompt ids come from learner-submitted
+// evidence, so an empty id or one that would duplicate a fixed column is
+// refused rather than written. All checks run before anything is written.
 func wideAssignmentsCSV(views []commitmentView) ([][]string, error) {
 	if len(views) == 0 {
 		return [][]string{assignmentsCSVBaseHeader}, nil
@@ -143,6 +149,9 @@ func wideAssignmentsCSV(views []commitmentView) ([][]string, error) {
 			return nil, fmt.Errorf("--wide needs every row from one prompts module, but this result spans more than one module; %s", hint)
 		}
 		for _, a := range v.answers {
+			if a.PromptID == "" || slices.Contains(assignmentsCSVBaseHeader, a.PromptID) || a.PromptID == evidenceTextField {
+				return nil, fmt.Errorf("--wide cannot use prompt id %q from %s's submission as a column name: it is empty or matches a fixed column. Run without --wide for one row per answer", a.PromptID, v.alias)
+			}
 			if !seen[a.PromptID] {
 				seen[a.PromptID] = true
 				ids = append(ids, a.PromptID)

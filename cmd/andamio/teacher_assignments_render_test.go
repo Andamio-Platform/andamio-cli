@@ -485,3 +485,63 @@ func TestRenderTeacherAssignmentsCSV_LeavesOrdinaryCellsAlone(t *testing.T) {
 		t.Errorf("row = %v", got)
 	}
 }
+
+// Prompt ids come from the learner's evidence, which is opaque JSON a learner
+// can submit directly, so the --wide header cells built from them are
+// untrusted and get the same formula guard as data cells.
+func TestRenderTeacherAssignmentsCSV_WideGuardsHeaderFromEvidence(t *testing.T) {
+	data := enrichedRows(assignmentRow("ana", "102", "SUBMITTED", promptsEvidence(
+		[4]string{`=HYPERLINK("http://evil","click")`, "L", "Q?", "answer"},
+	)))
+	var buf bytes.Buffer
+	if err := renderTeacherAssignmentsCSV(data, true, &buf); err != nil {
+		t.Fatal(err)
+	}
+	header := readCSV(t, buf.String())[0]
+	if got := header[3]; got != `'=HYPERLINK("http://evil","click")` {
+		t.Errorf("header cell = %q, want it prefixed with a single quote", got)
+	}
+}
+
+// A prompt id equal to a base column would duplicate that header, and readers
+// that key by header name silently overwrite one column with the other. An
+// empty id would produce a nameless column. --wide refuses both.
+func TestRenderTeacherAssignmentsCSV_WideRefusesCollidingPromptIDs(t *testing.T) {
+	for _, id := range []string{"student_alias", "course_module_code", "status", "evidence_text", ""} {
+		t.Run(fmt.Sprintf("%q", id), func(t *testing.T) {
+			data := enrichedRows(
+				assignmentRow("ana", "102", "SUBMITTED", promptsEvidence(fcbAnswers...)),
+				assignmentRow("mallory", "102", "SUBMITTED", promptsEvidence([4]string{id, "L", "Q?", "x"})),
+			)
+			var buf bytes.Buffer
+			err := renderTeacherAssignmentsCSV(data, true, &buf)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), "mallory") || !strings.Contains(err.Error(), "without --wide") {
+				t.Errorf("error = %q, want the student named and the long-form way out", err)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("wrote output before failing:\n%s", buf.String())
+			}
+		})
+	}
+}
+
+// Some importers (LibreOffice with "Trim spaces") strip leading spaces before
+// deciding a cell is a formula, so the guard looks past them.
+func TestNeutralizeCSVFormula_LooksPastLeadingSpaces(t *testing.T) {
+	cases := map[string]string{
+		" =1+1":      "' =1+1",
+		"   @SUM(A)": "'   @SUM(A)",
+		"  plain":    "  plain",
+		"a =b":       "a =b",
+		"":           "",
+		"   ":        "   ",
+	}
+	for in, want := range cases {
+		if got := neutralizeCSVFormula(in); got != want {
+			t.Errorf("neutralizeCSVFormula(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

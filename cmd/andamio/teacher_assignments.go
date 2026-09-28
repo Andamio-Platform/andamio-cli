@@ -94,9 +94,10 @@ status, prompt_id, label, question, answer. A written submission is one row
 with blank prompt columns and its Markdown in answer. Add --wide for one row
 per student and one column per prompt id. --wide needs every row from one
 prompts module, so pass --course and --module with it. A cell that starts
-with =, +, -, @, a tab or a carriage return is written with a leading single
-quote, so Excel and Sheets show it as text instead of running it as a
-formula. --output markdown writes one section per student.
+with =, +, -, @, a tab or a carriage return (after any leading spaces) is
+written with a leading single quote, so Excel and Sheets show it as text
+instead of running it as a formula. --wide refuses a prompt id that is empty
+or matches a fixed column name. --output markdown writes one section per student.
 
 --module keeps only that module's rows, in every output format.
 
