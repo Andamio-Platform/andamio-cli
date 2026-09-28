@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/prompts"
@@ -83,7 +84,7 @@ func renderTeacherAssignmentsCSV(data []interface{}, wide bool, w io.Writer) err
 }
 
 func longAssignmentsCSV(views []commitmentView) [][]string {
-	header := append(append([]string{}, assignmentsCSVBaseHeader...), "prompt_id", "label", "question", "answer")
+	header := slices.Concat(assignmentsCSVBaseHeader, []string{"prompt_id", "label", "question", "answer"})
 	records := [][]string{header}
 	for _, v := range views {
 		if len(v.answers) == 0 {
@@ -132,7 +133,7 @@ func wideAssignmentsCSV(views []commitmentView) ([][]string, error) {
 		return nil, fmt.Errorf("--wide needs a prompts assignment, but module %s has no prompts submissions; %s", first.module, hint)
 	}
 
-	header := append(append([]string{}, assignmentsCSVBaseHeader...), ids...)
+	header := slices.Concat(assignmentsCSVBaseHeader, ids)
 	if written {
 		header = append(header, evidenceTextField)
 	}
