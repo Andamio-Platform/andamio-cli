@@ -364,3 +364,42 @@ func teacherAssignmentsHandlerEnvURL(t *testing.T, url string) {
 		t.Fatalf("seed config: %v", err)
 	}
 }
+
+// A degraded read (206 with meta.warning) must warn on stderr in CSV and
+// Markdown, on both list and get, per the every-mode-except-JSON rule.
+func TestTeacherAssignments_DegradedReadWarnsInCSVAndMarkdown(t *testing.T) {
+	const warning = "DB API unavailable, showing on-chain data only"
+	body := strings.Replace(twoModuleBody, `"meta": {"source": "merged"}`,
+		`"meta": {"source": "merged", "warning": "`+warning+`"}`, 1)
+
+	for _, format := range []string{"csv", "markdown"} {
+		t.Run("list/"+format, func(t *testing.T) {
+			teacherAssignmentsHandlerEnv(t, body)
+			stderr := captureStderr(t, func() {
+				if _, err := runListHandler(t, format, map[string]string{"course": "C1"}); err != nil {
+					t.Fatal(err)
+				}
+			})
+			if !strings.Contains(stderr, warning) {
+				t.Errorf("stderr = %q, want the degraded-read warning", stderr)
+			}
+		})
+		t.Run("get/"+format, func(t *testing.T) {
+			teacherAssignmentsHandlerEnv(t, body)
+			cmd := teacherAssignmentsGetCmd
+			cmd.SetContext(context.Background())
+			stderr := captureStderr(t, func() {
+				captureStdout(t, func() {
+					_ = output.SetFormat(format)
+					t.Cleanup(func() { _ = output.SetFormat("text") })
+					if err := cmd.RunE(cmd, []string{"C1", "102", "ana"}); err != nil {
+						t.Fatal(err)
+					}
+				})
+			})
+			if !strings.Contains(stderr, warning) {
+				t.Errorf("stderr = %q, want the degraded-read warning", stderr)
+			}
+		})
+	}
+}

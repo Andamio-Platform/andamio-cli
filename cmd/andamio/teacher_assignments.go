@@ -402,8 +402,10 @@ func runTeacherAssignmentsGet(cmd *cobra.Command, args []string) error {
 		if mCode == moduleCode && alias == studentAlias {
 			switch output.GetFormat() {
 			case output.FormatCSV:
+				warnMetaWarning(resp)
 				return renderTeacherAssignmentsCSV([]interface{}{m}, false, os.Stdout)
 			case output.FormatMarkdown:
+				warnMetaWarning(resp)
 				return renderTeacherAssignmentsMarkdown([]interface{}{m}, os.Stdout)
 			}
 			return output.PrintJSON(m)
