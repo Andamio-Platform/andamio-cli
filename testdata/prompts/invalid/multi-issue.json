@@ -1,0 +1,16 @@
+{
+  "type": "prompts",
+  "version": 1,
+  "prompts": [
+    {
+      "id": "cause",
+      "label": "The cause",
+      "question": "What should people see?"
+    },
+    {
+      "id": "cause",
+      "label": "",
+      "question": "Q"
+    }
+  ]
+}

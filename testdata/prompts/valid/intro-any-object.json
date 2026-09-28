@@ -1,0 +1,24 @@
+{
+  "type": "prompts",
+  "version": 1,
+  "prompts": [
+    {
+      "id": "cause",
+      "label": "The cause",
+      "question": "What should people see?"
+    },
+    {
+      "id": "value",
+      "label": "The value",
+      "question": "Which value does it connect to?"
+    },
+    {
+      "id": "ask",
+      "label": "The ask",
+      "question": "What one thing would you ask?"
+    }
+  ],
+  "intro": {
+    "type": "paragraph"
+  }
+}

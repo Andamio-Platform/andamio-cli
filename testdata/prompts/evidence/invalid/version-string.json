@@ -1,0 +1,24 @@
+{
+  "type": "prompts-evidence",
+  "version": "1",
+  "answers": [
+    {
+      "promptId": "cause",
+      "label": "The cause",
+      "question": "What should people see?",
+      "answer": "Plastic at matches."
+    },
+    {
+      "promptId": "value",
+      "label": "The value",
+      "question": "Which value does it connect to?",
+      "answer": "Teamwork."
+    },
+    {
+      "promptId": "ask",
+      "label": "The ask",
+      "question": "What one thing would you ask?",
+      "answer": "Bring a bottle."
+    }
+  ]
+}
