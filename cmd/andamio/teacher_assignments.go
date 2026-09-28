@@ -12,6 +12,7 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
+	"github.com/Andamio-Platform/andamio-cli/internal/prompts"
 	"github.com/spf13/cobra"
 )
 
@@ -165,6 +166,11 @@ func fetchTeacherAssignmentsList(ctx context.Context, c *client.Client, courseID
 // not an implementation detail — see enrichCommitmentEvidence.
 const evidenceTextField = "evidence_text"
 
+// evidenceAnswersField is the sibling key carrying a prompts submission as
+// structured {prompt_id, label, question, answer} records. Also a documented
+// output contract.
+const evidenceAnswersField = "evidence_answers"
+
 // enrichCommitmentRows adds decoded evidence to every row in a
 // assignment-commitments envelope. Missing, empty or non-array `data` is a
 // no-op: the no-`--course` summary response has a different shape and must
@@ -181,8 +187,10 @@ func enrichCommitmentRows(resp map[string]interface{}) {
 	}
 }
 
-// enrichCommitmentEvidence sets content.evidence_text to the Markdown rendering
-// of content.evidence, leaving content.evidence itself untouched.
+// enrichCommitmentEvidence sets content.evidence_text to a Markdown rendering
+// of content.evidence, leaving content.evidence itself untouched. For prompts
+// evidence (a written assignment asked in parts, cli#171) it also sets
+// content.evidence_answers.
 //
 // Why a sibling field rather than a replacement: content.evidence is
 // hash-bearing. The on-chain commitment hash is computed over the normalized
@@ -200,7 +208,10 @@ func enrichCommitmentRows(resp map[string]interface{}) {
 //
 // Output contract:
 //   - evidence_text is present only when content.evidence is a Tiptap document
-//     object. It is absent — not empty-string — otherwise.
+//     object or prompts evidence with a non-blank rendering. It is absent — not
+//     empty-string — otherwise, including for quiz evidence.
+//   - evidence_answers is present only for prompts evidence with at least one
+//     answer, in stored order, with snake_case keys.
 //   - Rows without a content object (the no-`--course` summary shape) are
 //     untouched, exactly as they already are for commitment_status.
 //   - content.evidence is never modified.
@@ -215,6 +226,16 @@ func enrichCommitmentEvidence(row map[string]interface{}) {
 	}
 	evidence, ok := content["evidence"].(map[string]interface{})
 	if !ok {
+		return
+	}
+	if answers, ok := prompts.Answers(evidence); ok {
+		if len(answers) == 0 {
+			return
+		}
+		content[evidenceAnswersField] = answers
+		if text := renderPromptsAnswers(answers); text != "" {
+			content[evidenceTextField] = text
+		}
 		return
 	}
 	text, _ := tiptapToMarkdown(evidence)
@@ -339,4 +360,15 @@ func runTeacherAssignmentsGet(cmd *cobra.Command, args []string) error {
 		Message: fmt.Sprintf("no commitment found for student %q in module %s. Run 'andamio teacher assignments list --course %s' to see pending commitments",
 			studentAlias, moduleCode, courseID),
 	}
+}
+
+// renderPromptsAnswers renders prompts answers as one block per answer, the
+// label and question on one line and the answer on the next, blocks separated
+// by a blank line.
+func renderPromptsAnswers(answers []prompts.Answer) string {
+	blocks := make([]string, 0, len(answers))
+	for _, a := range answers {
+		blocks = append(blocks, fmt.Sprintf("**%s.** %s\n%s", a.Label, a.Question, a.Answer))
+	}
+	return strings.TrimSpace(strings.Join(blocks, "\n\n"))
 }
