@@ -1,0 +1,366 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/csv"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/Andamio-Platform/andamio-cli/internal/output"
+)
+
+// assignmentRow builds a gateway commitment row. evidence may be nil.
+func assignmentRow(alias, module, status string, evidence interface{}) map[string]interface{} {
+	content := map[string]interface{}{"commitment_status": status}
+	if evidence != nil {
+		content["evidence"] = evidence
+	}
+	return map[string]interface{}{
+		"course_id": "C1", "course_module_code": module, "student_alias": alias, "content": content,
+	}
+}
+
+// enrichedRows runs rows through the same enrichment the fetch path applies.
+func enrichedRows(rows ...map[string]interface{}) []interface{} {
+	data := make([]interface{}, 0, len(rows))
+	for _, r := range rows {
+		data = append(data, r)
+	}
+	enrichCommitmentRows(map[string]interface{}{"data": data})
+	return data
+}
+
+func readCSV(t *testing.T, s string) [][]string {
+	t.Helper()
+	records, err := csv.NewReader(strings.NewReader(s)).ReadAll()
+	if err != nil {
+		t.Fatalf("output is not valid CSV: %v\n%s", err, s)
+	}
+	return records
+}
+
+var longHeader = []string{"student_alias", "course_module_code", "status", "prompt_id", "label", "question", "answer"}
+
+func TestRenderTeacherAssignmentsCSV_LongMixesPromptsAndWritten(t *testing.T) {
+	data := enrichedRows(
+		assignmentRow("ana", "102", "SUBMITTED", promptsEvidence(fcbAnswers...)),
+		assignmentRow("jordi", "101", "SUBMITTED", tiptapDoc("Written work.")),
+		assignmentRow("pau", "102", "AWAITING_SUBMISSION", nil),
+		map[string]interface{}{"course_id": "C1", "course_module_code": "103", "student_alias": "summary"},
+	)
+	var buf bytes.Buffer
+	if err := renderTeacherAssignmentsCSV(data, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := readCSV(t, buf.String())
+	want := [][]string{
+		longHeader,
+		{"ana", "102", "SUBMITTED", "c102-cause", "The cause", fcbAnswers[0][2], fcbAnswers[0][3]},
+		{"ana", "102", "SUBMITTED", "c102-value", "The value", fcbAnswers[1][2], fcbAnswers[1][3]},
+		{"ana", "102", "SUBMITTED", "c102-ask", "The ask", fcbAnswers[2][2], fcbAnswers[2][3]},
+		{"jordi", "101", "SUBMITTED", "", "", "", "Written work."},
+		{"pau", "102", "AWAITING_SUBMISSION", "", "", "", ""},
+		{"summary", "103", "", "", "", "", ""},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("csv =\n%v\nwant\n%v", got, want)
+	}
+	if strings.Contains(buf.String(), "map[") {
+		t.Errorf("csv contains a Go map dump:\n%s", buf.String())
+	}
+}
+
+func TestRenderTeacherAssignmentsCSV_QuotesAnswers(t *testing.T) {
+	answer := "First, \"quoted\" line.\nSecond line."
+	data := enrichedRows(assignmentRow("ana", "102", "SUBMITTED",
+		promptsEvidence([4]string{"c102-cause", "The cause", "Why?", answer})))
+	var buf bytes.Buffer
+	if err := renderTeacherAssignmentsCSV(data, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCSV(t, buf.String())[1][6]; got != answer {
+		t.Errorf("answer = %q, want %q", got, answer)
+	}
+}
+
+func TestRenderTeacherAssignmentsCSV_EmptyIsHeaderOnly(t *testing.T) {
+	for _, wide := range []bool{false, true} {
+		var buf bytes.Buffer
+		if err := renderTeacherAssignmentsCSV(nil, wide, &buf); err != nil {
+			t.Fatalf("wide=%v: %v", wide, err)
+		}
+		if got := readCSV(t, buf.String()); len(got) != 1 {
+			t.Errorf("wide=%v: rows = %v, want header only", wide, got)
+		}
+	}
+}
+
+func TestRenderTeacherAssignmentsCSV_WideOneModule(t *testing.T) {
+	data := enrichedRows(
+		assignmentRow("ana", "102", "SUBMITTED", promptsEvidence(fcbAnswers...)),
+		assignmentRow("marc", "102", "SUBMITTED", promptsEvidence(fcbAnswers[0], fcbAnswers[2])),
+		assignmentRow("pau", "102", "AWAITING_SUBMISSION", nil),
+	)
+	var buf bytes.Buffer
+	if err := renderTeacherAssignmentsCSV(data, true, &buf); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"student_alias", "course_module_code", "status", "c102-cause", "c102-value", "c102-ask"},
+		{"ana", "102", "SUBMITTED", fcbAnswers[0][3], fcbAnswers[1][3], fcbAnswers[2][3]},
+		{"marc", "102", "SUBMITTED", fcbAnswers[0][3], "", fcbAnswers[2][3]},
+		{"pau", "102", "AWAITING_SUBMISSION", "", "", ""},
+	}
+	if got := readCSV(t, buf.String()); !reflect.DeepEqual(got, want) {
+		t.Errorf("csv =\n%v\nwant\n%v", got, want)
+	}
+}
+
+// A module switched to prompts can still hold submissions written before the
+// switch. They stay in the pivot, with their Markdown in a trailing column
+// that exists only when such a row does.
+func TestRenderTeacherAssignmentsCSV_WideKeepsLegacyWrittenRows(t *testing.T) {
+	data := enrichedRows(
+		assignmentRow("ana", "102", "SUBMITTED", promptsEvidence(fcbAnswers...)),
+		assignmentRow("old", "102", "ACCEPTED", tiptapDoc("Written before the switch.")),
+	)
+	var buf bytes.Buffer
+	if err := renderTeacherAssignmentsCSV(data, true, &buf); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"student_alias", "course_module_code", "status", "c102-cause", "c102-value", "c102-ask", "evidence_text"},
+		{"ana", "102", "SUBMITTED", fcbAnswers[0][3], fcbAnswers[1][3], fcbAnswers[2][3], ""},
+		{"old", "102", "ACCEPTED", "", "", "", "Written before the switch."},
+	}
+	if got := readCSV(t, buf.String()); !reflect.DeepEqual(got, want) {
+		t.Errorf("csv =\n%v\nwant\n%v", got, want)
+	}
+}
+
+func TestRenderTeacherAssignmentsCSV_WideRefusesMixedOrNonPrompts(t *testing.T) {
+	cases := map[string][]interface{}{
+		"two modules": enrichedRows(
+			assignmentRow("ana", "102", "SUBMITTED", promptsEvidence(fcbAnswers...)),
+			assignmentRow("jordi", "101", "SUBMITTED", tiptapDoc("Written work.")),
+		),
+		"no prompts rows": enrichedRows(
+			assignmentRow("jordi", "101", "SUBMITTED", tiptapDoc("Written work.")),
+		),
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := renderTeacherAssignmentsCSV(data, true, &buf)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), "--course <id> --module <code>") {
+				t.Errorf("error = %q, want the --course/--module hint", err)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("wrote output before failing:\n%s", buf.String())
+			}
+		})
+	}
+}
+
+func TestRenderTeacherAssignmentsMarkdown(t *testing.T) {
+	data := enrichedRows(
+		assignmentRow("ana", "102", "SUBMITTED", promptsEvidence(fcbAnswers...)),
+		assignmentRow("pau", "102", "AWAITING_SUBMISSION", nil),
+	)
+	var buf bytes.Buffer
+	if err := renderTeacherAssignmentsMarkdown(data, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"## ana · module 102", "Status: SUBMITTED", fcbEvidenceText,
+		"## pau · module 102", "Status: AWAITING_SUBMISSION", "_No submission._",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("markdown missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "map[") {
+		t.Errorf("markdown contains a Go map dump:\n%s", got)
+	}
+
+	buf.Reset()
+	if err := renderTeacherAssignmentsMarkdown(nil, &buf); err != nil || buf.Len() != 0 {
+		t.Errorf("empty markdown = %q, err %v; want nothing", buf.String(), err)
+	}
+}
+
+func TestFilterRowsByModule(t *testing.T) {
+	data := enrichedRows(
+		assignmentRow("ana", "102", "SUBMITTED", nil),
+		assignmentRow("jordi", "101", "SUBMITTED", nil),
+	)
+	got := filterRowsByModule(data, "102")
+	if len(got) != 1 || got[0].(map[string]interface{})["student_alias"] != "ana" {
+		t.Errorf("filtered = %v", got)
+	}
+}
+
+// --- handler level -----------------------------------------------------------
+
+const twoModuleBody = `{
+    "data": [
+        {"course_id": "C1", "course_module_code": "101", "student_alias": "jordi",
+         "content": {"commitment_status": "SUBMITTED"}},
+        {"course_id": "C1", "course_module_code": "102", "student_alias": "ana",
+         "content": {"commitment_status": "SUBMITTED",
+                     "evidence": {"type": "prompts-evidence", "version": 1, "answers": [
+                        {"promptId": "c102-cause", "label": "The cause", "question": "Why?", "answer": "Water."}]}}}
+    ],
+    "meta": {"source": "merged"}
+}`
+
+// runListHandler drives the list handler with the given flags and format and
+// returns stdout and the handler error. Flags are reset afterwards.
+func runListHandler(t *testing.T, format string, flags map[string]string) (string, error) {
+	t.Helper()
+	cmd := teacherAssignmentsListCmd
+	cmd.SetContext(context.Background())
+	for name, value := range flags {
+		if err := cmd.Flags().Set(name, value); err != nil {
+			t.Fatalf("set --%s: %v", name, err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = cmd.Flags().Set("course", "")
+		_ = cmd.Flags().Set("module", "")
+		_ = cmd.Flags().Set("wide", "false")
+	})
+	var runErr error
+	captured := captureStdout(t, func() {
+		_ = output.SetFormat(format)
+		t.Cleanup(func() { _ = output.SetFormat("text") })
+		runErr = cmd.RunE(cmd, []string{})
+	})
+	return captured, runErr
+}
+
+func TestRunTeacherAssignmentsList_ModuleFiltersJSON(t *testing.T) {
+	teacherAssignmentsHandlerEnv(t, twoModuleBody)
+	out, err := runListHandler(t, "json", map[string]string{"course": "C1", "module": "102"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	data := got["data"].([]interface{})
+	if len(data) != 1 || data[0].(map[string]interface{})["student_alias"] != "ana" {
+		t.Errorf("data = %v, want only ana", data)
+	}
+	if got["meta"] == nil {
+		t.Error("envelope keys beside data were dropped")
+	}
+}
+
+func TestRunTeacherAssignmentsList_ModuleFiltersText(t *testing.T) {
+	teacherAssignmentsHandlerEnv(t, twoModuleBody)
+	out, err := runListHandler(t, "text", map[string]string{"course": "C1", "module": "101"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "jordi") || strings.Contains(out, "ana") {
+		t.Errorf("text output not filtered to module 101:\n%s", out)
+	}
+}
+
+func TestRunTeacherAssignmentsList_WideWithModuleCSV(t *testing.T) {
+	teacherAssignmentsHandlerEnv(t, twoModuleBody)
+	out, err := runListHandler(t, "csv", map[string]string{"course": "C1", "module": "102", "wide": "true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"student_alias", "course_module_code", "status", "c102-cause"},
+		{"ana", "102", "SUBMITTED", "Water."},
+	}
+	if got := readCSV(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("csv = %v, want %v", got, want)
+	}
+}
+
+func TestRunTeacherAssignmentsList_WideWithoutModuleFailsCleanly(t *testing.T) {
+	teacherAssignmentsHandlerEnv(t, twoModuleBody)
+	out, err := runListHandler(t, "csv", map[string]string{"course": "C1", "wide": "true"})
+	if err == nil || !strings.Contains(err.Error(), "--module") {
+		t.Fatalf("err = %v, want the --module hint", err)
+	}
+	if out != "" {
+		t.Errorf("stdout = %q, want empty", out)
+	}
+}
+
+// Flag misuse is rejected before any request reaches the gateway.
+func TestRunTeacherAssignmentsList_FlagMisuseSendsNoRequest(t *testing.T) {
+	cases := []struct {
+		name   string
+		format string
+		flags  map[string]string
+		want   string
+	}{
+		{"wide outside csv", "json", map[string]string{"course": "C1", "module": "102", "wide": "true"}, "--wide"},
+		{"module without course", "text", map[string]string{"module": "102"}, "--course"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				_, _ = w.Write([]byte(`{"data": []}`))
+			}))
+			t.Cleanup(srv.Close)
+			teacherAssignmentsHandlerEnvURL(t, srv.URL)
+
+			_, err := runListHandler(t, tc.format, tc.flags)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want mention of %s", err, tc.want)
+			}
+			if requests != 0 {
+				t.Errorf("requests = %d, want 0", requests)
+			}
+		})
+	}
+}
+
+func TestRunTeacherAssignmentsGet_CSV(t *testing.T) {
+	teacherAssignmentsHandlerEnv(t, twoModuleBody)
+	cmd := teacherAssignmentsGetCmd
+	cmd.SetContext(context.Background())
+	var runErr error
+	out := captureStdout(t, func() {
+		_ = output.SetFormat("csv")
+		t.Cleanup(func() { _ = output.SetFormat("text") })
+		runErr = cmd.RunE(cmd, []string{"C1", "102", "ana"})
+	})
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	want := [][]string{longHeader, {"ana", "102", "SUBMITTED", "c102-cause", "The cause", "Why?", "Water."}}
+	if got := readCSV(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("csv = %v, want %v", got, want)
+	}
+}
+
+// teacherAssignmentsHandlerEnvURL seeds config pointing at an existing server.
+func teacherAssignmentsHandlerEnvURL(t *testing.T, url string) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	if err := config.Save(&config.Config{BaseURL: url}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+}

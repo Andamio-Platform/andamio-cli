@@ -111,10 +111,22 @@ func init() {
 
 	// List flags (all optional)
 	teacherAssignmentsListCmd.Flags().String("course", "", "Filter by course ID")
+	teacherAssignmentsListCmd.Flags().String("module", "", "Keep only rows for this module code (requires --course)")
+	teacherAssignmentsListCmd.Flags().Bool("wide", false, "With --output csv: one row per student and one column per prompt (one prompts module only)")
 }
 
 func runTeacherAssignmentsList(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course")
+	moduleCode, _ := cmd.Flags().GetString("module")
+	wide, _ := cmd.Flags().GetBool("wide")
+
+	format := output.GetFormat()
+	if wide && format != output.FormatCSV {
+		return fmt.Errorf("--wide applies to --output csv only")
+	}
+	if moduleCode != "" && courseID == "" {
+		return fmt.Errorf("--module requires --course. Run 'andamio teacher courses --output json' to find the course id")
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -127,13 +139,25 @@ func runTeacherAssignmentsList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Non-text formats: pass through raw API response (handles empty data correctly)
-	if output.GetFormat() != output.FormatText {
-		return output.PrintJSON(resp)
+	data, _ := resp["data"].([]interface{})
+	if moduleCode != "" && data != nil {
+		data = filterRowsByModule(data, moduleCode)
+		resp["data"] = data
 	}
 
-	data, ok := resp["data"].([]interface{})
-	if !ok || len(data) == 0 {
+	switch format {
+	case output.FormatJSON:
+		// Pass through the gateway envelope (handles empty data correctly).
+		return output.PrintJSON(resp)
+	case output.FormatCSV:
+		warnMetaWarning(resp)
+		return renderTeacherAssignmentsCSV(data, wide, os.Stdout)
+	case output.FormatMarkdown:
+		warnMetaWarning(resp)
+		return renderTeacherAssignmentsMarkdown(data, os.Stdout)
+	}
+
+	if len(data) == 0 {
 		fmt.Fprintln(os.Stderr, "No pending assignment commitments found.")
 		return nil
 	}
@@ -352,6 +376,12 @@ func runTeacherAssignmentsGet(cmd *cobra.Command, args []string) error {
 		mCode, _ := m["course_module_code"].(string)
 		alias, _ := m["student_alias"].(string)
 		if mCode == moduleCode && alias == studentAlias {
+			switch output.GetFormat() {
+			case output.FormatCSV:
+				return renderTeacherAssignmentsCSV([]interface{}{m}, false, os.Stdout)
+			case output.FormatMarkdown:
+				return renderTeacherAssignmentsMarkdown([]interface{}{m}, os.Stdout)
+			}
 			return output.PrintJSON(m)
 		}
 	}
