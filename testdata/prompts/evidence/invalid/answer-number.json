@@ -1,0 +1,12 @@
+{
+  "type": "prompts-evidence",
+  "version": 1,
+  "answers": [
+    {
+      "promptId": "cause",
+      "label": "The cause",
+      "question": "What should people see?",
+      "answer": 42
+    }
+  ]
+}

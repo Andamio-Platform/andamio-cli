@@ -23,6 +23,9 @@ var schemaSrcDirs = []string{
 	// `assignment_quiz` / `assignment`, so its json tags are part of the
 	// --output json contract and must be pinned here too.
 	"../../internal/quiz",
+	// prompts.Answer rides in `teacher assignments` --output json as
+	// content.evidence_answers, so its json tags are contract too.
+	"../../internal/prompts",
 }
 
 // compareOrUpdateGolden either overwrites goldenPath with actual (-update)

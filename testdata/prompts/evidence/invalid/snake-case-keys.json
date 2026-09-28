@@ -1,0 +1,12 @@
+{
+  "type": "prompts-evidence",
+  "version": 1,
+  "answers": [
+    {
+      "prompt_id": "cause",
+      "label": "The cause",
+      "question": "Q",
+      "answer": "x"
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
+	"github.com/Andamio-Platform/andamio-cli/internal/prompts"
 	"github.com/spf13/cobra"
 )
 
@@ -62,23 +63,49 @@ Machine-readable output contract (--output json):
   .data[].content                 present with --course; absent on the
                                   no-filter summary
   .data[].content.commitment_status  raw gateway enum (see above)
-  .data[].content.evidence        the submission as a Tiptap JSON document,
-                                  passed through verbatim — this is the
-                                  hash-bearing form
+  .data[].content.evidence        the submission, passed through verbatim.
+                                  This is the hash-bearing form: a Tiptap
+                                  document for written work, or a
+                                  prompts-evidence envelope for a prompts
+                                  assignment
   .data[].content.evidence_text   the same submission rendered as Markdown,
-                                  added by the CLI. Absent when there is no
-                                  evidence. Read this to get the prose; read
-                                  .content.evidence to verify a hash.
+                                  added by the CLI. For prompts, one block
+                                  per answer: "**<label>.** <question>" and
+                                  the answer on the next line. Absent when
+                                  there is nothing to show. Read this to get
+                                  the prose; read .content.evidence to verify
+                                  a hash.
+  .data[].content.evidence_answers  prompts assignments only, added by the
+                                  CLI: [{prompt_id, label, question, answer}]
+                                  in submitted order. Absent otherwise.
 
-Read a submission without walking the Tiptap tree:
+Read a submission without walking the evidence:
   andamio teacher assignments list --course <id> --output json \
     | jq -r '.data[] | select(.content.commitment_status=="SUBMITTED")
              | "\(.student_alias): \(.content.evidence_text)"'
 
+Pull every answer from a prompts assignment as tab-separated rows:
+  andamio teacher assignments list --course <id> --module-code <code> --output json \
+    | jq -r '.data[] | .student_alias as $s
+             | .content.evidence_answers[]? | [$s, .prompt_id, .answer] | @tsv'
+
+--output csv writes one row per answer: student_alias, course_module_code,
+status, prompt_id, label, question, answer. A written submission is one row
+with blank prompt columns and its Markdown in answer. Add --wide for one row
+per student and one column per prompt id. --wide needs every row from one
+prompts module, so pass --course and --module-code with it. A cell that starts
+with =, +, -, @, a tab or a carriage return (after any leading spaces) is
+written with a leading single quote, so Excel and Sheets show it as text
+instead of running it as a formula. --wide refuses a prompt id that is empty
+or matches a fixed column name. --output markdown writes one section per student.
+
+--module-code keeps only that module's rows, in every output format.
+
 Examples:
   andamio teacher assignments list
   andamio teacher assignments list --course <course-id>
-  andamio teacher assignments list --course <course-id> --output json`,
+  andamio teacher assignments list --course <course-id> --output json
+  andamio teacher assignments list --course <course-id> --module-code <code> --output csv --wide`,
 	RunE: runTeacherAssignmentsList,
 }
 
@@ -88,9 +115,10 @@ var teacherAssignmentsGetCmd = &cobra.Command{
 	Long: `Get full details for a specific student's assignment commitment.
 
 Emits the matched row from 'teacher assignments list', including
-content.evidence_text — the submission rendered as Markdown alongside the
-raw Tiptap document in content.evidence. See 'teacher assignments list --help'
-for the full output contract.
+content.evidence_text (the submission rendered as Markdown) beside the raw
+evidence in content.evidence, and content.evidence_answers for a prompts
+assignment. --output csv and --output markdown render the same way as list.
+See 'teacher assignments list --help' for the full output contract.
 
 Read one submission:
   andamio teacher assignments get <course-id> <module-code> <student-alias> \
@@ -110,10 +138,22 @@ func init() {
 
 	// List flags (all optional)
 	teacherAssignmentsListCmd.Flags().String("course", "", "Filter by course ID")
+	teacherAssignmentsListCmd.Flags().String("module-code", "", "Keep only rows for this module code (requires --course)")
+	teacherAssignmentsListCmd.Flags().Bool("wide", false, "With --output csv: one row per student and one column per prompt (one prompts module only)")
 }
 
 func runTeacherAssignmentsList(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course")
+	moduleCode, _ := cmd.Flags().GetString("module-code")
+	wide, _ := cmd.Flags().GetBool("wide")
+
+	format := output.GetFormat()
+	if wide && format != output.FormatCSV {
+		return fmt.Errorf("--wide applies to --output csv only")
+	}
+	if moduleCode != "" && courseID == "" {
+		return fmt.Errorf("--module-code requires --course. Run 'andamio teacher courses --output json' to find the course id")
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -126,13 +166,25 @@ func runTeacherAssignmentsList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Non-text formats: pass through raw API response (handles empty data correctly)
-	if output.GetFormat() != output.FormatText {
-		return output.PrintJSON(resp)
+	data, _ := resp["data"].([]interface{})
+	if moduleCode != "" && data != nil {
+		data = filterRowsByModule(data, moduleCode)
+		resp["data"] = data
 	}
 
-	data, ok := resp["data"].([]interface{})
-	if !ok || len(data) == 0 {
+	switch format {
+	case output.FormatJSON:
+		// Pass through the gateway envelope (handles empty data correctly).
+		return output.PrintJSON(resp)
+	case output.FormatCSV:
+		warnMetaWarning(resp)
+		return renderTeacherAssignmentsCSV(data, wide, os.Stdout)
+	case output.FormatMarkdown:
+		warnMetaWarning(resp)
+		return renderTeacherAssignmentsMarkdown(data, os.Stdout)
+	}
+
+	if len(data) == 0 {
 		fmt.Fprintln(os.Stderr, "No pending assignment commitments found.")
 		return nil
 	}
@@ -165,6 +217,11 @@ func fetchTeacherAssignmentsList(ctx context.Context, c *client.Client, courseID
 // not an implementation detail — see enrichCommitmentEvidence.
 const evidenceTextField = "evidence_text"
 
+// evidenceAnswersField is the sibling key carrying a prompts submission as
+// structured {prompt_id, label, question, answer} records. Also a documented
+// output contract.
+const evidenceAnswersField = "evidence_answers"
+
 // enrichCommitmentRows adds decoded evidence to every row in a
 // assignment-commitments envelope. Missing, empty or non-array `data` is a
 // no-op: the no-`--course` summary response has a different shape and must
@@ -181,8 +238,10 @@ func enrichCommitmentRows(resp map[string]interface{}) {
 	}
 }
 
-// enrichCommitmentEvidence sets content.evidence_text to the Markdown rendering
-// of content.evidence, leaving content.evidence itself untouched.
+// enrichCommitmentEvidence sets content.evidence_text to a Markdown rendering
+// of content.evidence, leaving content.evidence itself untouched. For prompts
+// evidence (a written assignment asked in parts, cli#171) it also sets
+// content.evidence_answers.
 //
 // Why a sibling field rather than a replacement: content.evidence is
 // hash-bearing. The on-chain commitment hash is computed over the normalized
@@ -200,7 +259,10 @@ func enrichCommitmentRows(resp map[string]interface{}) {
 //
 // Output contract:
 //   - evidence_text is present only when content.evidence is a Tiptap document
-//     object. It is absent — not empty-string — otherwise.
+//     object or prompts evidence with a non-blank rendering. It is absent — not
+//     empty-string — otherwise, including for quiz evidence.
+//   - evidence_answers is present only for prompts evidence with at least one
+//     answer, in stored order, with snake_case keys.
 //   - Rows without a content object (the no-`--course` summary shape) are
 //     untouched, exactly as they already are for commitment_status.
 //   - content.evidence is never modified.
@@ -215,6 +277,16 @@ func enrichCommitmentEvidence(row map[string]interface{}) {
 	}
 	evidence, ok := content["evidence"].(map[string]interface{})
 	if !ok {
+		return
+	}
+	if answers, ok := prompts.Answers(evidence); ok {
+		if len(answers) == 0 {
+			return
+		}
+		content[evidenceAnswersField] = answers
+		if text := renderPromptsAnswers(answers); text != "" {
+			content[evidenceTextField] = text
+		}
 		return
 	}
 	text, _ := tiptapToMarkdown(evidence)
@@ -331,6 +403,14 @@ func runTeacherAssignmentsGet(cmd *cobra.Command, args []string) error {
 		mCode, _ := m["course_module_code"].(string)
 		alias, _ := m["student_alias"].(string)
 		if mCode == moduleCode && alias == studentAlias {
+			switch output.GetFormat() {
+			case output.FormatCSV:
+				warnMetaWarning(resp)
+				return renderTeacherAssignmentsCSV([]interface{}{m}, false, os.Stdout)
+			case output.FormatMarkdown:
+				warnMetaWarning(resp)
+				return renderTeacherAssignmentsMarkdown([]interface{}{m}, os.Stdout)
+			}
 			return output.PrintJSON(m)
 		}
 	}
@@ -339,4 +419,15 @@ func runTeacherAssignmentsGet(cmd *cobra.Command, args []string) error {
 		Message: fmt.Sprintf("no commitment found for student %q in module %s. Run 'andamio teacher assignments list --course %s' to see pending commitments",
 			studentAlias, moduleCode, courseID),
 	}
+}
+
+// renderPromptsAnswers renders prompts answers as one block per answer, the
+// label and question on one line and the answer on the next, blocks separated
+// by a blank line.
+func renderPromptsAnswers(answers []prompts.Answer) string {
+	blocks := make([]string, 0, len(answers))
+	for _, a := range answers {
+		blocks = append(blocks, fmt.Sprintf("**%s.** %s\n%s", a.Label, a.Question, a.Answer))
+	}
+	return strings.TrimSpace(strings.Join(blocks, "\n\n"))
 }

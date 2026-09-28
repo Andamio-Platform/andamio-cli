@@ -27,6 +27,11 @@ An assignment whose `content_json` is a `{"type": "quiz", "version": 1, ...}` ob
 
 On disk a quiz assignment is `assignment.quiz.json`, never `assignment.md`: converting the envelope to Markdown loses it, so export and import carry it verbatim.
 
+### Prompts Envelope
+A written assignment asked in parts, one short answer each. The assignment's `content_json` is a `{"type": "prompts", "version": 1, "prompts": [{id, label, question}, ...]}` object, with an optional Tiptap `intro`. When a learner locks their work, the commitment's `evidence` is a `{"type": "prompts-evidence", "version": 1, "answers": [...]}` object in which each answer carries its prompt's `label` and `question`, so it reads without the definition. Like the quiz, both ride opaque JSON fields and only the app's render layer interprets them. The rules are owned by fcb-fan-engagement-app (`src/lib/prompts/prompts-envelope.ts`); the CLI mirrors them in `internal/prompts`.
+
+A prompts assignment has no grade. A teacher reviews it like written work and accepts or refuses it.
+
 ## Project
 
 ### Task

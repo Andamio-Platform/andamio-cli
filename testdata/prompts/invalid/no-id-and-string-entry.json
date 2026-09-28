@@ -1,0 +1,11 @@
+{
+  "type": "prompts",
+  "version": 1,
+  "prompts": [
+    {
+      "label": "L",
+      "question": "Q"
+    },
+    "cause"
+  ]
+}
