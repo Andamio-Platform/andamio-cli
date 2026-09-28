@@ -23,6 +23,9 @@ type commitmentView struct {
 	status   string
 	answers  []prompts.Answer // prompts evidence; nil otherwise
 	text     string           // evidence_text; empty when absent
+
+	hasContent  bool // the row carries a content object (absent on the no-course summary)
+	hasEvidence bool // content.evidence is present, whether or not the CLI could render it
 }
 
 func viewOfCommitment(row map[string]interface{}) commitmentView {
@@ -31,6 +34,8 @@ func viewOfCommitment(row map[string]interface{}) commitmentView {
 	v.alias, _ = row["student_alias"].(string)
 	v.module, _ = row["course_module_code"].(string)
 	if content, ok := row["content"].(map[string]interface{}); ok {
+		v.hasContent = true
+		v.hasEvidence = content["evidence"] != nil
 		v.status, _ = content["commitment_status"].(string)
 		v.answers, _ = content[evidenceAnswersField].([]prompts.Answer)
 		v.text, _ = content[evidenceTextField].(string)
@@ -76,11 +81,29 @@ func renderTeacherAssignmentsCSV(data []interface{}, wide bool, w io.Writer) err
 	} else {
 		records = longAssignmentsCSV(views)
 	}
+	for _, record := range records[1:] {
+		for i, cell := range record {
+			record[i] = neutralizeCSVFormula(cell)
+		}
+	}
 	cw := csv.NewWriter(w)
 	if err := cw.WriteAll(records); err != nil {
 		return err
 	}
 	return cw.Error()
+}
+
+// neutralizeCSVFormula prefixes a cell with a single quote when it starts with
+// a character spreadsheet apps read as the start of a formula (=, +, -, @, tab,
+// carriage return). Answers are learner-typed, and this CSV exists to be opened
+// in Excel or Sheets, where "=HYPERLINK(...)" would otherwise run. The quote
+// makes the apps treat the cell as text. Header cells are CLI-authored and left
+// alone.
+func neutralizeCSVFormula(cell string) string {
+	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+		return "'" + cell
+	}
+	return cell
 }
 
 func longAssignmentsCSV(views []commitmentView) [][]string {
@@ -171,10 +194,15 @@ func renderTeacherAssignmentsMarkdown(data []interface{}, w io.Writer) error {
 		if v.status != "" {
 			fmt.Fprintf(&b, "Status: %s\n\n", v.status)
 		}
-		if v.text != "" {
+		switch {
+		case v.text != "":
 			b.WriteString(v.text + "\n")
-		} else {
+		case v.hasEvidence:
+			b.WriteString("_Submission not rendered here. Read it with --output json (.content.evidence)._\n")
+		case v.hasContent:
 			b.WriteString("_No submission._\n")
+		default:
+			b.WriteString("_Submission not included in the summary. Pass --course <id> to read it._\n")
 		}
 	}
 	_, err := io.WriteString(w, b.String())

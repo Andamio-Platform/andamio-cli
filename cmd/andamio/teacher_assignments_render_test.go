@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -401,5 +402,86 @@ func TestTeacherAssignments_DegradedReadWarnsInCSVAndMarkdown(t *testing.T) {
 				t.Errorf("stderr = %q, want the degraded-read warning", stderr)
 			}
 		})
+	}
+}
+
+// "No submission" is a factual claim. It is made only when the row carries a
+// content object with no evidence; evidence the CLI cannot render, and summary
+// rows that carry no content at all, say so instead.
+func TestRenderTeacherAssignmentsMarkdown_OnlyClaimsNoSubmissionWhenThereIsNone(t *testing.T) {
+	quizEvidence := map[string]interface{}{"type": "quiz-evidence", "version": float64(1), "answers": []interface{}{}}
+	cases := []struct {
+		name    string
+		row     map[string]interface{}
+		want    string
+		notWant string
+	}{
+		{"no evidence", assignmentRow("pau", "102", "AWAITING_SUBMISSION", nil), "_No submission._", ""},
+		{"quiz evidence", assignmentRow("quin", "103", "SUBMITTED", quizEvidence), "--output json", "_No submission._"},
+		{"summary row", map[string]interface{}{"course_id": "C1", "course_module_code": "102", "student_alias": "ana"}, "--course", "_No submission._"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := renderTeacherAssignmentsMarkdown(enrichedRows(tc.row), &buf); err != nil {
+				t.Fatal(err)
+			}
+			got := buf.String()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("markdown missing %q:\n%s", tc.want, got)
+			}
+			if tc.notWant != "" && strings.Contains(got, tc.notWant) {
+				t.Errorf("markdown contains %q:\n%s", tc.notWant, got)
+			}
+		})
+	}
+}
+
+// Spreadsheet apps run a cell that starts with =, +, -, @, tab or carriage
+// return as a formula. Learner answers are untrusted, so such cells are
+// written with a leading single quote, which the apps treat as "text".
+func TestRenderTeacherAssignmentsCSV_NeutralizesFormulaCells(t *testing.T) {
+	payloads := []string{"=HYPERLINK(\"http://x\",\"y\")", "+1+1", "-2+3", "@SUM(A1)", "\t=1", "\r=1"}
+	answers := make([][4]string, 0, len(payloads))
+	for i, p := range payloads {
+		answers = append(answers, [4]string{fmt.Sprintf("p%d", i), "Label", "Q?", p})
+	}
+	data := enrichedRows(
+		assignmentRow("ana", "102", "SUBMITTED", promptsEvidence(answers...)),
+		assignmentRow("jordi", "102", "SUBMITTED", tiptapDoc("=cmd|' /C calc'!A0")),
+	)
+
+	for _, wide := range []bool{false, true} {
+		var buf bytes.Buffer
+		if err := renderTeacherAssignmentsCSV(data, wide, &buf); err != nil {
+			t.Fatalf("wide=%v: %v", wide, err)
+		}
+		for _, record := range readCSV(t, buf.String())[1:] {
+			for _, cell := range record {
+				if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+					t.Errorf("wide=%v: cell %q starts with a formula character", wide, cell)
+				}
+			}
+		}
+	}
+
+	var buf bytes.Buffer
+	_ = renderTeacherAssignmentsCSV(data, false, &buf)
+	if got := readCSV(t, buf.String())[1][6]; got != "'"+payloads[0] {
+		t.Errorf("answer = %q, want the payload prefixed with a single quote", got)
+	}
+}
+
+// Ordinary text, including text with a formula character after the first
+// position, is written unchanged.
+func TestRenderTeacherAssignmentsCSV_LeavesOrdinaryCellsAlone(t *testing.T) {
+	data := enrichedRows(assignmentRow("ana", "102", "SUBMITTED",
+		promptsEvidence([4]string{"c102-cause", "The cause", "Why?", "Water = life, +1 for that"})))
+	var buf bytes.Buffer
+	if err := renderTeacherAssignmentsCSV(data, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCSV(t, buf.String())[1]; got[3] != "c102-cause" || got[6] != "Water = life, +1 for that" {
+		t.Errorf("row = %v", got)
 	}
 }
