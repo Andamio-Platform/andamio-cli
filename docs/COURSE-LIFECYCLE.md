@@ -314,11 +314,11 @@ spreadsheet, export it as CSV:
 
 ```bash
 # one row per answer
-andamio teacher assignments list --course <course-id> --module <module-code> \
+andamio teacher assignments list --course <course-id> --module-code <module-code> \
   --output csv > answers.csv
 
 # one row per student, one column per prompt
-andamio teacher assignments list --course <course-id> --module <module-code> \
+andamio teacher assignments list --course <course-id> --module-code <module-code> \
   --output csv --wide > answers-wide.csv
 ```
 

@@ -162,8 +162,8 @@ func TestRenderTeacherAssignmentsCSV_WideRefusesMixedOrNonPrompts(t *testing.T) 
 			if err == nil {
 				t.Fatal("expected an error")
 			}
-			if !strings.Contains(err.Error(), "--course <id> --module <code>") {
-				t.Errorf("error = %q, want the --course/--module hint", err)
+			if !strings.Contains(err.Error(), "--course <id> --module-code <code>") {
+				t.Errorf("error = %q, want the --course/--module-code hint", err)
 			}
 			if buf.Len() != 0 {
 				t.Errorf("wrote output before failing:\n%s", buf.String())
@@ -238,7 +238,7 @@ func runListHandler(t *testing.T, format string, flags map[string]string) (strin
 	}
 	t.Cleanup(func() {
 		_ = cmd.Flags().Set("course", "")
-		_ = cmd.Flags().Set("module", "")
+		_ = cmd.Flags().Set("module-code", "")
 		_ = cmd.Flags().Set("wide", "false")
 	})
 	var runErr error
@@ -252,7 +252,7 @@ func runListHandler(t *testing.T, format string, flags map[string]string) (strin
 
 func TestRunTeacherAssignmentsList_ModuleFiltersJSON(t *testing.T) {
 	teacherAssignmentsHandlerEnv(t, twoModuleBody)
-	out, err := runListHandler(t, "json", map[string]string{"course": "C1", "module": "102"})
+	out, err := runListHandler(t, "json", map[string]string{"course": "C1", "module-code": "102"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestRunTeacherAssignmentsList_ModuleFiltersJSON(t *testing.T) {
 
 func TestRunTeacherAssignmentsList_ModuleFiltersText(t *testing.T) {
 	teacherAssignmentsHandlerEnv(t, twoModuleBody)
-	out, err := runListHandler(t, "text", map[string]string{"course": "C1", "module": "101"})
+	out, err := runListHandler(t, "text", map[string]string{"course": "C1", "module-code": "101"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestRunTeacherAssignmentsList_ModuleFiltersText(t *testing.T) {
 
 func TestRunTeacherAssignmentsList_WideWithModuleCSV(t *testing.T) {
 	teacherAssignmentsHandlerEnv(t, twoModuleBody)
-	out, err := runListHandler(t, "csv", map[string]string{"course": "C1", "module": "102", "wide": "true"})
+	out, err := runListHandler(t, "csv", map[string]string{"course": "C1", "module-code": "102", "wide": "true"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,8 +298,8 @@ func TestRunTeacherAssignmentsList_WideWithModuleCSV(t *testing.T) {
 func TestRunTeacherAssignmentsList_WideWithoutModuleFailsCleanly(t *testing.T) {
 	teacherAssignmentsHandlerEnv(t, twoModuleBody)
 	out, err := runListHandler(t, "csv", map[string]string{"course": "C1", "wide": "true"})
-	if err == nil || !strings.Contains(err.Error(), "--module") {
-		t.Fatalf("err = %v, want the --module hint", err)
+	if err == nil || !strings.Contains(err.Error(), "--module-code") {
+		t.Fatalf("err = %v, want the --module-code hint", err)
 	}
 	if out != "" {
 		t.Errorf("stdout = %q, want empty", out)
@@ -314,8 +314,8 @@ func TestRunTeacherAssignmentsList_FlagMisuseSendsNoRequest(t *testing.T) {
 		flags  map[string]string
 		want   string
 	}{
-		{"wide outside csv", "json", map[string]string{"course": "C1", "module": "102", "wide": "true"}, "--wide"},
-		{"module without course", "text", map[string]string{"module": "102"}, "--course"},
+		{"wide outside csv", "json", map[string]string{"course": "C1", "module-code": "102", "wide": "true"}, "--wide"},
+		{"module without course", "text", map[string]string{"module-code": "102"}, "--course"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

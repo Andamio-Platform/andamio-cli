@@ -139,7 +139,7 @@ func wideAssignmentsCSV(views []commitmentView) ([][]string, error) {
 		return [][]string{assignmentsCSVBaseHeader}, nil
 	}
 
-	hint := "pass --course <id> --module <code> to pick one prompts module"
+	hint := "pass --course <id> --module-code <code> to pick one prompts module"
 	first := views[0]
 	var ids []string
 	seen := map[string]bool{}

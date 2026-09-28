@@ -85,7 +85,7 @@ Read a submission without walking the evidence:
              | "\(.student_alias): \(.content.evidence_text)"'
 
 Pull every answer from a prompts assignment as tab-separated rows:
-  andamio teacher assignments list --course <id> --module <code> --output json \
+  andamio teacher assignments list --course <id> --module-code <code> --output json \
     | jq -r '.data[] | .student_alias as $s
              | .content.evidence_answers[]? | [$s, .prompt_id, .answer] | @tsv'
 
@@ -93,19 +93,19 @@ Pull every answer from a prompts assignment as tab-separated rows:
 status, prompt_id, label, question, answer. A written submission is one row
 with blank prompt columns and its Markdown in answer. Add --wide for one row
 per student and one column per prompt id. --wide needs every row from one
-prompts module, so pass --course and --module with it. A cell that starts
+prompts module, so pass --course and --module-code with it. A cell that starts
 with =, +, -, @, a tab or a carriage return (after any leading spaces) is
 written with a leading single quote, so Excel and Sheets show it as text
 instead of running it as a formula. --wide refuses a prompt id that is empty
 or matches a fixed column name. --output markdown writes one section per student.
 
---module keeps only that module's rows, in every output format.
+--module-code keeps only that module's rows, in every output format.
 
 Examples:
   andamio teacher assignments list
   andamio teacher assignments list --course <course-id>
   andamio teacher assignments list --course <course-id> --output json
-  andamio teacher assignments list --course <course-id> --module <code> --output csv --wide`,
+  andamio teacher assignments list --course <course-id> --module-code <code> --output csv --wide`,
 	RunE: runTeacherAssignmentsList,
 }
 
@@ -138,13 +138,13 @@ func init() {
 
 	// List flags (all optional)
 	teacherAssignmentsListCmd.Flags().String("course", "", "Filter by course ID")
-	teacherAssignmentsListCmd.Flags().String("module", "", "Keep only rows for this module code (requires --course)")
+	teacherAssignmentsListCmd.Flags().String("module-code", "", "Keep only rows for this module code (requires --course)")
 	teacherAssignmentsListCmd.Flags().Bool("wide", false, "With --output csv: one row per student and one column per prompt (one prompts module only)")
 }
 
 func runTeacherAssignmentsList(cmd *cobra.Command, args []string) error {
 	courseID, _ := cmd.Flags().GetString("course")
-	moduleCode, _ := cmd.Flags().GetString("module")
+	moduleCode, _ := cmd.Flags().GetString("module-code")
 	wide, _ := cmd.Flags().GetBool("wide")
 
 	format := output.GetFormat()
@@ -152,7 +152,7 @@ func runTeacherAssignmentsList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--wide applies to --output csv only")
 	}
 	if moduleCode != "" && courseID == "" {
-		return fmt.Errorf("--module requires --course. Run 'andamio teacher courses --output json' to find the course id")
+		return fmt.Errorf("--module-code requires --course. Run 'andamio teacher courses --output json' to find the course id")
 	}
 
 	cfg, err := config.Load()

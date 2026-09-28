@@ -239,7 +239,7 @@ andamio teacher assignments
 andamio teacher assignments get
 andamio teacher assignments list
 name: course | shorthand:  | type: string
-name: module | shorthand:  | type: string
+name: module-code | shorthand:  | type: string
 name: wide | shorthand:  | type: bool
 andamio teacher courses
 andamio token
