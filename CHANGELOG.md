@@ -6,6 +6,8 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-09-28
+
 ### Added
 
 - **Read prompts assignment answers (cli#171).** A prompts assignment is a written assignment asked in parts, one short answer each. `teacher assignments list` and `get` now decode its evidence: `content.evidence_text` renders each answer under its label and question, and a new `content.evidence_answers` array gives `{prompt_id, label, question, answer}` records for `jq` and agents. `content.evidence` is still passed through unchanged, so hashes still verify.
