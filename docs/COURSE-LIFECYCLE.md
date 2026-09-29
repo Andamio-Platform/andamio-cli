@@ -301,10 +301,26 @@ andamio teacher assignments get <course-id> <module-code> <student-alias> \
   --output json | jq -r '.content.evidence_text'
 ```
 
-Evidence is stored as a Tiptap document. `content.evidence_text` is that
-document rendered as Markdown — read it for the prose. `content.evidence` is
-the raw document, which is what the on-chain commitment hash is computed over;
-read that if you are verifying a hash.
+Evidence comes in two shapes. Written work is a Tiptap document. A prompts
+assignment (a written assignment asked in parts) stores a `prompts-evidence`
+envelope with one answer per part. `content.evidence_text` is either one
+rendered as Markdown, so read it for the prose. `content.evidence` is the raw
+value, which is what the on-chain commitment hash is computed over; read that if
+you are verifying a hash.
+
+For a prompts assignment, `content.evidence_answers` lists each answer as
+`{prompt_id, label, question, answer}`. To review a prompts module in a
+spreadsheet, export it as CSV:
+
+```bash
+# one row per answer
+andamio teacher assignments list --course <course-id> --module-code <module-code> \
+  --output csv > answers.csv
+
+# one row per student, one column per prompt
+andamio teacher assignments list --course <course-id> --module-code <module-code> \
+  --output csv --wide > answers-wide.csv
+```
 
 ### Build the assessment transaction
 

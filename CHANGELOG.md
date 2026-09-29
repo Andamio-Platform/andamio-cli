@@ -20,6 +20,14 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 - **`tx sign`, `tx run`, `user login` and `dev login` signed with the wrong key when given a BIP32-extended `.skey`** (`...ExtendedSigningKeyShelley_ed25519_bip32`, e.g. a `cardano-cli`/`cardano-addresses` key derived from a mnemonic). The loader treated the extended key's scalar as a fresh 32-byte seed and re-hashed it, producing a different keypair from the one that owns the address. The local signature self-check still passed, so the failure only showed up on-chain as `MissingVKeyWitnessesUTXOW` (or as a rejected login signature). Extended keys are now detected by their declared `type` and signed with BIP32-Ed25519 directly; plain 32-byte-seed keys are unaffected.
 
+## [1.1.2] - 2026-09-28
+
+### Added
+
+- **Read prompts assignment answers (cli#171).** A prompts assignment is a written assignment asked in parts, one short answer each. `teacher assignments list` and `get` now decode its evidence: `content.evidence_text` renders each answer under its label and question, and a new `content.evidence_answers` array gives `{prompt_id, label, question, answer}` records for `jq` and agents. `content.evidence` is still passed through unchanged, so hashes still verify.
+- **CSV and Markdown for `teacher assignments`.** `-o csv` writes one row per answer (`student_alias, course_module_code, status, prompt_id, label, question, answer`), with a written submission as one row carrying its Markdown. `-o markdown` writes one section per student. Both used to print raw Go maps. A CSV cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return, after any leading spaces, gets a leading single quote, so a learner's answer cannot run as a formula when the file opens in Excel or Sheets. The guard covers the `--wide` header too, since its prompt-id columns come from learner-submitted evidence, and `--wide` refuses a prompt id that is empty or matches a fixed column.
+- **`teacher assignments list --wide` and `--module-code`.** `--module-code <code>` (with `--course`) keeps one module's rows in every output format. `--wide` with `-o csv` writes one row per student and one column per prompt id, for one prompts module. It refuses a result that spans modules and says to pass `--course` and `--module-code`.
+
 ## [1.1.1] - 2026-09-21
 
 ### Added

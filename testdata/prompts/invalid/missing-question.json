@@ -1,0 +1,10 @@
+{
+  "type": "prompts",
+  "version": 1,
+  "prompts": [
+    {
+      "id": "cause",
+      "label": "The cause"
+    }
+  ]
+}
