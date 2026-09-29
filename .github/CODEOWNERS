@@ -1,0 +1,6 @@
+# CODEOWNERS for andamio-cli.
+#
+# A-022 R7 asks for a named code owner on every public repo. One owner covers
+# the whole repo.
+
+*  @workshop-maybe
