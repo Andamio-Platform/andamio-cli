@@ -105,10 +105,9 @@ func DefaultConfig() *Config {
 // NetworkForBaseURL infers the Cardano network ("preprod" or "mainnet") a
 // gateway BaseURL points at, for commands (like `wallet create`) that need
 // to pick a matching address prefix. Returns "" when the host doesn't
-// unambiguously say — a custom/self-hosted gateway, the `dev.api.andamio.io`
-// environment (API-level "dev" is not a Cardano network in its own right),
-// or an unparseable URL — so callers fall back to their own default rather
-// than guess.
+// unambiguously say — a custom/self-hosted gateway, localhost, or an
+// unparseable URL — so callers fall back to their own default rather than
+// guess.
 //
 // "api.andamio.io" (no environment subdomain) is treated as mainnet: it was
 // mainnet's actual BaseURL as of issue #117 (2026-06), and still resolves
