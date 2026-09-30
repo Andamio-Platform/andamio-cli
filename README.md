@@ -125,9 +125,11 @@ andamio course list -o markdown    # Markdown tables
 
 ## Scripting
 
-`--output json` is the stable surface. Data goes to stdout, progress and errors
-to stderr, and no command reads stdin or prompts — everything works without a
-TTY.
+`--output json` is the stable surface. Data goes to stdout, progress to stderr,
+and no command reads stdin or prompts, so everything works without a TTY. Errors
+go to stderr in text mode. Under `--output json` a failure prints its
+`{"error", "kind"}` envelope on stdout instead, so check the exit code before
+parsing (`set -o pipefail` covers pipes). See `andamio help exit-codes`.
 
 Discover ids first, then use them:
 
