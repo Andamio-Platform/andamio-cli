@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -363,5 +365,73 @@ func TestUserStatus_TextHintDropsLogoutStep(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Run 'andamio user login' to re-authenticate.") {
 		t.Errorf("missing single-step recovery hint: %q", stdout)
+	}
+}
+
+// browserLoginCallback returns an openURL stand-in that completes the user
+// login browser flow by calling the CLI's loopback callback with the state
+// it was handed. openErr is what the stand-in reports back to the CLI, so a
+// non-nil value exercises the "browser failed to open" path.
+func browserLoginCallback(t *testing.T, openErr error) func(string) error {
+	t.Helper()
+	return func(authURL string) error {
+		u, err := url.Parse(authURL)
+		if err != nil {
+			t.Errorf("parse auth URL: %v", err)
+			return err
+		}
+		q := u.Query()
+		cb := q.Get("redirect_uri") + "?" + url.Values{
+			"state": {q.Get("state")},
+			"jwt":   {"test-jwt"},
+			"alias": {"tester"},
+		}.Encode()
+		go func() {
+			resp, err := http.Get(cb)
+			if err != nil {
+				t.Errorf("callback: %v", err)
+				return
+			}
+			resp.Body.Close()
+		}()
+		return openErr
+	}
+}
+
+// The auth URL carries the CSRF state, so user login must never print it to
+// stdout, and prints it to stderr only when the browser fails to open. This
+// matches the dev login browser flow (cli#109).
+func TestUserLoginBrowser_AuthURLStaysOffStdout(t *testing.T) {
+	cases := []struct {
+		name       string
+		openErr    error
+		wantURLErr bool
+	}{
+		{"browser opens", nil, false},
+		{"browser fails to open", errors.New("no display"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withTempHome(t, "https://preprod.api.andamio.io")
+			overrideOpenURL(t, browserLoginCallback(t, tc.openErr))
+
+			var runErr error
+			stdout, stderr := captureBoth(t, func() {
+				runErr = runUserLogin(userLoginCmd, nil)
+			})
+			if runErr != nil {
+				t.Fatalf("runUserLogin: %v", runErr)
+			}
+
+			if strings.Contains(stdout, "state=") || strings.Contains(stdout, "/auth/cli") {
+				t.Errorf("stdout carries the auth URL:\n%s", stdout)
+			}
+			if strings.Contains(stdout, "Opening browser") || strings.Contains(stdout, "Waiting for authentication") {
+				t.Errorf("progress lines on stdout:\n%s", stdout)
+			}
+			if got := strings.Contains(stderr, "state="); got != tc.wantURLErr {
+				t.Errorf("auth URL on stderr = %v, want %v:\n%s", got, tc.wantURLErr, stderr)
+			}
+		})
 	}
 }

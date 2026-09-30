@@ -212,16 +212,16 @@ func runUserLogin(cmd *cobra.Command, args []string) error {
 	// Build auth URL - the app's CLI auth page
 	authURL := buildAuthURL(cfg.BaseURL, "/auth/cli", redirectURI, state)
 
-	fmt.Println("Opening browser for authentication...")
-	fmt.Printf("If browser doesn't open, visit: %s\n\n", authURL)
-
-	// Open browser
-	if err := browser.OpenURL(authURL); err != nil {
-		fmt.Printf("Failed to open browser automatically: %v\n", err)
-		fmt.Printf("Please open this URL manually: %s\n", authURL)
+	// Progress goes to stderr, and the auth URL (which carries the CSRF
+	// state) is printed only when the browser fails to open, matching
+	// runDevLoginBrowser. Printing it on every run put the state on stdout.
+	fmt.Fprintln(os.Stderr, "Opening browser for authentication...")
+	if err := openURL(authURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open browser automatically: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Please open this URL manually: %s\n", authURL)
 	}
 
-	fmt.Println("Waiting for authentication...")
+	fmt.Fprintln(os.Stderr, "Waiting for authentication...")
 
 	// Wait for callback with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -696,14 +696,7 @@ func getInt(m map[string]interface{}, key string) int {
 }
 
 // openURL is the package-level indirection for browser.OpenURL so tests can
-// override it. Declared at package scope in user.go (where pkg/browser is
-// already imported) so a future PR that adds tests to the user-login browser
-// flow can swap its existing `browser.OpenURL(authURL)` call site to
-// `openURL(authURL)` without a new declaration. Today, only the dev-login
-// browser flow uses this variable; user.go's browser-open call is unchanged
-// (strict scope per docs/plans/2026-05-22-001-feat-browser-based-dev-login-plan.md).
-// Package-level Go variables are exempt from the unused-variable check, so
-// this compiles cleanly even though user.go itself does not reference it.
+// override it. Both browser login flows (user login and dev login) call it.
 var openURL = browser.OpenURL
 
 // appURLFromBase converts a configured API base URL into the corresponding
