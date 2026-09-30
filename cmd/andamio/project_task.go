@@ -469,9 +469,9 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"title":               title,
-		"lovelace_amount":     lovelace,
-		"expiration_time":     expirationMs,
+		"title":                title,
+		"lovelace_amount":      lovelace,
+		"expiration_time":      expirationMs,
 	}
 	if content != "" {
 		payload["content"] = content
@@ -536,11 +536,43 @@ func runTaskGet(cmd *cobra.Command, args []string) error {
 			taskIndex = int(v)
 		}
 		if taskIndex == index {
-			return output.PrintJSON(item)
+			if output.GetFormat() == output.FormatJSON {
+				return output.PrintJSON(item)
+			}
+			return printTaskDetail(item)
 		}
 	}
 
 	return fmt.Errorf("task with index %d not found", index)
+}
+
+// printTaskDetail renders a single task as human-readable key/value lines,
+// mirroring the fields runTasksList already shows in its table.
+func printTaskDetail(item map[string]interface{}) error {
+	index := 0
+	if v, ok := item["task_index"].(float64); ok {
+		index = int(v)
+	}
+	status, _ := item["task_status"].(string)
+	if status == "" {
+		status, _ = item["source"].(string)
+	}
+	title := ""
+	if content, ok := item["content"].(map[string]interface{}); ok {
+		title, _ = content["title"].(string)
+	}
+	lovelace := int64(0)
+	if v, ok := item["lovelace_amount"].(float64); ok {
+		lovelace = int64(v)
+	}
+	expiration, _ := item["expiration"].(string)
+
+	fmt.Printf("Index:      %d\n", index)
+	fmt.Printf("Title:      %s\n", title)
+	fmt.Printf("Status:     %s\n", status)
+	fmt.Printf("Lovelace:   %d\n", lovelace)
+	fmt.Printf("Expiration: %s\n", expiration)
+	return nil
 }
 
 func runTaskUpdate(cmd *cobra.Command, args []string) error {
@@ -552,6 +584,18 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 	index, err := strconv.Atoi(indexStr)
 	if err != nil {
 		return fmt.Errorf("invalid index: %s", indexStr)
+	}
+
+	updateFlags := []string{"title", "lovelace", "expiration", "content", "content-file", "token"}
+	hasUpdates := false
+	for _, f := range updateFlags {
+		if cmd.Flags().Changed(f) {
+			hasUpdates = true
+			break
+		}
+	}
+	if !hasUpdates {
+		return fmt.Errorf("no fields to update: specify at least one of --title, --lovelace, --expiration, --content, --content-file, --token")
 	}
 
 	// Validate lovelace if provided
@@ -579,7 +623,7 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"index":               index,
+		"index":                index,
 	}
 
 	// Only include flags that were explicitly set
@@ -665,7 +709,7 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"index":               index,
+		"index":                index,
 	}
 
 	if !isJSON {
@@ -712,16 +756,16 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 	}
 
 	type verifyResult struct {
-		TaskIndex      int              `json:"task_index"`
-		Content        string           `json:"content"`
-		APIHash        string           `json:"api_hash"`
-		ComputedHash   string           `json:"computed_hash"`
-		Match          bool             `json:"match"`
-		ExpirationTime uint64           `json:"expiration_time"`
-		Lovelace       uint64           `json:"lovelace_amount"`
-		AssetCount     int              `json:"asset_count"`
+		TaskIndex      int                   `json:"task_index"`
+		Content        string                `json:"content"`
+		APIHash        string                `json:"api_hash"`
+		ComputedHash   string                `json:"computed_hash"`
+		Match          bool                  `json:"match"`
+		ExpirationTime uint64                `json:"expiration_time"`
+		Lovelace       uint64                `json:"lovelace_amount"`
+		AssetCount     int                   `json:"asset_count"`
 		Assets         []cardano.NativeAsset `json:"assets,omitempty"`
-		Error          string           `json:"error,omitempty"`
+		Error          string                `json:"error,omitempty"`
 	}
 
 	var results []verifyResult
