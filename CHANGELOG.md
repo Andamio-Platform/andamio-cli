@@ -6,6 +6,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Fixed
+
+- **`user login` keeps its progress and the auth URL off stdout.** The browser flow printed "Opening browser...", the auth URL and "Waiting for authentication..." to stdout on every run, and the URL carries the CSRF state. Progress now goes to stderr, and the URL is printed (to stderr) only when the browser fails to open, matching `dev login`. (cli#109)
+
 ## [1.1.2] - 2026-09-28
 
 ### Added
