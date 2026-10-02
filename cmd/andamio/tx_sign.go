@@ -47,9 +47,15 @@ func runTxSign(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("either --tx or --tx-file is required")
 	}
 
-	skeyPath, err := cardano.ResolveSkeyPath(skeyPath)
+	skeyPath, usedDefault, err := cardano.ResolveSkeyPath(skeyPath, cmd.Flags().Changed("skey"))
 	if err != nil {
 		return err
+	}
+	var warnings []string
+	if usedDefault {
+		msg := cardano.DefaultSkeyWarning(skeyPath)
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+		warnings = append(warnings, msg)
 	}
 
 	// Load unsigned tx
@@ -80,6 +86,8 @@ func runTxSign(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	result.Warnings = warnings
 
 	if isJSON {
 		return output.PrintJSON(result)

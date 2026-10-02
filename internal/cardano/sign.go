@@ -18,8 +18,9 @@ import (
 
 // SignResult contains the output of signing a transaction.
 type SignResult struct {
-	SignedTx string `json:"signed_tx"`
-	TxHash   string `json:"tx_hash"`
+	SignedTx string   `json:"signed_tx"`
+	TxHash   string   `json:"tx_hash"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // SigningKey wraps a loaded Cardano signing key. Bursa writes two distinct

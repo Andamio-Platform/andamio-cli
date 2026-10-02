@@ -10,6 +10,7 @@ import (
 	ouroboros "github.com/blinklabs-io/gouroboros"
 	lcommon "github.com/blinklabs-io/gouroboros/ledger/common"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/blinklabs-io/bursa"
 )
 
@@ -128,32 +129,85 @@ func (w *GeneratedWallet) WriteFiles(dir string, skipMnemonic bool, force bool) 
 		for _, name := range existing {
 			path := filepath.Join(dir, name)
 			if _, err := os.Stat(path); err == nil {
-				return nil, fmt.Errorf("wallet already exists at %s (found %s) — pass --force to overwrite it, or --name/--output-dir to write a new one elsewhere", dir, path)
+				return nil, &apierr.ConflictError{Message: fmt.Sprintf("wallet already exists at %s (found %s) — pass --force to overwrite it, or --name/--output-dir to write a new one elsewhere", dir, path)}
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return nil, fmt.Errorf("failed to check %s: %w", path, err)
 			}
 		}
 	}
 
+	// Stage every file as a 0600 temp in dir before touching anything that
+	// exists. A failed write then leaves the previous wallet untouched
+	// rather than half-overwritten, and renaming over an existing file
+	// replaces its permissions too (os.WriteFile only applies 0600 when it
+	// creates a file, so a --force over 0644 keys used to stay 0644).
+	staged := make(map[string]string, len(files))
+	defer func() {
+		for _, tmpPath := range staged {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	for name, content := range files {
+		tmpPath, err := writeTempSecret(dir, name, []byte(content))
+		if err != nil {
+			return nil, fmt.Errorf("failed to write %s: %w", name, err)
+		}
+		staged[name] = tmpPath
+	}
+
+	paths := make(map[string]string, len(files))
+	for name, tmpPath := range staged {
+		path := filepath.Join(dir, name)
+		if err := os.Rename(tmpPath, path); err != nil {
+			return nil, fmt.Errorf("failed to move %s into place: %w", name, err)
+		}
+		delete(staged, name)
+		paths[name] = path
+	}
+
 	// A forced overwrite with skipMnemonic writes no mnemonic.txt, so any
 	// existing one is the previous wallet's. Left in place it would sit
 	// next to the new keys and restore the old wallet, not this one.
+	// Removed last, so a failure above never costs the old wallet its
+	// mnemonic.
 	if skipMnemonic {
 		stale := filepath.Join(dir, "mnemonic.txt")
 		if err := os.Remove(stale); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("failed to remove previous wallet's %s: %w", stale, err)
 		}
 	}
-
-	paths := make(map[string]string, len(files))
-	for name, content := range files {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-			return nil, fmt.Errorf("failed to write %s: %w", name, err)
-		}
-		paths[name] = path
-	}
 	return paths, nil
+}
+
+// writeTempSecret writes data to a new 0600 temp file in dir and returns its
+// path. The caller renames it into place or removes it.
+func writeTempSecret(dir, name string, data []byte) (path string, err error) {
+	tmp, err := os.CreateTemp(dir, "."+name+".tmp.*")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name() // full path: CreateTemp joins dir and the generated name
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	return tmpPath, nil
 }
 
 // DefaultWalletDir returns ~/.andamio/wallet/<name> — the CLI's one
@@ -167,27 +221,39 @@ func DefaultWalletDir(name string) (string, error) {
 	return filepath.Join(home, ".andamio", "wallet", name), nil
 }
 
-// ResolveSkeyPath returns flagValue unchanged if set. Otherwise it falls
-// back to the default wallet's payment.skey (~/.andamio/wallet/default/),
-// returning an error that tells the user how to get one if it doesn't
-// exist — never prompts, never reads stdin.
-func ResolveSkeyPath(flagValue string) (string, error) {
-	if flagValue != "" {
-		return flagValue, nil
+// ResolveSkeyPath returns the .skey path to sign with. explicit reports
+// whether --skey appeared on the command line at all (cmd.Flags().Changed):
+// an explicit empty value is an error rather than a fallback, so a script
+// passing an unset variable can't silently sign with the default wallet.
+// Without --skey it falls back to the default wallet's payment.skey
+// (~/.andamio/wallet/default/) and reports usedDefault so the caller can say
+// so. Never prompts, never reads stdin.
+func ResolveSkeyPath(flagValue string, explicit bool) (path string, usedDefault bool, err error) {
+	if explicit {
+		if flagValue == "" {
+			return "", false, fmt.Errorf("--skey was given an empty value — pass a path to a .skey file, or omit --skey to use the default wallet")
+		}
+		return flagValue, false, nil
 	}
 
 	dir, err := DefaultWalletDir("default")
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	path := filepath.Join(dir, "payment.skey")
+	path = filepath.Join(dir, "payment.skey")
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("--skey not given and no default wallet found at %s — run 'andamio wallet create' first, or pass --skey explicitly", path)
+			return "", false, &apierr.NotFoundError{Message: fmt.Sprintf("--skey not given and no default wallet found at %s — run 'andamio wallet create' first, or pass --skey explicitly", path)}
 		}
-		return "", fmt.Errorf("failed to check default wallet: %w", err)
+		return "", false, fmt.Errorf("failed to check default wallet: %w", err)
 	}
-	return path, nil
+	return path, true, nil
+}
+
+// DefaultSkeyWarning is the notice shown when ResolveSkeyPath fell back to
+// the default wallet. It names only the key file's path, never its contents.
+func DefaultSkeyWarning(path string) string {
+	return fmt.Sprintf("--skey not given; signing with the default wallet key at %s — pass --skey to choose a key explicitly", path)
 }
 
 // AddressFromVKeys derives a bech32 Shelley base address (payment + stake
@@ -245,7 +311,7 @@ func WalletAddress(dir, network string) (address string, derived bool, err error
 	stakeVKeyPath := filepath.Join(dir, "stake.vkey")
 	if _, err := os.Stat(paymentVKeyPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", false, fmt.Errorf("no wallet found at %s — run 'andamio wallet create' first, or pass --name/--dir to point at an existing one", dir)
+			return "", false, &apierr.NotFoundError{Message: fmt.Sprintf("no wallet found at %s — run 'andamio wallet create' first, or pass --name/--dir to point at an existing one", dir)}
 		}
 		return "", false, fmt.Errorf("failed to check wallet at %s: %w", dir, err)
 	}

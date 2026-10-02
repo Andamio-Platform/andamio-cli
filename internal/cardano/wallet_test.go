@@ -188,3 +188,164 @@ func TestWriteFiles_ForceWithSkipMnemonicRemovesStaleMnemonic(t *testing.T) {
 		t.Errorf("previous wallet's mnemonic.txt still present after forced overwrite (stat err = %v)", err)
 	}
 }
+
+// A --force overwrite that fails partway must not cost the existing wallet
+// its mnemonic or leave temp files behind. A non-empty directory where
+// address.txt should go makes that one file fail to land.
+func TestWriteFiles_FailedForceKeepsMnemonicAndCleansUp(t *testing.T) {
+	dir := t.TempDir()
+	first, err := GenerateWallet("preprod")
+	if err != nil {
+		t.Fatalf("GenerateWallet: %v", err)
+	}
+	if _, err := first.WriteFiles(dir, false, false); err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+
+	blocker := filepath.Join(dir, "address.txt")
+	if err := os.Remove(blocker); err != nil {
+		t.Fatalf("remove address.txt: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(blocker, "keep"), 0700); err != nil {
+		t.Fatalf("create blocking directory: %v", err)
+	}
+
+	second, err := GenerateWallet("preprod")
+	if err != nil {
+		t.Fatalf("GenerateWallet: %v", err)
+	}
+	if _, err := second.WriteFiles(dir, true, true); err == nil {
+		t.Fatal("WriteFiles with address.txt blocked: want error, got nil")
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "mnemonic.txt"))
+	if err != nil {
+		t.Fatalf("previous wallet's mnemonic.txt gone after failed overwrite: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != first.Mnemonic {
+		t.Errorf("mnemonic.txt changed after failed overwrite")
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp.") {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
+// A --force overwrite must leave every file at 0600, whatever the previous
+// wallet's files were set to: os.WriteFile only applies its mode when it
+// creates a file, so overwriting in place used to keep 0644 keys at 0644.
+func TestWriteFiles_ForceResetsPermissionsTo0600(t *testing.T) {
+	dir := t.TempDir()
+	first, err := GenerateWallet("preprod")
+	if err != nil {
+		t.Fatalf("GenerateWallet: %v", err)
+	}
+	if _, err := first.WriteFiles(dir, false, false); err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, e := range entries {
+		mode := os.FileMode(0644)
+		if e.Name() == "payment.skey" {
+			mode = 0400
+		}
+		if err := os.Chmod(filepath.Join(dir, e.Name()), mode); err != nil {
+			t.Fatalf("chmod %s: %v", e.Name(), err)
+		}
+	}
+
+	second, err := GenerateWallet("preprod")
+	if err != nil {
+		t.Fatalf("GenerateWallet: %v", err)
+	}
+	paths, err := second.WriteFiles(dir, false, true)
+	if err != nil {
+		t.Fatalf("WriteFiles with force over 0644/0400 files: %v", err)
+	}
+
+	for name, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Errorf("%s mode = %o, want 600", name, got)
+		}
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "address.txt"))
+	if err != nil {
+		t.Fatalf("read address.txt: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != second.PaymentAddress {
+		t.Errorf("address.txt = %q, want the new wallet's %q", got, second.PaymentAddress)
+	}
+}
+
+func TestResolveSkeyPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	defaultSkey := filepath.Join(home, ".andamio", "wallet", "default", "payment.skey")
+
+	writeDefault := func(t *testing.T) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(defaultSkey), 0700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(defaultSkey, []byte("{}"), 0600); err != nil {
+			t.Fatalf("write default skey: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name        string
+		flagValue   string
+		explicit    bool
+		haveDefault bool
+		wantPath    string
+		wantDefault bool
+		wantErr     string
+	}{
+		{name: "explicit path is used as given", flagValue: "/keys/mine.skey", explicit: true, haveDefault: true, wantPath: "/keys/mine.skey"},
+		// An unset shell variable (--skey "$KEY") must not silently fall
+		// back to the default wallet.
+		{name: "explicit empty value errors", flagValue: "", explicit: true, haveDefault: true, wantErr: "--skey was given an empty value"},
+		{name: "omitted falls back to default wallet", explicit: false, haveDefault: true, wantPath: defaultSkey, wantDefault: true},
+		{name: "omitted with no default wallet errors", explicit: false, haveDefault: false, wantErr: "no default wallet found"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_ = os.RemoveAll(filepath.Join(home, ".andamio"))
+			if tt.haveDefault {
+				writeDefault(t)
+			}
+
+			path, usedDefault, err := ResolveSkeyPath(tt.flagValue, tt.explicit)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if path != tt.wantPath {
+				t.Errorf("path = %q, want %q", path, tt.wantPath)
+			}
+			if usedDefault != tt.wantDefault {
+				t.Errorf("usedDefault = %v, want %v", usedDefault, tt.wantDefault)
+			}
+		})
+	}
+}

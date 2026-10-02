@@ -28,6 +28,7 @@ type TxLifecycleParams struct {
 	Timeout    time.Duration
 	SubmitURL  string
 	Headers    []string
+	Warnings   []string // carried onto every RunResult printed, including failures
 }
 
 // executeTxLifecycle runs the full Cardano transaction lifecycle:
@@ -58,7 +59,7 @@ func executeTxLifecycle(ctx context.Context, c *client.Client, cfg *config.Confi
 	defer cancel()
 
 	var mu sync.Mutex
-	result := &RunResult{TxType: params.TxType}
+	result := &RunResult{TxType: params.TxType, Warnings: params.Warnings}
 
 	fail := func(state, msg string, origErr error) error {
 		mu.Lock()

@@ -25,6 +25,7 @@ type RunResult struct {
 	Step          string                 `json:"step"`
 	BuildResponse map[string]interface{} `json:"build_response,omitempty"`
 	Error         string                 `json:"error,omitempty"`
+	Warnings      []string               `json:"warnings,omitempty"`
 }
 
 var txRunCmd = &cobra.Command{
@@ -99,9 +100,15 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--body and --body-file are mutually exclusive")
 	}
 
-	skeyPath, err := cardano.ResolveSkeyPath(skeyPath)
+	skeyPath, usedDefault, err := cardano.ResolveSkeyPath(skeyPath, cmd.Flags().Changed("skey"))
 	if err != nil {
 		return err
+	}
+	var warnings []string
+	if usedDefault {
+		msg := cardano.DefaultSkeyWarning(skeyPath)
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+		warnings = append(warnings, msg)
 	}
 
 	// Parse metadata flags
@@ -149,6 +156,7 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 		Timeout:    timeout,
 		SubmitURL:  submitURL,
 		Headers:    headers,
+		Warnings:   warnings,
 	})
 
 	if err != nil {

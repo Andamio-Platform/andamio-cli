@@ -418,3 +418,42 @@ func TestGetJSON_BareArrayResponseIsSuccessNotDecodeError(t *testing.T) {
 		})
 	}
 }
+
+// Local wallet failures use the same contract as gateway ones: a missing
+// wallet is not_found (2), an existing one is conflict (6). Before this they
+// all exited 1 / error, the same as a malformed flag.
+func TestExitCodes_WalletErrors(t *testing.T) {
+	bin := buildTestBinary(t)
+	url := statusStub(t, http.StatusOK) // never called: these fail locally
+	walletDir := t.TempDir()
+
+	if _, stderr, code := runCLI(t, bin, url, "wallet", "create", "--output-dir", walletDir, "--output", "json"); code != 0 {
+		t.Fatalf("first wallet create: exit %d\n%s", code, stderr)
+	}
+
+	cases := []struct {
+		name     string
+		args     []string
+		wantCode int
+		wantKind string
+	}{
+		{"wallet create over existing wallet", []string{"wallet", "create", "--output-dir", walletDir}, 6, "conflict"},
+		{"tx sign with no default wallet", []string{"tx", "sign", "--tx", "84a4"}, 2, "not_found"},
+		{"wallet address with no wallet", []string{"wallet", "address"}, 2, "not_found"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, _, code := runCLI(t, bin, url, append(tc.args, "--output", "json")...)
+			if code != tc.wantCode {
+				t.Errorf("exit code = %d, want %d", code, tc.wantCode)
+			}
+			var parsed map[string]string
+			if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+				t.Fatalf("stdout is not JSON: %v\nraw: %q", err, stdout)
+			}
+			if parsed["kind"] != tc.wantKind {
+				t.Errorf("kind = %q, want %q (error: %s)", parsed["kind"], tc.wantKind, parsed["error"])
+			}
+		})
+	}
+}
