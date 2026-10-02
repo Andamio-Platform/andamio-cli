@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -453,6 +455,30 @@ func TestExitCodes_WalletErrors(t *testing.T) {
 			}
 			if parsed["kind"] != tc.wantKind {
 				t.Errorf("kind = %q, want %q (error: %s)", parsed["kind"], tc.wantKind, parsed["error"])
+			}
+		})
+	}
+}
+
+// --no-write-mnemonic prints the mnemonic to stderr. When stderr is captured
+// (as it is here, and in CI or an agent) that would put it in a log, so the
+// command refuses before generating anything.
+func TestWalletCreate_NoWriteMnemonicRefusedWhenStderrCaptured(t *testing.T) {
+	bin := buildTestBinary(t)
+	url := statusStub(t, http.StatusOK) // never called
+	walletDir := filepath.Join(t.TempDir(), "w")
+
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			stdout, stderr, code := runCLI(t, bin, url, "wallet", "create", "--no-write-mnemonic", "--output-dir", walletDir, "--output", format)
+			if code != 1 {
+				t.Errorf("exit code = %d, want 1", code)
+			}
+			if !strings.Contains(stdout+stderr, "stderr isn't a terminal") {
+				t.Errorf("missing refusal message\nstdout: %s\nstderr: %s", stdout, stderr)
+			}
+			if _, err := os.Stat(walletDir); !os.IsNotExist(err) {
+				t.Errorf("wallet dir created despite refusal (stat err = %v)", err)
 			}
 		})
 	}

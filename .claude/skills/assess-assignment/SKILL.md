@@ -236,6 +236,11 @@ andamio tx sign --tx <unsigned-cbor> --skey <path> --output json
 andamio tx submit --tx <signed-cbor> --output json
 ```
 
+Always pass `--skey` explicitly here. If it's omitted, the CLI falls back to
+the default wallet (`~/.andamio/wallet/default/`), which may not be the
+teacher's key. The transaction would then be signed by the wrong wallet and
+fail on submit with a missing-witness error.
+
 ### Phase 6: Report
 
 After all transactions are processed:

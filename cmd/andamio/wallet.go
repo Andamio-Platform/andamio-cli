@@ -47,6 +47,9 @@ The mnemonic is written to disk (0600) rather than only shown once: every
 CLI command must work without a TTY, so there's no interactive "did you
 save it?" gate this could wait on. Pass --no-write-mnemonic to opt back
 into shown-once-only (e.g. for a mainnet wallet you'd rather not persist).
+That only works in an interactive terminal: if stderr is piped or captured
+(CI, an agent, 2>file), it's refused before anything is generated, since
+"shown once" would mean "kept in a log".
 
 WHAT THIS WALLET CAN'T DO YET
 
@@ -130,7 +133,7 @@ func init() {
 	walletCreateCmd.Flags().
 		String("network", "preprod", "Network to derive the address for (preprod, mainnet, preview) — defaults to the configured gateway's network when not given")
 	walletCreateCmd.Flags().
-		Bool("no-write-mnemonic", false, "Do not write mnemonic.txt — print it once to stderr instead")
+		Bool("no-write-mnemonic", false, "Do not write mnemonic.txt — print it once to stderr instead (refused unless stderr is a terminal, so it can't end up in a log)")
 	walletCreateCmd.Flags().
 		Bool("force", false, "Overwrite an existing wallet at the target directory")
 
@@ -150,6 +153,14 @@ func runWalletCreate(cmd *cobra.Command, args []string) error {
 	noWriteMnemonic, _ := cmd.Flags().GetBool("no-write-mnemonic")
 	force, _ := cmd.Flags().GetBool("force")
 	isJSON := output.GetFormat() == output.FormatJSON
+
+	// --no-write-mnemonic means "show it once, keep it nowhere". That only
+	// holds when stderr is a terminal a person is reading; piped or captured
+	// (CI, agents, 2>file) the words land in a log instead. Checked before
+	// anything is generated, so a refusal leaves no wallet behind.
+	if noWriteMnemonic && !stderrIsTerminal() {
+		return fmt.Errorf("--no-write-mnemonic shows the mnemonic once on the terminal, but stderr isn't a terminal here (it's piped or captured), so it would end up in a log — run this in an interactive terminal, or drop --no-write-mnemonic to save it to mnemonic.txt (0600)")
+	}
 
 	var warnings []string
 
@@ -279,6 +290,13 @@ func runWalletAddress(cmd *cobra.Command, args []string) error {
 // preprod/preview vs. mainnet). Always printed regardless of --output —
 // stderr doesn't touch the JSON contract on stdout, and scripted callers
 // are exactly the audience most likely to never see it otherwise.
+// stderrIsTerminal reports whether stderr is a character device (a terminal)
+// rather than a pipe or file.
+func stderrIsTerminal() bool {
+	info, err := os.Stderr.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
 func printSecurityWarnings(wallet *cardano.GeneratedWallet, dir, network string, noWriteMnemonic bool, paths map[string]string) {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "SECURITY WARNING: %s (and %s) can sign transactions and move every fund at this address — with no further confirmation from you.\n", paths["payment.skey"], paths["stake.skey"])
