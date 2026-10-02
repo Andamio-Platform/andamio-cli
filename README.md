@@ -259,6 +259,15 @@ want that.
 - `tx types` — List transaction types
 - `tx status <tx-hash>` — Get transaction status
 
+### `andamio wallet`
+
+- `wallet create` — Generate a local payment/stake key pair offline, written to `~/.andamio/wallet/<name>/` (`--name` defaults to `default`, `--output-dir` for elsewhere). Network follows the configured gateway unless `--network` is given. Refuses to overwrite an existing wallet without `--force`
+- `wallet address` — Print a wallet's payment address (`--name` or `--dir`); bare address on stdout, so `addr=$(andamio wallet address)` works
+
+`tx sign` and `tx run` use the `default` wallet's `payment.skey` when `--skey` is omitted.
+
+A new wallet has no funds and no Access Token, so it can't log in or build transactions on its own yet. `andamio wallet create --help` walks through funding it, minting an Access Token onto it, and getting an API key. The key files and `mnemonic.txt` can move every fund at the address: keep them out of git, cloud sync and chat.
+
 ### `andamio apikey`
 
 - `apikey usage` — Get API key usage stats
@@ -602,7 +611,7 @@ The CLI works with two Cardano networks. Start on preprod for development.
 |---|---|---|
 | API | `https://preprod.api.andamio.io` | `https://mainnet.api.andamio.io` |
 | App | [preprod.app.andamio.io](https://preprod.app.andamio.io) | [app.andamio.io](https://app.andamio.io) |
-| API key | [preprod.app.andamio.io/api-setup](https://preprod.app.andamio.io/api-setup) | [app.andamio.io/api-setup](https://app.andamio.io/api-setup) |
+| API key | [app.andamio.io/api-setup](https://app.andamio.io/api-setup) (select preprod) | [app.andamio.io/api-setup](https://app.andamio.io/api-setup) |
 | Access Token | Free (test ADA) | Requires real ADA |
 
 Switch networks:
@@ -613,6 +622,7 @@ andamio config set-url https://mainnet.api.andamio.io
 
 **Important:**
 - API keys are network-specific — a preprod key won't work on mainnet
+- API keys for both networks are created on the mainnet app, from an Andamio developer account, and registering that account requires a **mainnet** Access Token, even if you only work on preprod
 - Wallet auth (`user login`) connects to the app matching your current network
 - You need a separate Access Token on each network
 - When switching networks, re-authenticate: `andamio auth login --api-key <mainnet-key>`

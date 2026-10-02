@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -24,6 +25,7 @@ type RunResult struct {
 	Step          string                 `json:"step"`
 	BuildResponse map[string]interface{} `json:"build_response,omitempty"`
 	Error         string                 `json:"error,omitempty"`
+	Warnings      []string               `json:"warnings,omitempty"`
 }
 
 var txRunCmd = &cobra.Command{
@@ -61,7 +63,8 @@ func init() {
 	txCmd.AddCommand(txRunCmd)
 	txRunCmd.Flags().String("body", "", "Inline JSON request body")
 	txRunCmd.Flags().String("body-file", "", "Path to JSON file (mutually exclusive with --body)")
-	txRunCmd.Flags().String("skey", "", "Path to Cardano .skey file for signing")
+	txRunCmd.Flags().String("skey", "",
+		"Path to Cardano .skey file for signing; defaults to the wallet from 'andamio wallet create' if omitted")
 	txRunCmd.Flags().String("tx-type", "", "Transaction type for registration (see 'andamio tx types')")
 	txRunCmd.Flags().String("submit-url", "", "Override submit API URL (falls back to config)")
 	txRunCmd.Flags().StringArray("submit-header", nil, "Additional submit headers (repeatable, format: \"Key: Value\")")
@@ -69,7 +72,6 @@ func init() {
 	txRunCmd.Flags().StringArray("metadata", nil, "Metadata for registration (repeatable, format: key=value)")
 	txRunCmd.Flags().Bool("no-wait", false, "Exit after registration without polling for confirmation")
 	txRunCmd.Flags().Duration("timeout", 10*time.Minute, "Max time to wait for confirmation")
-	txRunCmd.MarkFlagRequired("skey")
 	txRunCmd.MarkFlagRequired("tx-type")
 }
 
@@ -96,6 +98,17 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 	}
 	if bodyStr != "" && bodyFile != "" {
 		return fmt.Errorf("--body and --body-file are mutually exclusive")
+	}
+
+	skeyPath, usedDefault, err := cardano.ResolveSkeyPath(skeyPath, cmd.Flags().Changed("skey"))
+	if err != nil {
+		return err
+	}
+	var warnings []string
+	if usedDefault {
+		msg := cardano.DefaultSkeyWarning(skeyPath)
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+		warnings = append(warnings, msg)
 	}
 
 	// Parse metadata flags
@@ -143,6 +156,7 @@ func runTxRun(cmd *cobra.Command, args []string) error {
 		Timeout:    timeout,
 		SubmitURL:  submitURL,
 		Headers:    headers,
+		Warnings:   warnings,
 	})
 
 	if err != nil {

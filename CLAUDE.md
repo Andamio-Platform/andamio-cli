@@ -144,11 +144,11 @@ Every failure carries an exit code **and**, under `--output json`, a `kind` fiel
 | 0 | — | Success, including an empty but valid result set |
 | 1 | `error` / `server` / `backpressure` / `canceled` | Unexpected, 5xx, retry-later, interrupted |
 | 1 | `verify` | A write was accepted but the read-back did not confirm the stored value (differs, or degraded 206). Emitted by `course import-assignment`. Shares exit 1 per the main.go rule; the module WAS modified |
-| 2 | `not_found` | 404 |
+| 2 | `not_found` | 404, or no local wallet to sign with / read from (`tx sign` / `tx run` with no `--skey` and no default wallet; `wallet address` with no wallet) |
 | 3 | `auth` | No credentials, or 401/403 |
 | 4 | `removed_command` | Retired in 1.0 |
 | 5 | `unreachable` | Request never reached the service |
-| 6 | `conflict` | 409 |
+| 6 | `conflict` | 409, or `wallet create` found a wallet already at that path (without `--force`) |
 | 7 | `tier_limit` | Plan does not permit the action; remedy is billing-side. Classified by body code `tier_limit_exceeded` on any 4xx (429 today, 403 after product-circle#304), before the status switch. Never retried |
 
 **An empty result is exit 0 with an empty collection, not an error.** This is what keeps "nothing found", "not permitted" (3) and "could not reach the service" (5) distinguishable. Do not "fix" `printList` to return an error on empty.
@@ -275,9 +275,9 @@ Supplies the `policy_id` / `asset_name` values for `project task create --token 
 ### tx — Transactions
 | Command | Endpoint | Auth | Description |
 |---------|----------|------|-------------|
-| `tx run <endpoint> --skey <path> --tx-type <type>` | build+sign+submit+register+poll | jwt | Full lifecycle: build, sign, submit, register, poll. `--body`/`--body-file`, `--no-wait`, `--timeout`, `--metadata`, `--instance-id` |
+| `tx run <endpoint> [--skey <path>] --tx-type <type>` | build+sign+submit+register+poll | jwt | Full lifecycle: build, sign, submit, register, poll. `--body`/`--body-file`, `--no-wait`, `--timeout`, `--metadata`, `--instance-id`. `--skey` defaults to the `wallet create` default wallet (warns; listed in JSON `warnings`) |
 | `tx build <endpoint> --body <json>` | POST to `/api/v2/tx/*` | jwt | Build unsigned transaction via API. `--body-file` for file input |
-| `tx sign --tx <hex> --skey <path>` | local | none | Sign unsigned tx with local .skey file. `--tx-file` for file input |
+| `tx sign --tx <hex> [--skey <path>]` | local | none | Sign unsigned tx with local .skey file. `--tx-file` for file input. `--skey` defaults to the `wallet create` default wallet (warns; listed in JSON `warnings`) |
 | `tx submit --tx <hex>` | configurable submit API | none | Submit signed tx to Cardano network. `--submit-url`, `--submit-header` |
 | `tx register --tx-hash <hash> --tx-type <type>` | `/api/v2/tx/register` | jwt | Register submitted tx for tracking. `--instance-id` optional |
 | `tx pending` | `/api/v2/tx/pending` | either | Pending transactions |

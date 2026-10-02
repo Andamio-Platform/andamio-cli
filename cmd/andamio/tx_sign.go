@@ -30,8 +30,8 @@ func init() {
 	txCmd.AddCommand(txSignCmd)
 	txSignCmd.Flags().String("tx", "", "Unsigned transaction CBOR hex string")
 	txSignCmd.Flags().String("tx-file", "", "Path to file containing CBOR hex (mutually exclusive with --tx)")
-	txSignCmd.Flags().String("skey", "", "Path to .skey file (cardano-cli JSON envelope format)")
-	txSignCmd.MarkFlagRequired("skey")
+	txSignCmd.Flags().String("skey", "",
+		"Path to .skey file (cardano-cli JSON envelope format); defaults to the wallet from 'andamio wallet create' if omitted")
 }
 
 func runTxSign(cmd *cobra.Command, args []string) error {
@@ -45,6 +45,17 @@ func runTxSign(cmd *cobra.Command, args []string) error {
 	}
 	if txHex == "" && txFile == "" {
 		return fmt.Errorf("either --tx or --tx-file is required")
+	}
+
+	skeyPath, usedDefault, err := cardano.ResolveSkeyPath(skeyPath, cmd.Flags().Changed("skey"))
+	if err != nil {
+		return err
+	}
+	var warnings []string
+	if usedDefault {
+		msg := cardano.DefaultSkeyWarning(skeyPath)
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+		warnings = append(warnings, msg)
 	}
 
 	// Load unsigned tx
@@ -61,7 +72,7 @@ func runTxSign(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load key
-	privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
+	signingKey, err := cardano.LoadSigningKey(skeyPath)
 	if err != nil {
 		return err
 	}
@@ -71,10 +82,12 @@ func runTxSign(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sign
-	result, err := cardano.SignTransaction(txHex, privKey, pubKey)
+	result, err := cardano.SignTransaction(txHex, signingKey)
 	if err != nil {
 		return err
 	}
+
+	result.Warnings = warnings
 
 	if isJSON {
 		return output.PrintJSON(result)

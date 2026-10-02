@@ -274,7 +274,7 @@ func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, 
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	// Load signing key
-	privKey, pubKey, err := cardano.LoadSigningKey(skeyPath)
+	signingKey, err := cardano.LoadSigningKey(skeyPath)
 	if err != nil {
 		return fmt.Errorf("failed to load signing key: %w", err)
 	}
@@ -314,7 +314,7 @@ func runHeadlessLogin(ctx context.Context, cfg *config.Config, skeyPath, alias, 
 		fmt.Fprintf(os.Stderr, "Signing nonce with %s...\n", skeyPath)
 	}
 
-	signResult, err := cardano.SignMessage([]byte(session.Nonce), privKey, pubKey)
+	signResult, err := cardano.SignMessage([]byte(session.Nonce), signingKey)
 	if err != nil {
 		return fmt.Errorf("failed to sign nonce: %w", err)
 	}

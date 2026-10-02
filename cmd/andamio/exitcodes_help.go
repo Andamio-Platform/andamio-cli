@@ -25,11 +25,13 @@ they never disagree — branch on whichever is more convenient.
   1     canceled          interrupted, or a --timeout expired
   1     verify            the update was accepted, but the read-back did not
                           confirm the stored value — inspect, don't retry blindly
-  2     not_found         resource doesn't exist (404)
+  2     not_found         resource doesn't exist (404), or no local wallet
+                          to sign with / read from
   3     auth              no credentials, or 401 / 403
   4     removed_command   command was retired in 1.0
   5     unreachable       the request never reached the service
-  6     conflict          conflicts with existing state (409)
+  6     conflict          conflicts with existing state (409), or a wallet
+                          already exists where 'wallet create' would write
   7     tier_limit        your plan does not permit this action — revoke,
                           upgrade or subscribe; not retry, not re-auth
 

@@ -119,11 +119,11 @@ func init() {
 //	1  error              — generic: unexpected, server-side, interrupted, bad input
 //	1  verify             — a write was accepted but its read-back did not confirm
 //	                        the stored value (course import-assignment)
-//	2  not_found          — resource doesn't exist (404)
+//	2  not_found          — resource doesn't exist (404), or no local wallet
 //	3  auth               — no credentials, or 401/403
 //	4  removed_command    — retired in 1.0 (see cmd/andamio/retired.go)
 //	5  unreachable        — the request never reached the service
-//	6  conflict           — conflicts with existing state (409)
+//	6  conflict           — conflicts with existing state (409), or an existing wallet
 //	7  tier_limit         — the account's plan does not permit this action;
 //	                        remedy is billing-side (revoke, upgrade, subscribe)
 //

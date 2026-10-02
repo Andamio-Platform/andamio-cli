@@ -3,8 +3,10 @@ module github.com/Andamio-Platform/andamio-cli
 go 1.25.5
 
 require (
+	filippo.io/edwards25519 v1.2.0
 	github.com/adrg/frontmatter v0.2.0
 	github.com/blinklabs-io/bursa v0.16.0
+	github.com/blinklabs-io/gouroboros v0.157.0
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/spf13/cobra v1.10.2
@@ -15,12 +17,10 @@ require (
 )
 
 require (
-	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/BurntSushi/toml v0.3.1 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/bits-and-blooms/bitset v1.20.0 // indirect
 	github.com/blinklabs-io/go-bip39 v0.2.0 // indirect
-	github.com/blinklabs-io/gouroboros v0.157.0 // indirect
 	github.com/blinklabs-io/plutigo v0.0.23 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6 // indirect
 	github.com/btcsuite/btcd/btcutil v1.1.6 // indirect
