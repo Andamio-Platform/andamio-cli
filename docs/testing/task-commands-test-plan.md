@@ -406,7 +406,7 @@ andamio project task create "$PROJECT_ID" \
 andamio project task get "$TASK_INDEX" --project-id "$PROJECT_ID"
 ```
 
-**Expect:** JSON printed with the full task object including `task_index`, `content.title`, `lovelace_amount`, `task_status`, `expiration`.
+**Expect:** a readable view (not JSON) with `Index`, `Title`, `Status`, `Lovelace` and `Expiration` lines, then `Description`, one `Tokens` line per reward token and `Task hash` when the task has them (a draft usually has no hash). Use `--output json` (6.2) for the full task object.
 
 ### 6.2 Get in JSON mode (explicit)
 
@@ -457,7 +457,7 @@ andamio project task update "$UPDATE_INDEX" \
 
 **Expect:** stderr shows `Updating task N...` and `Task N updated successfully.`. Verify with `get`:
 ```bash
-andamio project task get "$UPDATE_INDEX" --project-id "$PROJECT_ID" | jq '.content.title'
+andamio project task get "$UPDATE_INDEX" --project-id "$PROJECT_ID" --output json | jq '.content.title'
 ```
 
 ### 7.2 Update lovelace only
@@ -470,7 +470,7 @@ andamio project task update "$UPDATE_INDEX" \
 
 **Expect:** succeeds. Verify:
 ```bash
-andamio project task get "$UPDATE_INDEX" --project-id "$PROJECT_ID" | jq '.lovelace_amount'
+andamio project task get "$UPDATE_INDEX" --project-id "$PROJECT_ID" --output json | jq '.lovelace_amount'
 ```
 **Expect:** `9000000`.
 
@@ -535,7 +535,7 @@ export DELETE_INDEX=$(andamio project task list "$PROJECT_ID" --output json \
 echo "Will delete index: $DELETE_INDEX"
 
 # Confirm the title
-andamio project task get "$DELETE_INDEX" --project-id "$PROJECT_ID" | jq '.content.title'
+andamio project task get "$DELETE_INDEX" --project-id "$PROJECT_ID" --output json | jq '.content.title'
 ```
 
 ### 8.1 Delete the throwaway task
@@ -688,7 +688,7 @@ andamio project task import "$PROJECT_ID" --dry-run
 ```
 No API calls made. Verify: re-list tasks and confirm title hasn't changed:
 ```bash
-andamio project task get 0 --project-id "$PROJECT_ID" | jq '.content.title'
+andamio project task get 0 --project-id "$PROJECT_ID" --output json | jq '.content.title'
 ```
 **Expect:** original title (not "Dry Run Updated Title").
 
@@ -715,7 +715,7 @@ Import complete: 0 created, 1 updated, 0 skipped, 0 errors
 
 Verify the update took effect:
 ```bash
-andamio project task get 0 --project-id "$PROJECT_ID" | jq '.content.title'
+andamio project task get 0 --project-id "$PROJECT_ID" --output json | jq '.content.title'
 ```
 **Expect:** `"Import Updated Title"`.
 

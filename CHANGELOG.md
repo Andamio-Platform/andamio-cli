@@ -6,9 +6,14 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Changed
+
+- **`project task get` prints a readable view by default.** It used to print raw JSON whatever `--output` said. In text mode it now prints the five fields `task list` shows (index, title, status, lovelace, expiration), then the description, one line per reward token and the task hash when the task has them. `--output json` still gives the full task object, including the rich-text `content_json`. Scripts that pipe `task get` into `jq` need `--output json`.
+
 ### Fixed
 
 - **`user login` keeps its progress and the auth URL off stdout.** The browser flow printed "Opening browser...", the auth URL and "Waiting for authentication..." to stdout on every run, and the URL carries the CSRF state. Progress now goes to stderr, and the URL is printed (to stderr) only when the browser fails to open, matching `dev login`. (cli#109)
+- `project task update` with no field flags (`--title`, `--lovelace`, `--expiration`, `--content`, `--content-file`, `--token`) now errors before any request, instead of sending an empty update.
 
 ## [1.1.2] - 2026-09-28
 

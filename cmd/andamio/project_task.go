@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -539,16 +540,19 @@ func runTaskGet(cmd *cobra.Command, args []string) error {
 			if output.GetFormat() == output.FormatJSON {
 				return output.PrintJSON(item)
 			}
-			return printTaskDetail(item)
+			renderTaskDetail(os.Stdout, item)
+			return nil
 		}
 	}
 
 	return fmt.Errorf("task with index %d not found", index)
 }
 
-// printTaskDetail renders a single task as human-readable key/value lines,
-// mirroring the fields runTasksList already shows in its table.
-func printTaskDetail(item map[string]interface{}) error {
+// renderTaskDetail writes a single task as human-readable key/value lines:
+// the five fields runTasksList shows in its table, then description, tokens
+// and task hash when the task has them. content_json (Tiptap rich text) is
+// left to --output json.
+func renderTaskDetail(w io.Writer, item map[string]interface{}) {
 	index := 0
 	if v, ok := item["task_index"].(float64); ok {
 		index = int(v)
@@ -557,22 +561,43 @@ func printTaskDetail(item map[string]interface{}) error {
 	if status == "" {
 		status, _ = item["source"].(string)
 	}
-	title := ""
+	title, description := "", ""
 	if content, ok := item["content"].(map[string]interface{}); ok {
 		title, _ = content["title"].(string)
+		description, _ = content["description"].(string)
 	}
 	lovelace := int64(0)
 	if v, ok := item["lovelace_amount"].(float64); ok {
 		lovelace = int64(v)
 	}
 	expiration, _ := item["expiration"].(string)
+	taskHash, _ := item["task_hash"].(string)
 
-	fmt.Printf("Index:      %d\n", index)
-	fmt.Printf("Title:      %s\n", title)
-	fmt.Printf("Status:     %s\n", status)
-	fmt.Printf("Lovelace:   %d\n", lovelace)
-	fmt.Printf("Expiration: %s\n", expiration)
-	return nil
+	fmt.Fprintf(w, "Index:       %d\n", index)
+	fmt.Fprintf(w, "Title:       %s\n", title)
+	fmt.Fprintf(w, "Status:      %s\n", status)
+	fmt.Fprintf(w, "Lovelace:    %d\n", lovelace)
+	fmt.Fprintf(w, "Expiration:  %s\n", expiration)
+	if description != "" {
+		fmt.Fprintf(w, "Description: %s\n", description)
+	}
+	if assets, ok := item["assets"].([]interface{}); ok {
+		label := "Tokens:"
+		for _, a := range assets {
+			am, ok := a.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := am["name"].(string)
+			amount, _ := am["amount"].(string)
+			policyID, _ := am["policy_id"].(string)
+			fmt.Fprintf(w, "%-12s %s × %s (%s)\n", label, amount, name, policyID)
+			label = ""
+		}
+	}
+	if taskHash != "" {
+		fmt.Fprintf(w, "Task hash:   %s\n", taskHash)
+	}
 }
 
 func runTaskUpdate(cmd *cobra.Command, args []string) error {
