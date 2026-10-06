@@ -46,7 +46,7 @@ go build -o andamio ./cmd/andamio
 The CLI supports two auth methods. Start with an API key for read access:
 
 ```bash
-# Get an API key from https://preprod.app.andamio.io/api-setup
+# Get an API key from https://app.andamio.io/api-setup (select preprod; needs a mainnet Access Token)
 andamio auth login --api-key <your-api-key>
 andamio auth status
 ```

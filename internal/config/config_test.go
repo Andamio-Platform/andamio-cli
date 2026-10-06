@@ -350,3 +350,33 @@ func TestSave_NoTempFileLeftBehindOnSuccess(t *testing.T) {
 		}
 	}
 }
+
+// NetworkForBaseURL only ever answers "preprod", "mainnet" or "" — anything
+// it can't place returns "" so the caller (wallet create/address) falls back
+// to its own default instead of guessing.
+func TestNetworkForBaseURL(t *testing.T) {
+	tests := []struct {
+		baseURL string
+		want    string
+	}{
+		{"https://preprod.api.andamio.io", "preprod"},
+		{"https://mainnet.api.andamio.io", "mainnet"},
+		// Bare api.andamio.io is a working alias for mainnet.
+		{"https://api.andamio.io", "mainnet"},
+		// Matching is on the hostname, so a self-hosted gateway that names
+		// its network is placed too.
+		{"https://preprod-gw.example.com:8443/v2", "preprod"},
+		// Only the hostname counts, not the path.
+		{"https://gw.example.com/mainnet", ""},
+		// dev.api.andamio.io no longer exists; it gets no network.
+		{"https://dev.api.andamio.io", ""},
+		{"http://localhost:8080", ""},
+		{"", ""},
+		{"://not a url", ""},
+	}
+	for _, tt := range tests {
+		if got := NetworkForBaseURL(tt.baseURL); got != tt.want {
+			t.Errorf("NetworkForBaseURL(%q) = %q, want %q", tt.baseURL, got, tt.want)
+		}
+	}
+}
