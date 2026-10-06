@@ -237,6 +237,75 @@ func TestWriteFiles_FailedForceKeepsMnemonicAndCleansUp(t *testing.T) {
 	}
 }
 
+// The same failure while writing the new mnemonic (the default): renames run
+// in a fixed order with mnemonic.txt last, so a failure partway always finds
+// the old mnemonic still in place. With the renames in map order this lost
+// the old mnemonic (and payment.skey) in about one run in five.
+func TestWriteFiles_FailedForceWritingMnemonicKeepsOldMnemonic(t *testing.T) {
+	for i := 0; i < 20; i++ { // map order varied per run; one pass could pass by luck
+		dir := t.TempDir()
+		first, err := GenerateWallet("preprod")
+		if err != nil {
+			t.Fatalf("GenerateWallet: %v", err)
+		}
+		if _, err := first.WriteFiles(dir, false, false); err != nil {
+			t.Fatalf("WriteFiles: %v", err)
+		}
+
+		blocker := filepath.Join(dir, "address.txt")
+		if err := os.Remove(blocker); err != nil {
+			t.Fatalf("remove address.txt: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Join(blocker, "keep"), 0700); err != nil {
+			t.Fatalf("create blocking directory: %v", err)
+		}
+
+		second, err := GenerateWallet("preprod")
+		if err != nil {
+			t.Fatalf("GenerateWallet: %v", err)
+		}
+		if _, err := second.WriteFiles(dir, false, true); err == nil {
+			t.Fatal("WriteFiles with address.txt blocked: want error, got nil")
+		}
+
+		got, err := os.ReadFile(filepath.Join(dir, "mnemonic.txt"))
+		if err != nil {
+			t.Fatalf("run %d: previous wallet's mnemonic.txt gone after failed overwrite: %v", i, err)
+		}
+		if strings.TrimSpace(string(got)) != first.Mnemonic {
+			t.Fatalf("run %d: mnemonic.txt replaced by the new wallet's before the failure", i)
+		}
+	}
+}
+
+// Every file WriteFiles writes has a place in renameOrder, with
+// mnemonic.txt last.
+func TestRenameOrderCoversEveryWalletFile(t *testing.T) {
+	if renameOrder[len(renameOrder)-1] != "mnemonic.txt" {
+		t.Fatalf("renameOrder must end with mnemonic.txt, got %v", renameOrder)
+	}
+	w, err := GenerateWallet("preprod")
+	if err != nil {
+		t.Fatalf("GenerateWallet: %v", err)
+	}
+	paths, err := w.WriteFiles(t.TempDir(), false, false)
+	if err != nil {
+		t.Fatalf("WriteFiles: %v", err)
+	}
+	inOrder := map[string]bool{}
+	for _, name := range renameOrder {
+		inOrder[name] = true
+	}
+	for name := range paths {
+		if !inOrder[name] {
+			t.Errorf("%s is written but missing from renameOrder", name)
+		}
+	}
+	if len(paths) != len(renameOrder) {
+		t.Errorf("WriteFiles wrote %d files, renameOrder lists %d", len(paths), len(renameOrder))
+	}
+}
+
 // A --force overwrite must leave every file at 0600, whatever the previous
 // wallet's files were set to: os.WriteFile only applies its mode when it
 // creates a file, so overwriting in place used to keep 0644 keys at 0644.

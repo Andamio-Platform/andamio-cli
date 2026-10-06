@@ -155,14 +155,29 @@ func (w *GeneratedWallet) WriteFiles(dir string, skipMnemonic bool, force bool) 
 		staged[name] = tmpPath
 	}
 
+	// Rename in a fixed order, mnemonic.txt last. The set of renames isn't
+	// atomic, so a failure partway can already have replaced some of the old
+	// wallet's keys; with the mnemonic last, the old mnemonic.txt is still in
+	// place whenever that happens, and the old wallet stays recoverable. (A
+	// range over the map renamed in random order, and a failure could leave
+	// the old wallet with neither its payment.skey nor its mnemonic.)
 	paths := make(map[string]string, len(files))
-	for name, tmpPath := range staged {
+	for _, name := range renameOrder {
+		tmpPath, ok := staged[name]
+		if !ok {
+			continue
+		}
 		path := filepath.Join(dir, name)
 		if err := os.Rename(tmpPath, path); err != nil {
 			return nil, fmt.Errorf("failed to move %s into place: %w", name, err)
 		}
 		delete(staged, name)
 		paths[name] = path
+	}
+	// A staged file missing from renameOrder would otherwise be skipped
+	// silently and removed by the deferred cleanup.
+	for name := range staged {
+		return nil, fmt.Errorf("internal error: %s has no place in the rename order", name)
 	}
 
 	// A forced overwrite with skipMnemonic writes no mnemonic.txt, so any
@@ -177,6 +192,18 @@ func (w *GeneratedWallet) WriteFiles(dir string, skipMnemonic bool, force bool) 
 		}
 	}
 	return paths, nil
+}
+
+// renameOrder is the order WriteFiles moves staged files into place:
+// mnemonic.txt last (see WriteFiles). Every name WriteFiles can stage must be
+// listed here; TestRenameOrderCoversEveryWalletFile checks that.
+var renameOrder = []string{
+	"payment.vkey",
+	"payment.skey",
+	"stake.vkey",
+	"stake.skey",
+	"address.txt",
+	"mnemonic.txt",
 }
 
 // writeTempSecret writes data to a new 0600 temp file in dir and returns its
