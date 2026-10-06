@@ -68,11 +68,11 @@ branch on whichever is more convenient.
 | 1 | `backpressure` | 408 / 425 / 429 — retry later |
 | 1 | `canceled` | Interrupted, or a `--timeout` expired |
 | 1 | `verify` | The update was accepted, but the read-back did not confirm the stored value — it differs from what was sent, or the read-back was degraded. Emitted by `course import-assignment`. The module WAS modified; inspect it rather than retrying blindly |
-| 2 | `not_found` | Resource doesn't exist (404) |
+| 2 | `not_found` | Resource doesn't exist (404), or no local wallet to sign with / read from |
 | 3 | `auth` | No credentials, or 401 / 403 |
 | 4 | `removed_command` | Command was retired in 1.0 |
 | 5 | `unreachable` | The request never reached the service |
-| 6 | `conflict` | Conflicts with existing state (409) |
+| 6 | `conflict` | Conflicts with existing state (409), or `wallet create` found a wallet already at that path |
 | 7 | `tier_limit` | Your plan does not permit this action — remedy is billing-side (revoke a key, upgrade, subscribe), not retry, not re-auth. Classified by the gateway's `tier_limit_exceeded` error code on any 4xx, so it holds whether the API answers 429 or 403 |
 
 **An empty result is not an error.** A list command that finds nothing emits an

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
 	"github.com/spf13/cobra"
@@ -83,7 +84,7 @@ func (s *devGatewayStub) writeOrDefault(w http.ResponseWriter, status int, body 
 // not clobber the developer's real ~/.andamio/config.json, and an ephemeral
 // ed25519 keypair (so cardano.SignMessage actually runs). Returns the cfg the
 // caller hands to the runDev* helpers plus the keys.
-func devTestEnv(t *testing.T, stub *devGatewayStub) (*config.Config, ed25519.PrivateKey, ed25519.PublicKey) {
+func devTestEnv(t *testing.T, stub *devGatewayStub) (*config.Config, *cardano.SigningKey) {
 	t.Helper()
 	stub.t = t
 	srv := httptest.NewServer(stub.serve())
@@ -101,11 +102,11 @@ func devTestEnv(t *testing.T, stub *devGatewayStub) (*config.Config, ed25519.Pri
 	// can override this after the helper returns.
 	cfg := &config.Config{BaseURL: srv.URL, APIKey: "test-api-key"}
 
-	pub, priv, err := ed25519.GenerateKey(nil)
+	_, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatalf("generate ed25519 key: %v", err)
 	}
-	return cfg, priv, pub
+	return cfg, cardano.NewStandardSigningKey(priv)
 }
 
 // secureLoginBody returns the canonical SecureLoginResponse JSON for tests.
@@ -144,9 +145,9 @@ func TestRunDevHeadlessLogin_HappyPath_PersistsAllSlots(t *testing.T) {
 			"2099-02-01T00:00:00Z",
 		),
 	}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 
-	if err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "ignored.skey", "myalias", "addr_test1xyz"); err != nil {
+	if err := runDevHeadlessLogin(context.Background(), cfg, key, "ignored.skey", "myalias", "addr_test1xyz"); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 
@@ -242,12 +243,12 @@ func TestRunDevHeadlessLogin_JSONOutputShape(t *testing.T) {
 			"2099-02-01T00:00:00Z",
 		),
 	}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 
 	captured := captureStdout(t, func() {
 		_ = output.SetFormat("json")
 		t.Cleanup(func() { _ = output.SetFormat("text") })
-		if err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "ignored.skey", "myalias", "addr_test1xyz"); err != nil {
+		if err := runDevHeadlessLogin(context.Background(), cfg, key, "ignored.skey", "myalias", "addr_test1xyz"); err != nil {
 			t.Fatalf("login: %v", err)
 		}
 	})
@@ -305,9 +306,9 @@ func TestRunDevHeadlessLogin_FallsBackToFlagAliasWhenResponseEmpty(t *testing.T)
 			"2099-01-01T01:00:00Z", "2099-02-01T00:00:00Z",
 		),
 	}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 
-	if err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "fallback-alias", "addr"); err != nil {
+	if err := runDevHeadlessLogin(context.Background(), cfg, key, "x", "fallback-alias", "addr"); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if got, want := cfg.DevAlias, "fallback-alias"; got != want {
@@ -323,9 +324,9 @@ func TestRunDevHeadlessLogin_GatewayCanonicalAliasOverridesFlag(t *testing.T) {
 			"2099-01-01T01:00:00Z", "2099-02-01T00:00:00Z",
 		),
 	}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 
-	if err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "stale-flag", "addr"); err != nil {
+	if err := runDevHeadlessLogin(context.Background(), cfg, key, "x", "stale-flag", "addr"); err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
 	if got, want := cfg.DevAlias, "canonical-alias"; got != want {
@@ -338,9 +339,9 @@ func TestRunDevHeadlessLogin_SessionMissingNonceErrors(t *testing.T) {
 		sessionRespBody:  []byte(`{"session_id":"sess-x","nonce":"","expires_at":""}`),
 		completeRespBody: []byte(`unreachable`),
 	}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 
-	err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "myalias", "addr")
+	err := runDevHeadlessLogin(context.Background(), cfg, key, "x", "myalias", "addr")
 	if err == nil {
 		t.Fatal("expected error when session response has empty nonce")
 	}
@@ -360,9 +361,9 @@ func TestRunDevHeadlessLogin_CompleteMissingJWTErrors(t *testing.T) {
 		sessionRespBody:  []byte(`{"session_id":"sess-x","nonce":"n"}`),
 		completeRespBody: secureLoginBody("" /* no jwt */, "refresh.x", "a", "u", "pioneer", "", ""),
 	}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 
-	err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "myalias", "addr")
+	err := runDevHeadlessLogin(context.Background(), cfg, key, "x", "myalias", "addr")
 	if err == nil {
 		t.Fatal("expected error when complete response has empty jwt")
 	}
@@ -378,9 +379,9 @@ func TestRunDevHeadlessLogin_CompleteMissingRefreshTokenErrors(t *testing.T) {
 		sessionRespBody:  []byte(`{"session_id":"sess-x","nonce":"n"}`),
 		completeRespBody: secureLoginBody("jwt.x", "" /* no refresh */, "a", "u", "pioneer", "", ""),
 	}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 
-	err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "myalias", "addr")
+	err := runDevHeadlessLogin(context.Background(), cfg, key, "x", "myalias", "addr")
 	if err == nil {
 		t.Fatal("expected error when complete response has empty refresh_token")
 	}
@@ -404,9 +405,9 @@ func TestRunDevHeadlessLogin_SessionExpiredDuringSigningEmitsClearError(t *testi
 		sessionRespBody:  []byte(`{"session_id":"sess-x","nonce":"n","expires_at":"0001-01-01T00:00:00Z"}`),
 		completeRespBody: []byte(`unreachable`),
 	}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 
-	err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "myalias", "addr")
+	err := runDevHeadlessLogin(context.Background(), cfg, key, "x", "myalias", "addr")
 	if err == nil {
 		t.Fatal("expected error when session expired during signing")
 	}
@@ -424,9 +425,9 @@ func TestRunDevHeadlessLogin_CompleteAuthErrorBubblesAsTypedAuthError(t *testing
 		completeRespStatus: http.StatusUnauthorized,
 		completeRespBody:   []byte(`{"error":"signature did not verify"}`),
 	}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 
-	err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "myalias", "addr")
+	err := runDevHeadlessLogin(context.Background(), cfg, key, "x", "myalias", "addr")
 	if err == nil {
 		t.Fatal("expected error on 401 from complete")
 	}
@@ -456,10 +457,10 @@ func TestRunDevHeadlessLogin_CompleteAuthErrorBubblesAsTypedAuthError(t *testing
 // actionable `auth login --api-key` hint that an agent or human needs.
 func TestRunDevHeadlessLogin_NoAPIKey_PreFlightAuthError(t *testing.T) {
 	stub := &devGatewayStub{}
-	cfg, priv, pub := devTestEnv(t, stub)
+	cfg, key := devTestEnv(t, stub)
 	cfg.APIKey = "" // override the helper's default seed
 
-	err := runDevHeadlessLogin(context.Background(), cfg, priv, pub, "x", "myalias", "addr")
+	err := runDevHeadlessLogin(context.Background(), cfg, key, "x", "myalias", "addr")
 	if err == nil {
 		t.Fatal("expected AuthError when APIKey is empty")
 	}
@@ -491,7 +492,7 @@ func TestRunDevRefreshFlow_HappyPath_RotatesAllTokens(t *testing.T) {
 			"2099-02-15T00:00:00Z",
 		),
 	}
-	cfg, _, _ := devTestEnv(t, stub)
+	cfg, _ := devTestEnv(t, stub)
 	// Pre-populate as if a prior `dev login` had run.
 	cfg.DevJWT = "jwt.OLD"
 	cfg.DevJWTExpiresAt = "2099-01-01T01:00:00Z"
@@ -548,7 +549,7 @@ func TestRunDevRefreshFlow_JSONOutputShape(t *testing.T) {
 			"2099-02-15T00:00:00Z",
 		),
 	}
-	cfg, _, _ := devTestEnv(t, stub)
+	cfg, _ := devTestEnv(t, stub)
 	cfg.DevJWT = "jwt.OLD"
 	cfg.DevRefreshToken = "refresh.OLD"
 	cfg.DevAlias = "myalias"
@@ -623,7 +624,7 @@ func TestRunDevRefreshFlow_RefreshTokenRejected_ClearsDevSlotAndHintsRelogin(t *
 		refreshRespStatus: http.StatusUnauthorized,
 		refreshRespBody:   []byte(`{"error":"refresh token expired or already rotated"}`),
 	}
-	cfg, _, _ := devTestEnv(t, stub)
+	cfg, _ := devTestEnv(t, stub)
 	// Pre-populate the dev slot as if a prior login had succeeded — the
 	// 401-clear behavior must wipe ALL of these, not just the refresh token,
 	// so `dev status` no longer reports a dead session as valid.
@@ -691,7 +692,7 @@ func TestRunDevRefreshFlow_MissingNewJWTErrors(t *testing.T) {
 	stub := &devGatewayStub{
 		refreshRespBody: secureLoginBody("" /* no jwt */, "refresh.NEW", "a", "u", "pioneer", "", ""),
 	}
-	cfg, _, _ := devTestEnv(t, stub)
+	cfg, _ := devTestEnv(t, stub)
 	cfg.DevJWT = "jwt.OLD"
 	cfg.DevRefreshToken = "refresh.OLD"
 

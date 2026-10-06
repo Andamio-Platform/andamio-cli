@@ -172,7 +172,7 @@ It builds, signs, submits, registers, and polls -- printing progress to stderr a
 
 **Flags:**
 
-- `--skey <path>` -- Path to the Cardano `.skey` file (required).
+- `--skey <path>` -- Path to the Cardano `.skey` file. Optional: if omitted, signs with the default wallet (`~/.andamio/wallet/default/payment.skey`, from `andamio wallet create`) and says so in a warning. An empty value (`--skey ""`) is an error.
 - `--tx-type <type>` -- Transaction type for registration (required).
 - `--body <json>` / `--body-file <path>` -- Build request payload.
 - `--no-wait` -- Submit and register but skip polling. Useful in CI or when you will check status later.
