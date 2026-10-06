@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -469,9 +470,9 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"title":               title,
-		"lovelace_amount":     lovelace,
-		"expiration_time":     expirationMs,
+		"title":                title,
+		"lovelace_amount":      lovelace,
+		"expiration_time":      expirationMs,
 	}
 	if content != "" {
 		payload["content"] = content
@@ -536,11 +537,67 @@ func runTaskGet(cmd *cobra.Command, args []string) error {
 			taskIndex = int(v)
 		}
 		if taskIndex == index {
-			return output.PrintJSON(item)
+			if output.GetFormat() == output.FormatJSON {
+				return output.PrintJSON(item)
+			}
+			renderTaskDetail(os.Stdout, item)
+			return nil
 		}
 	}
 
 	return fmt.Errorf("task with index %d not found", index)
+}
+
+// renderTaskDetail writes a single task as human-readable key/value lines:
+// the five fields runTasksList shows in its table, then description, tokens
+// and task hash when the task has them. content_json (Tiptap rich text) is
+// left to --output json.
+func renderTaskDetail(w io.Writer, item map[string]interface{}) {
+	index := 0
+	if v, ok := item["task_index"].(float64); ok {
+		index = int(v)
+	}
+	status, _ := item["task_status"].(string)
+	if status == "" {
+		status, _ = item["source"].(string)
+	}
+	title, description := "", ""
+	if content, ok := item["content"].(map[string]interface{}); ok {
+		title, _ = content["title"].(string)
+		description, _ = content["description"].(string)
+	}
+	lovelace := int64(0)
+	if v, ok := item["lovelace_amount"].(float64); ok {
+		lovelace = int64(v)
+	}
+	expiration, _ := item["expiration"].(string)
+	taskHash, _ := item["task_hash"].(string)
+
+	fmt.Fprintf(w, "Index:       %d\n", index)
+	fmt.Fprintf(w, "Title:       %s\n", title)
+	fmt.Fprintf(w, "Status:      %s\n", status)
+	fmt.Fprintf(w, "Lovelace:    %d\n", lovelace)
+	fmt.Fprintf(w, "Expiration:  %s\n", expiration)
+	if description != "" {
+		fmt.Fprintf(w, "Description: %s\n", description)
+	}
+	if assets, ok := item["assets"].([]interface{}); ok {
+		label := "Tokens:"
+		for _, a := range assets {
+			am, ok := a.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _ := am["name"].(string)
+			amount, _ := am["amount"].(string)
+			policyID, _ := am["policy_id"].(string)
+			fmt.Fprintf(w, "%-12s %s × %s (%s)\n", label, amount, name, policyID)
+			label = ""
+		}
+	}
+	if taskHash != "" {
+		fmt.Fprintf(w, "Task hash:   %s\n", taskHash)
+	}
 }
 
 func runTaskUpdate(cmd *cobra.Command, args []string) error {
@@ -552,6 +609,18 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 	index, err := strconv.Atoi(indexStr)
 	if err != nil {
 		return fmt.Errorf("invalid index: %s", indexStr)
+	}
+
+	updateFlags := []string{"title", "lovelace", "expiration", "content", "content-file", "token"}
+	hasUpdates := false
+	for _, f := range updateFlags {
+		if cmd.Flags().Changed(f) {
+			hasUpdates = true
+			break
+		}
+	}
+	if !hasUpdates {
+		return fmt.Errorf("no fields to update: specify at least one of --title, --lovelace, --expiration, --content, --content-file, --token")
 	}
 
 	// Validate lovelace if provided
@@ -579,7 +648,7 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"index":               index,
+		"index":                index,
 	}
 
 	// Only include flags that were explicitly set
@@ -665,7 +734,7 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"index":               index,
+		"index":                index,
 	}
 
 	if !isJSON {
@@ -712,16 +781,16 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 	}
 
 	type verifyResult struct {
-		TaskIndex      int              `json:"task_index"`
-		Content        string           `json:"content"`
-		APIHash        string           `json:"api_hash"`
-		ComputedHash   string           `json:"computed_hash"`
-		Match          bool             `json:"match"`
-		ExpirationTime uint64           `json:"expiration_time"`
-		Lovelace       uint64           `json:"lovelace_amount"`
-		AssetCount     int              `json:"asset_count"`
+		TaskIndex      int                   `json:"task_index"`
+		Content        string                `json:"content"`
+		APIHash        string                `json:"api_hash"`
+		ComputedHash   string                `json:"computed_hash"`
+		Match          bool                  `json:"match"`
+		ExpirationTime uint64                `json:"expiration_time"`
+		Lovelace       uint64                `json:"lovelace_amount"`
+		AssetCount     int                   `json:"asset_count"`
 		Assets         []cardano.NativeAsset `json:"assets,omitempty"`
-		Error          string           `json:"error,omitempty"`
+		Error          string                `json:"error,omitempty"`
 	}
 
 	var results []verifyResult
