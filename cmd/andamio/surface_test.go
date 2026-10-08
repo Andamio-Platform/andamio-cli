@@ -11,11 +11,11 @@ import (
 
 var update = flag.Bool("update", false, "update golden files instead of comparing against them")
 
-// internal/apierr, internal/output, and internal/client are deliberately not
-// scanned here: their exported names are untyped string constants (e.g.
-// apierr.Kind*), and schemasnapshot only sees json-tagged struct fields, so
-// including them would contribute nothing while implying they're covered.
-// The kind contract is guarded separately by exitcode_test.go.
+// internal/apierr and internal/output are deliberately not scanned here:
+// their exported names are untyped string constants (e.g. apierr.Kind*), and
+// schemasnapshot only sees json-tagged struct fields, so including them would
+// contribute nothing while implying they're covered. The kind contract is
+// guarded separately by exitcode_test.go.
 //
 // internal/submit is not scanned for the same reason: it declares no
 // json-tagged structs, and `tx submit --output json` passes the submit
@@ -27,6 +27,10 @@ var schemaSrcDirs = []string{
 	// (signed_tx/tx_hash/warnings), and cardano.NativeAsset rides in
 	// `project task verify-hash --output json` as `assets`.
 	"../../internal/cardano",
+	// client.gatewayError decodes the gateway's error envelope; its `code`
+	// drives exit-code classification (e.g. tier_limit_exceeded -> exit 7),
+	// so a renamed tag would silently break that mapping.
+	"../../internal/client",
 	// quiz.Summary rides inside ImportResult / ImportAssignmentEnvelope as
 	// `assignment_quiz` / `assignment`, so its json tags are part of the
 	// --output json contract and must be pinned here too.
