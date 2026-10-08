@@ -36,6 +36,12 @@ func Generate(srcDirs []string, outPath string) error {
 				return err
 			}
 			if d.IsDir() {
+				// testdata holds fixtures (including this package's own
+				// scanner fixtures), never shipped code; go build ignores
+				// it too.
+				if d.Name() == "testdata" {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if !strings.HasSuffix(d.Name(), ".go") {

@@ -48,3 +48,20 @@ covering:
   case. Small refactor, do it before writing the table.
 - This todo is what makes [[todos/033]] and [[todos/034]]'s fixes actually
   trustworthy going forward, not just one-off patches.
+
+## Progress (from the 033/034 fix, branch `fix/todo-033-034-surface-gate-coverage`)
+
+Started: `internal/schemasnapshot/schemasnapshot_test.go` now has
+`TestGenerateFixture`, a single hand-written expectation against
+`testdata/fixture/fixture.go`. It covers the 033 shapes: function-local
+named struct, `var x struct{...}`, `x := struct{...}{...}` (also `&` and
+`[]` forms), a literal passed straight to a call (`anon#N`), a nested
+anonymous struct field, a method-local struct, an unexported field, an
+untagged struct, and the skipping of `_test.go` files and nested `testdata/`
+dirs.
+
+Still to do from the list above: embedded fields (exported and unexported),
+a file that fails to parse, a missing source directory, `json:"-"`, and two
+same-named structs in different files. The `Generate` signature refactor
+wasn't done; the current test writes to `t.TempDir()`, which is fine for one
+case but worth doing before converting to a table.
