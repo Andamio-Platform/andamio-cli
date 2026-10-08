@@ -1,4 +1,5 @@
 # CODEOWNERS for andamio-cli.
+# Review: auto-request only
 #
 # A-022 R7 asks for a named code owner on every public repo. One owner covers
 # the whole repo.
