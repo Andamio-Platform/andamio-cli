@@ -203,7 +203,7 @@ Author:
 - `course export <course-id> <module-code>` — Export module to local directory
 - `course import <path> --course-id <id>` — Import module from local directory
 - `course import-assignment <course-id> <module-code> <file.json>` — Publish a quiz assignment (JSON envelope) and verify it by read-back
-- `course owner create|update|register` — Create and register a course
+- `course owner register|update` — Register a course and set its metadata (`create` is deprecated and now registers)
 - `course owner teachers --course-id <id> --alias <you> --skey <path> --add <alias>` — Manage teachers (on-chain transaction)
 - `course teacher register-module|publish-module|update-module-status` — Module lifecycle
 - `course credential verify-hash <course-id>` — Verify credential hashes
@@ -514,7 +514,7 @@ This time without `--create` — the modules already exist. Content (lessons, in
 - **`register-module` sets APPROVED**: You must set status back to DRAFT before importing content (step 7). Import skips SLT updates for non-DRAFT modules.
 - **Module hash ordering is non-deterministic**: On-chain token names (slt_hashes) don't sort in the same order as your module codes. Check the register response to map hashes to codes.
 - **`publish-module` is for DB→chain linking, not on-chain publishing**: To publish modules on-chain, use `tx run` with `modules_manage`. The `publish-module` command links an existing on-chain module to a DB record.
-- **`course owner create` vs `update`**: After `tx run` with `course_create`, the course is auto-registered. Use `update` to set metadata. `create` is only needed when auto-registration failed.
+- **`course owner register` vs `update`**: After `tx run` with `course_create`, the course is auto-registered. Use `update` to set metadata. `register` is only needed when auto-registration failed. `create` is deprecated and does the same as `register`.
 
 ## Project Tasks
 
