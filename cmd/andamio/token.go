@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -34,6 +36,11 @@ func init() {
 	tokenCmd.AddCommand(tokenListCmd)
 }
 
+const (
+	tokenRegistryListPath = "/api/v2/project/user/token-registry/list"
+	legacyTokenListPath   = "/api/v2/token/user/tokens/list"
+)
+
 func runTokenList(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -41,9 +48,18 @@ func runTokenList(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	// API may return {data: [...]} envelope or a raw array
+	// API may return {data: [...]} envelope or a raw array.
+	// The registry moved to tokenRegistryListPath in andamio-api#884; the old
+	// path is tried only when the new one is not served yet (404), so this
+	// works against the API on either side of that change.
 	var raw json.RawMessage
-	if err := c.Get(cmd.Context(), "/api/v2/token/user/tokens/list", &raw); err != nil {
+	err = c.Get(cmd.Context(), tokenRegistryListPath, &raw)
+	var notFound *apierr.NotFoundError
+	if errors.As(err, &notFound) {
+		raw = nil
+		err = c.Get(cmd.Context(), legacyTokenListPath, &raw)
+	}
+	if err != nil {
 		return fmt.Errorf("failed to list tokens: %w", err)
 	}
 
