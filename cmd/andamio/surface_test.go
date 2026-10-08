@@ -16,9 +16,17 @@ var update = flag.Bool("update", false, "update golden files instead of comparin
 // apierr.Kind*), and schemasnapshot only sees json-tagged struct fields, so
 // including them would contribute nothing while implying they're covered.
 // The kind contract is guarded separately by exitcode_test.go.
+//
+// internal/submit is not scanned for the same reason: it declares no
+// json-tagged structs, and `tx submit --output json` passes the submit
+// API's response body through rather than building an envelope of its own.
 var schemaSrcDirs = []string{
 	".",
 	"../../internal/config",
+	// cardano.SignResult is printed verbatim by `tx sign --output json`
+	// (signed_tx/tx_hash/warnings), and cardano.NativeAsset rides in
+	// `project task verify-hash --output json` as `assets`.
+	"../../internal/cardano",
 	// quiz.Summary rides inside ImportResult / ImportAssignmentEnvelope as
 	// `assignment_quiz` / `assignment`, so its json tags are part of the
 	// --output json contract and must be pinned here too.
