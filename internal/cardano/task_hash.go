@@ -19,10 +19,13 @@ type TaskData struct {
 }
 
 // NativeAsset represents a Cardano native asset attached to a task.
+// Also emitted as-is in `project task verify-hash --output json`; the json
+// tags pin the existing key names (no snake_case) so that output is stable,
+// and give the surface gate something to snapshot.
 type NativeAsset struct {
-	PolicyID  string // 56 hex chars (28 bytes)
-	TokenName string // hex encoded (0-64 chars, 0-32 bytes)
-	Quantity  uint64
+	PolicyID  string `json:"PolicyID"`  // 56 hex chars (28 bytes)
+	TokenName string `json:"TokenName"` // hex encoded (0-64 chars, 0-32 bytes)
+	Quantity  uint64 `json:"Quantity"`
 }
 
 // ComputeTaskHash computes the Blake2b-256 hash of task data encoded as Plutus Data CBOR.

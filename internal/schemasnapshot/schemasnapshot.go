@@ -1,6 +1,7 @@
 package schemasnapshot
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -26,7 +27,10 @@ type structSnapshot struct {
 	Fields []fieldSnapshot
 }
 
-func Generate(srcDirs []string, outPath string) error {
+// Generate scans every non-test .go file under srcDirs (skipping testdata
+// dirs) and returns the snapshot: one line per exported field of each
+// json-tagged struct, sorted by source file then struct label.
+func Generate(srcDirs []string) ([]byte, error) {
 
 	var filteredFilePaths []string
 
@@ -36,6 +40,12 @@ func Generate(srcDirs []string, outPath string) error {
 				return err
 			}
 			if d.IsDir() {
+				// testdata holds fixtures (including this package's own
+				// scanner fixtures), never shipped code; go build ignores
+				// it too.
+				if d.Name() == "testdata" {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if !strings.HasSuffix(d.Name(), ".go") {
@@ -49,42 +59,47 @@ func Generate(srcDirs []string, outPath string) error {
 			return nil
 		})
 		if err != nil {
-			return fmt.Errorf("walking %s: %w", root, err)
+			return nil, fmt.Errorf("walking %s: %w", root, err)
 		}
 	}
 
 	structs, err := parseFiles(filteredFilePaths)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Struct names can collide across the packages now being scanned, and
-	// sort.Slice isn't stable — sorting on Source too gives every entry a
-	// unique key so tie-breaking can't depend on sort-algorithm internals.
-	sort.Slice(structs, func(i, j int) bool {
+	// Struct names can collide across the packages now being scanned, so
+	// sort on Source too. Labels can still repeat within one file (two
+	// functions each binding an anonymous struct to `resp`, say), so the sort
+	// is stable: ties keep source order rather than depending on
+	// sort-algorithm internals.
+	sort.SliceStable(structs, func(i, j int) bool {
 		if structs[i].Source != structs[j].Source {
 			return structs[i].Source < structs[j].Source
 		}
 		return structs[i].Name < structs[j].Name
 	})
 
-	var b strings.Builder
+	var b bytes.Buffer
 	for _, s := range structs {
 		for _, f := range s.Fields {
 			fmt.Fprintf(&b, "%s.%s %s json:%q\n", s.Name, f.Name, f.Type, f.Tag)
 		}
 	}
 
-	if err := os.WriteFile(outPath, []byte(b.String()), 0644); err != nil {
-		return fmt.Errorf("writing snapshot to %s: %w", outPath, err)
-	}
-
-	return nil
+	return b.Bytes(), nil
 }
 
 // parseFiles parses each file and collects every struct that has at least
 // one json-tagged field. Structs with no json tags at all are assumed to
 // never be marshalled to JSON and are skipped.
+//
+// Structs are found at any depth, not just top-level type declarations:
+// many --output json envelopes are declared inside the function that prints
+// them (`type authStatus struct` in a RunE, or `payload := struct{...}{...}`),
+// and a top-level-only walk silently left those out of the golden. Anonymous
+// structs that decode API responses are collected too; the scanner can't
+// tell them apart from output envelopes, and pinning them is harmless.
 func parseFiles(files []string) ([]structSnapshot, error) {
 
 	var allStructs []structSnapshot
@@ -97,37 +112,141 @@ func parseFiles(files []string) ([]structSnapshot, error) {
 		}
 
 		for _, decl := range parsedFile.Decls {
-			genDecl, ok := decl.(*ast.GenDecl)
-			if !ok || genDecl.Tok != token.TYPE {
-				continue
+			// Top-level types keep their bare name; anything inside a
+			// function is prefixed with it, so two functions' local
+			// `verifyResult`s stay distinguishable in the golden.
+			prefix := ""
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				prefix = funcLabel(fn) + "."
 			}
-
-			for _, spec := range genDecl.Specs {
-				typeSpec, ok := spec.(*ast.TypeSpec)
-				if !ok {
-					continue
-				}
-
-				structType, ok := typeSpec.Type.(*ast.StructType)
-				if !ok {
-					continue
-				}
-
-				fields, hasJSONTag := extractFields(structType)
-				if !hasJSONTag {
-					continue
-				}
-
-				allStructs = append(allStructs, structSnapshot{
-					Name:   typeSpec.Name.Name,
-					Source: f,
-					Fields: fields,
-				})
-			}
+			allStructs = append(allStructs, collectStructs(decl, prefix, f)...)
 		}
 	}
 
 	return allStructs, nil
+}
+
+// funcLabel names a function for golden labels: `runAuthStatus`, or
+// `Client.Do` for a method (pointer receivers drop the `*`).
+func funcLabel(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return fn.Name.Name
+	}
+	recv := fn.Recv.List[0].Type
+	if star, ok := recv.(*ast.StarExpr); ok {
+		recv = star.X
+	}
+	return types.ExprString(recv) + "." + fn.Name.Name
+}
+
+// collectStructs walks root and snapshots every json-tagged struct type in
+// it, labelling each by how it's bound (see structLabel).
+func collectStructs(root ast.Node, prefix, source string) []structSnapshot {
+	var out []structSnapshot
+	labels := map[*ast.StructType]string{}
+	var stack []ast.Node
+	anon := 0
+
+	ast.Inspect(root, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+
+		if st, ok := n.(*ast.StructType); ok {
+			label := structLabel(stack, labels, prefix)
+			if label == "" {
+				anon++
+				label = fmt.Sprintf("%sanon#%d", prefix, anon)
+			}
+			labels[st] = label
+
+			if fields, hasJSONTag := extractFields(st); hasJSONTag {
+				out = append(out, structSnapshot{Name: label, Source: source, Fields: fields})
+			}
+		}
+
+		stack = append(stack, n)
+		return true
+	})
+
+	return out
+}
+
+// structLabel names a struct type from its ancestors (stack, innermost
+// last), or returns "" if nothing nameable binds it:
+//
+//	type X struct{...}           -> X
+//	var x struct{...}            -> x
+//	x := struct{...}{...}        -> x   (also []struct{...}{...}, &struct{...}{...})
+//	Outer{ F struct{...} }       -> Outer.F   (nested anonymous field)
+func structLabel(stack []ast.Node, labels map[*ast.StructType]string, prefix string) string {
+	i := len(stack) - 1
+
+	// Look through []T, *T and map[K]T wrappers to what actually binds T.
+	for i >= 0 {
+		switch stack[i].(type) {
+		case *ast.ArrayType, *ast.StarExpr, *ast.MapType:
+			i--
+			continue
+		}
+		break
+	}
+	if i < 0 {
+		return ""
+	}
+
+	switch p := stack[i].(type) {
+	case *ast.TypeSpec:
+		return prefix + p.Name.Name
+	case *ast.ValueSpec:
+		return prefix + p.Names[0].Name
+	case *ast.Field:
+		// Field -> FieldList -> StructType for a field of an enclosing struct;
+		// anything else (a func parameter, say) isn't nameable here.
+		if i >= 2 && len(p.Names) > 0 {
+			if outer, ok := stack[i-2].(*ast.StructType); ok {
+				return labels[outer] + "." + p.Names[0].Name
+			}
+		}
+	case *ast.CompositeLit:
+		return compositeLitLabel(stack[:i+1], prefix)
+	}
+	return ""
+}
+
+// compositeLitLabel names a struct literal by the variable it's assigned to.
+// stack ends with the *ast.CompositeLit.
+func compositeLitLabel(stack []ast.Node, prefix string) string {
+	lit := ast.Node(stack[len(stack)-1])
+	i := len(stack) - 2
+	if i >= 0 {
+		if u, ok := stack[i].(*ast.UnaryExpr); ok && u.Op == token.AND {
+			lit = u
+			i--
+		}
+	}
+	if i < 0 {
+		return ""
+	}
+
+	switch p := stack[i].(type) {
+	case *ast.AssignStmt:
+		for j, rhs := range p.Rhs {
+			if rhs == lit && j < len(p.Lhs) {
+				if id, ok := p.Lhs[j].(*ast.Ident); ok {
+					return prefix + id.Name
+				}
+			}
+		}
+	case *ast.ValueSpec:
+		for j, v := range p.Values {
+			if v == lit && j < len(p.Names) {
+				return prefix + p.Names[j].Name
+			}
+		}
+	}
+	return ""
 }
 
 // extractFields returns every exported field of structType (embedded fields

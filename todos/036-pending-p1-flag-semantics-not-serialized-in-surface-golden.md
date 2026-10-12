@@ -38,13 +38,12 @@ covered too.
 ## Notes
 
 - One `-update` regen covers both fixes if done together.
-- Two more related, lower-priority findings from the same review worth a
+- One more related, lower-priority finding from the same review worth a
   glance when this is picked up (not required for this todo, just adjacent):
   execute-time surface not in the snapshot (`CompletionOptions
   .DisableDefaultCmd = true` would break shell completion for every user
   with zero gate coverage — fix is calling
   `InitDefaultHelpFlag`/`InitDefaultVersionFlag`/`InitDefaultHelpCmd`/
-  `InitDefaultCompletionCmd` before `CommandSurface(rootCmd)`), and
-  `schemaSrcDirs` being a hand-maintained list with no meta-test to catch a
-  new JSON-emitting package silently going unscanned (the same class of bug
-  as [[todos/034]]).
+  `InitDefaultCompletionCmd` before `CommandSurface(rootCmd)`). The other
+  finding listed here, `schemaSrcDirs` being a hand-maintained package list,
+  was resolved alongside todos 033/034: it now scans all of `internal/`.

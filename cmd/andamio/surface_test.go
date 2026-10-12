@@ -11,21 +11,19 @@ import (
 
 var update = flag.Bool("update", false, "update golden files instead of comparing against them")
 
-// internal/apierr, internal/output, and internal/client are deliberately not
-// scanned here: their exported names are untyped string constants (e.g.
-// apierr.Kind*), and schemasnapshot only sees json-tagged struct fields, so
-// including them would contribute nothing while implying they're covered.
-// The kind contract is guarded separately by exitcode_test.go.
+// Everything under internal/ is scanned, so a new package is covered the
+// moment it declares a json-tagged struct; there is no list to keep in sync.
+// Packages with no tagged structs (apierr, output, submit, schemasnapshot)
+// simply contribute no lines; the apierr kind contract is guarded separately
+// by exitcode_test.go. Notable contracts pinned this way:
+// cardano.SignResult (`tx sign --output json`), cardano.NativeAsset
+// (`project task verify-hash` assets), client.gatewayError (its `code` drives
+// exit-code classification, e.g. tier_limit_exceeded -> exit 7), quiz.Summary
+// (`assignment_quiz` / `assignment` in import output) and prompts.Answer
+// (`content.evidence_answers` in `teacher assignments`).
 var schemaSrcDirs = []string{
 	".",
-	"../../internal/config",
-	// quiz.Summary rides inside ImportResult / ImportAssignmentEnvelope as
-	// `assignment_quiz` / `assignment`, so its json tags are part of the
-	// --output json contract and must be pinned here too.
-	"../../internal/quiz",
-	// prompts.Answer rides in `teacher assignments` --output json as
-	// content.evidence_answers, so its json tags are contract too.
-	"../../internal/prompts",
+	"../../internal",
 }
 
 // compareOrUpdateGolden either overwrites goldenPath with actual (-update)
@@ -59,15 +57,9 @@ func TestCommandSurfaceGolden(t *testing.T) {
 }
 
 func TestSchemaSurfaceGolden(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "schema.txt")
-
-	if err := schemasnapshot.Generate(schemaSrcDirs, tmp); err != nil {
-		t.Fatalf("generating schema snapshot: %v", err)
-	}
-
-	actual, err := os.ReadFile(tmp)
+	actual, err := schemasnapshot.Generate(schemaSrcDirs)
 	if err != nil {
-		t.Fatalf("reading generated schema: %v", err)
+		t.Fatalf("generating schema snapshot: %v", err)
 	}
 
 	compareOrUpdateGolden(t, filepath.Join("testdata", "golden", "schema.golden"), actual)
