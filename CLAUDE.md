@@ -349,7 +349,7 @@ All commands must work without a TTY. **Never read from stdin in command handler
 
 2. **Progress to stderr.** Use `fmt.Fprintf(os.Stderr, ...)` for all human-readable status/progress messages. Gate with `if !isJSON` to suppress them when `--output json` is set.
 
-3. **Data to stdout only.** Structured output (tables, JSON, CSV, Markdown) goes to `os.Stdout` via the `output` package. Nothing else touches stdout.
+3. **Data to stdout only.** Structured output (tables, JSON, CSV, Markdown) goes to `os.Stdout` via the `output` package. Nothing else touches stdout, with one exception: under `--output json` a failure prints its `{"error", "kind"}` envelope on stdout (see Failure Contract). Moving it to stderr is a 2.0 candidate (cli#180).
 
 4. **Required args are required.** Use `cobra.ExactArgs(N)` and `MarkFlagRequired`. Never use `MaximumNArgs` for arguments the command cannot function without.
 
