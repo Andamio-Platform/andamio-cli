@@ -1,6 +1,7 @@
 package schemasnapshot
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -26,7 +27,10 @@ type structSnapshot struct {
 	Fields []fieldSnapshot
 }
 
-func Generate(srcDirs []string, outPath string) error {
+// Generate scans every non-test .go file under srcDirs (skipping testdata
+// dirs) and returns the snapshot: one line per exported field of each
+// json-tagged struct, sorted by source file then struct label.
+func Generate(srcDirs []string) ([]byte, error) {
 
 	var filteredFilePaths []string
 
@@ -55,13 +59,13 @@ func Generate(srcDirs []string, outPath string) error {
 			return nil
 		})
 		if err != nil {
-			return fmt.Errorf("walking %s: %w", root, err)
+			return nil, fmt.Errorf("walking %s: %w", root, err)
 		}
 	}
 
 	structs, err := parseFiles(filteredFilePaths)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Struct names can collide across the packages now being scanned, so
@@ -76,18 +80,14 @@ func Generate(srcDirs []string, outPath string) error {
 		return structs[i].Name < structs[j].Name
 	})
 
-	var b strings.Builder
+	var b bytes.Buffer
 	for _, s := range structs {
 		for _, f := range s.Fields {
 			fmt.Fprintf(&b, "%s.%s %s json:%q\n", s.Name, f.Name, f.Type, f.Tag)
 		}
 	}
 
-	if err := os.WriteFile(outPath, []byte(b.String()), 0644); err != nil {
-		return fmt.Errorf("writing snapshot to %s: %w", outPath, err)
-	}
-
-	return nil
+	return b.Bytes(), nil
 }
 
 // parseFiles parses each file and collects every struct that has at least

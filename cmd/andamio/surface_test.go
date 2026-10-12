@@ -57,15 +57,9 @@ func TestCommandSurfaceGolden(t *testing.T) {
 }
 
 func TestSchemaSurfaceGolden(t *testing.T) {
-	tmp := filepath.Join(t.TempDir(), "schema.txt")
-
-	if err := schemasnapshot.Generate(schemaSrcDirs, tmp); err != nil {
-		t.Fatalf("generating schema snapshot: %v", err)
-	}
-
-	actual, err := os.ReadFile(tmp)
+	actual, err := schemasnapshot.Generate(schemaSrcDirs)
 	if err != nil {
-		t.Fatalf("reading generated schema: %v", err)
+		t.Fatalf("generating schema snapshot: %v", err)
 	}
 
 	compareOrUpdateGolden(t, filepath.Join("testdata", "golden", "schema.golden"), actual)
