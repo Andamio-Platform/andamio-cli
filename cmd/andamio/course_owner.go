@@ -31,23 +31,15 @@ var courseOwnerListCmd = &cobra.Command{
 }
 
 var courseOwnerCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create off-chain course record (after on-chain creation)",
-	Long: `Create the off-chain metadata record for a course that has already been created on-chain.
-
-Note: In most cases, 'andamio tx run' with course_create auto-registers the course in the DB.
-Use 'andamio course owner update' to set metadata after that. This command is only needed when
-the auto-registration did not occur (e.g., the TX confirmed but DB update failed).
-
-Requires --course-id (from the on-chain NFT policy) and --pending-tx-hash.
-
-Typical workflow:
-  1. andamio tx run /v2/tx/instance/owner/course/create ...  (creates on-chain, auto-registers)
-  2. andamio course owner update --course-id <id> --title ...  (set metadata)
+	Use:        "create",
+	Short:      "Deprecated: use 'course owner register'",
+	Deprecated: "the API no longer serves the course create route (andamio-api#884). This command now registers the course, as 'andamio course owner register' does, and --pending-tx-hash is ignored",
+	Long: `Deprecated. Registers a course that already exists on-chain, exactly as
+'andamio course owner register' does. Kept so existing scripts keep working;
+use 'register' instead.
 
 Examples:
-  andamio course owner create --course-id abc123 --pending-tx-hash tx123 --title "Introduction to Cardano"
-  andamio course owner create --course-id abc123 --pending-tx-hash tx123 --description "Learn things" --public`,
+  andamio course owner register --course-id abc123 --title "Introduction to Cardano"`,
 	RunE: runCourseOwnerCreate,
 }
 
@@ -115,8 +107,8 @@ func init() {
 	courseOwnerCreateCmd.Flags().String("video-url", "", "Course video URL")
 	courseOwnerCreateCmd.Flags().String("category", "", "Course category")
 	courseOwnerCreateCmd.Flags().Bool("public", false, "Make course publicly visible")
-	courseOwnerCreateCmd.Flags().String("pending-tx-hash", "", "Transaction hash of the pending on-chain creation (required)")
-	courseOwnerCreateCmd.MarkFlagRequired("pending-tx-hash")
+	courseOwnerCreateCmd.Flags().String("pending-tx-hash", "", "Ignored")
+	courseOwnerCreateCmd.Flags().MarkDeprecated("pending-tx-hash", "the API no longer takes it (andamio-api#884); it is ignored")
 
 	// update flags
 	courseOwnerUpdateCmd.Flags().String("course-id", "", "Course ID (required)")
@@ -131,7 +123,8 @@ func init() {
 	// register flags
 	courseOwnerRegisterCmd.Flags().String("course-id", "", "Course ID (required)")
 	courseOwnerRegisterCmd.MarkFlagRequired("course-id")
-	courseOwnerRegisterCmd.Flags().String("tx-hash", "", "Transaction hash from on-chain creation")
+	courseOwnerRegisterCmd.Flags().String("tx-hash", "", "Transaction hash from on-chain creation (deprecated)")
+	courseOwnerRegisterCmd.Flags().MarkDeprecated("tx-hash", "the API stops taking it when andamio-api#884 ships, and ignores it after that")
 	courseOwnerRegisterCmd.Flags().String("title", "", "Course title (required)")
 	courseOwnerRegisterCmd.MarkFlagRequired("title")
 	courseOwnerRegisterCmd.Flags().String("description", "", "Course description")
@@ -158,64 +151,11 @@ func init() {
 	courseOwnerTeachersCmd.Flags().Duration("timeout", 10*time.Minute, "Max time to wait for confirmation")
 }
 
+// runCourseOwnerCreate keeps the deprecated create command working: the API
+// removed the create route in andamio-api#884, and register takes the same
+// metadata for a course that exists on-chain.
 func runCourseOwnerCreate(cmd *cobra.Command, args []string) error {
-	courseID, _ := cmd.Flags().GetString("course-id")
-	title, _ := cmd.Flags().GetString("title")
-	description, _ := cmd.Flags().GetString("description")
-	imageURL, _ := cmd.Flags().GetString("image-url")
-	videoURL, _ := cmd.Flags().GetString("video-url")
-	category, _ := cmd.Flags().GetString("category")
-	isPublic, _ := cmd.Flags().GetBool("public")
-	pendingTxHash, _ := cmd.Flags().GetString("pending-tx-hash")
-	isJSON := output.GetFormat() == output.FormatJSON
-
-	payload := map[string]interface{}{
-		"course_id":       courseID,
-		"pending_tx_hash": pendingTxHash,
-	}
-	if title != "" {
-		payload["title"] = title
-	}
-	if description != "" {
-		payload["description"] = description
-	}
-	if imageURL != "" {
-		payload["image_url"] = imageURL
-	}
-	if videoURL != "" {
-		payload["video_url"] = videoURL
-	}
-	if category != "" {
-		payload["category"] = category
-	}
-	if cmd.Flags().Changed("public") {
-		payload["is_public"] = isPublic
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Creating course: %s\n", courseID)
-	}
-
-	c := client.New(cfg)
-	var resp map[string]interface{}
-	if err := c.Post(cmd.Context(), "/api/v2/course/owner/course/create", payload, &resp); err != nil {
-		return fmt.Errorf("failed to create course: %w", err)
-	}
-
-	if isJSON {
-		return output.PrintJSON(resp)
-	}
-
-	fmt.Fprintf(os.Stderr, "Course created.\n")
-	if id, ok := resp["course_id"].(string); ok {
-		fmt.Printf("course_id: %s\n", id)
-	}
-	return nil
+	return registerCourse(cmd, false)
 }
 
 func runCourseOwnerUpdate(cmd *cobra.Command, args []string) error {
@@ -281,20 +221,30 @@ func runCourseOwnerUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func runCourseOwnerRegister(cmd *cobra.Command, args []string) error {
+	return registerCourse(cmd, true)
+}
+
+// registerCourse posts the course's metadata to the register route. Only
+// register requires a title; the deprecated create never did.
+func registerCourse(cmd *cobra.Command, requireTitle bool) error {
 	courseID, _ := cmd.Flags().GetString("course-id")
 	isJSON := output.GetFormat() == output.FormatJSON
 
 	payload := map[string]interface{}{
 		"course_id": courseID,
 	}
+	// Still sent when given: the API stores it until andamio-api#884 ships,
+	// and ignores it after. Drop with the flag at the next major.
 	if v, _ := cmd.Flags().GetString("tx-hash"); v != "" {
 		payload["tx_hash"] = v
 	}
 	title, _ := cmd.Flags().GetString("title")
-	if title == "" {
+	if title == "" && requireTitle {
 		return fmt.Errorf("--title must not be empty")
 	}
-	payload["title"] = title
+	if title != "" {
+		payload["title"] = title
+	}
 	if v, _ := cmd.Flags().GetString("description"); v != "" {
 		payload["description"] = v
 	}

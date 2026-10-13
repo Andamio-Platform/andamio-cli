@@ -18,7 +18,14 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 - **`tx sign --skey` and `tx run --skey` are no longer required flags.** Both fall back to `~/.andamio/wallet/default/payment.skey` (the path `wallet create` writes by default) when `--skey` is omitted, and fail with an actionable error naming `andamio wallet create` if neither the flag nor the default wallet exist. `--skey` still overrides when passed, but an explicitly empty value (`--skey ""`, e.g. an unset shell variable) is an error rather than a fallback. Whenever the default wallet is used, both commands say so: a warning on stderr in every output mode, and a `warnings` array in `--output json` (new optional field on both results). No default wallet exits `2` / `not_found`. The fallback is deliberately limited to these two generic commands: `course owner teachers` still requires `--skey`, since an Owner action must be signed by the Owner's key. Additive — existing scripts that always pass `--skey` are unaffected.
 
+### Deprecated
+
+- **`course owner create` now registers the course, and is deprecated** (andamio-api#884). The API removed `POST /v2/course/owner/course/create`, so the command posts the same metadata to `/v2/course/owner/course/register`, the route `course owner register` uses. Its flags are unchanged and `--title` stays optional. `--pending-tx-hash` is still accepted and ignored. Cobra prints a deprecation notice on every run. Move scripts to `course owner register`; the command retires at the next major.
+- **`course owner register --tx-hash` is deprecated** (andamio-api#884). The API stops taking `tx_hash` on the register request when that change ships. The CLI still sends it when given, because the API stores it until then, and it is ignored after.
+
 ### Fixed
+
+- **`token list` reads the token registry from its new path** (andamio-api#884): `/api/v2/project/user/token-registry/list`. It falls back to the old `/api/v2/token/user/tokens/list` when the new path answers 404, so the command works against a gateway on either side of that change. The `{data: [...]}` body was already handled.
 
 - **`user login` keeps its progress and the auth URL off stdout.** The browser flow printed "Opening browser...", the auth URL and "Waiting for authentication..." to stdout on every run, and the URL carries the CSRF state. Progress now goes to stderr, and the URL is printed (to stderr) only when the browser fails to open, matching `dev login`. (cli#109)
 - `project task update` with no field flags (`--title`, `--lovelace`, `--expiration`, `--content`, `--content-file`, `--token`) now errors before any request, instead of sending an empty update.

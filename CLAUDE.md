@@ -202,9 +202,9 @@ Exit codes 0–3 predate 1.0 and are fixed. `conflict` moved from 1 to 6 in 1.0.
 | `course assignment <id> <module>` | `/api/v2/course/user/assignment/{id}/{module}` | either | Module assignment |
 | `course intro <id> <module>` | `/api/v2/course/user/introduction/{id}/{module}` | either | Module introduction |
 | `course owner list` | `/v2/course/owner/courses/list` | jwt | List courses you own |
-| `course owner create --course-id <id> --pending-tx-hash <hash>` | `/v2/course/owner/course/create` | jwt | Create off-chain course record (after on-chain creation). `--title`, `--description`, `--image-url`, `--video-url`, `--category`, `--public` |
+| `course owner create --course-id <id>` | `/v2/course/owner/course/register` | jwt | **Deprecated.** The API removed the create route (andamio-api#884), so this registers the course exactly as `register` does, with `--title` optional as before. `--pending-tx-hash` is ignored. Move to `register`; retire through `retired.go` at the next major |
 | `course owner update --course-id <id>` | `/v2/course/owner/course/update` | jwt | Update course metadata. Only changed flags sent |
-| `course owner register --course-id <id> --title <t>` | `/v2/course/owner/course/register` | jwt | Register on-chain course with off-chain metadata. `--title` required |
+| `course owner register --course-id <id> --title <t>` | `/v2/course/owner/course/register` | jwt | Register on-chain course with off-chain metadata. `--title` required. `--tx-hash` is deprecated: still sent when given, because the API stores it until andamio-api#884 ships and ignores it after |
 | `course owner teachers --course-id <id> --alias <owner> --skey <path>` | `/v2/tx/course/owner/teachers/manage` | jwt | Add/remove teachers. **On-chain transaction** (`teachers_update`) — runs the full build→sign→submit→register→poll lifecycle, so it needs `--skey`, `--alias` (yours) and a configured submit URL. `--add` / `--remove` (repeatable), `--no-wait`, `--timeout` |
 | `course teacher register-module` | `/v2/course/teacher/course-module/register` | jwt | Register module from chain. Idempotent on hash match: DRAFT advances to APPROVED; APPROVED/PENDING_TX/ON_CHAIN are no-ops. `--course-id`, `--module-code`, `--slt-hash`. `--output json` returns an envelope — see `register-module --help` for the shape. |
 | `course teacher publish-module` | `/v2/course/teacher/course-module/publish` | jwt | Publish module. `--course-id`, `--module-code`. Warns on stderr only when the response shows the module is not linked on-chain (`module_status` not `ON_CHAIN` and no `slt_hash`) — the response is a `CourseModuleEntity`, which never carries `source` (#158) |
@@ -268,7 +268,7 @@ Duplicate aliases are **rejected**, not last-wins: two conflicting outcomes for 
 ### token — Native asset token registry
 | Command | Endpoint | Auth | Description |
 |---------|----------|------|-------------|
-| `token list` | `/api/v2/token/user/tokens/list` | either | List registered tokens available as task rewards |
+| `token list` | `/api/v2/project/user/token-registry/list` | either | List registered tokens available as task rewards. Falls back to the old `/api/v2/token/user/tokens/list` on a 404, so it works before and after andamio-api#884 ships; drop the fallback once every gateway serves the new path |
 
 Supplies the `policy_id` / `asset_name` values for `project task create --token "<policy_id>,<asset_name>,<quantity>"`. Text output is a ticker/policy/asset/decimals table; `--output json` passes the gateway envelope through. Tolerates both `{data: [...]}` and a bare array from the gateway.
 
