@@ -80,17 +80,20 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	// Single fetch: resolve project, policy ID, and slug from one API call
-	proj, projects, err := resolveProject(ctx, c, args)
+	proj, err := resolveProject(ctx, c, args)
 	if err != nil {
 		return err
 	}
 
-	policyID, err := findProjectPolicyID(projects, proj.ProjectID)
-	if err != nil {
-		return err
+	policyID := proj.ContributorStateID
+	if policyID == "" {
+		return fmt.Errorf("project %s has no contributor_state_id (may not be on-chain yet)", proj.ProjectID)
 	}
 
-	projectSlug := projectSlugFromList(projects, proj.ProjectID)
+	projectSlug := slugify(proj.Title)
+	if proj.Title == "" {
+		projectSlug = slugify(proj.ProjectID)
+	}
 	taskDir := filepath.Join("tasks", projectSlug)
 	absDir, err := filepath.Abs(taskDir)
 	if err != nil {
@@ -118,12 +121,13 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Fetch existing tasks to check status for updates
-	var existingTasks []map[string]interface{}
+	// Fetch existing tasks to check status for updates. Without this list the
+	// DRAFT guard can't run, so a failed fetch stops the import.
 	resp, err := fetchTasks(ctx, c, proj.ProjectID)
-	if err == nil {
-		existingTasks = extractTaskList(resp)
+	if err != nil {
+		return fmt.Errorf("failed to fetch existing tasks (needed for the DRAFT status check): %w", err)
 	}
+	existingTasks := extractTaskList(resp)
 
 	if !isJSON {
 		action := "Importing"
