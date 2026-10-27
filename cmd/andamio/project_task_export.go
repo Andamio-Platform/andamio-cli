@@ -35,10 +35,10 @@ func init() {
 
 // TaskExportResult holds the result for structured output
 type TaskExportResult struct {
-	ProjectID    string   `json:"project_id"`
-	Directory    string   `json:"directory"`
-	TasksExported int     `json:"tasks_exported"`
-	Files        []string `json:"files"`
+	ProjectID     string   `json:"project_id"`
+	Directory     string   `json:"directory"`
+	TasksExported int      `json:"tasks_exported"`
+	Files         []string `json:"files"`
 }
 
 // formatExpirationISO converts Unix ms (float64 from JSON) to ISO 8601 string

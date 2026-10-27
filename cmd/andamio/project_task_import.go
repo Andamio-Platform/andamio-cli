@@ -253,9 +253,9 @@ func importTaskFile(ctx context.Context, c *client.Client, filePath, filename, p
 func createTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, filename string, dryRun, isJSON bool) (string, error) {
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"title":                   fm.Title,
-		"lovelace_amount":         fm.Lovelace,
-		"expiration_time":         expirationMs,
+		"title":                fm.Title,
+		"lovelace_amount":      fm.Lovelace,
+		"expiration_time":      expirationMs,
 	}
 
 	if fm.Description != "" {
@@ -275,7 +275,7 @@ func createTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 	if dryRun {
 		data, _ := json.MarshalIndent(payload, "", "  ")
 		if !isJSON {
-			fmt.Fprintf(os.Stderr,"  %s: CREATE (dry-run)\n%s\n", filename, string(data))
+			fmt.Fprintf(os.Stderr, "  %s: CREATE (dry-run)\n%s\n", filename, string(data))
 		}
 		return "created", nil
 	}
@@ -286,7 +286,7 @@ func createTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr,"  %s: CREATED %q\n", filename, fm.Title)
+		fmt.Fprintf(os.Stderr, "  %s: CREATED %q\n", filename, fm.Title)
 	}
 	return "created", nil
 }
@@ -294,10 +294,10 @@ func createTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 func updateTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, index int, filename string, dryRun, isJSON bool) (string, error) {
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"index":                   index,
-		"title":                   fm.Title,
-		"lovelace_amount":         fm.Lovelace,
-		"expiration_time":         expirationMs,
+		"index":                index,
+		"title":                fm.Title,
+		"lovelace_amount":      fm.Lovelace,
+		"expiration_time":      expirationMs,
 	}
 
 	if fm.Description != "" {
@@ -315,13 +315,13 @@ func updateTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 	}
 
 	if !isJSON && !dryRun {
-		fmt.Fprintf(os.Stderr,"  %s: WARNING: updating existing task %d %q\n", filename, index, fm.Title)
+		fmt.Fprintf(os.Stderr, "  %s: WARNING: updating existing task %d %q\n", filename, index, fm.Title)
 	}
 
 	if dryRun {
 		data, _ := json.MarshalIndent(payload, "", "  ")
 		if !isJSON {
-			fmt.Fprintf(os.Stderr,"  %s: UPDATE task %d (dry-run)\n%s\n", filename, index, string(data))
+			fmt.Fprintf(os.Stderr, "  %s: UPDATE task %d (dry-run)\n%s\n", filename, index, string(data))
 		}
 		return "updated", nil
 	}
@@ -332,7 +332,7 @@ func updateTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr,"  %s: UPDATED task %d %q\n", filename, index, fm.Title)
+		fmt.Fprintf(os.Stderr, "  %s: UPDATED task %d %q\n", filename, index, fm.Title)
 	}
 	return "updated", nil
 }
