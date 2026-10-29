@@ -13,9 +13,9 @@ Order and exact wording are load-bearing. Editing an SLT's text, or reordering t
 A unit of a Course: an ordered list of SLTs plus its teaching content (an introduction, one lesson per SLT, and an assignment). A module exists first as an off-chain draft record and later as an on-chain entry; the two are bound by SLT Hash equality rather than by any shared identifier.
 
 ### Module Status
-Where a Course Module sits between authoring and on-chain publication: DRAFT, APPROVED, PENDING_TX, ON_CHAIN.
+Where a Course Module sits between authoring and on-chain publication: DRAFT, APPROVED, ON_CHAIN. Since Andamio API 2.6.0, ON_CHAIN is read from chain rather than stored: a module is ON_CHAIN when andamioscan lists a minted module with its SLT Hash.
 
-Only a DRAFT accepts SLT edits — once a module leaves DRAFT its SLTs are locked, because changing them would change the identity the chain has already recorded or is about to. Forward advancement is earned rather than declared: the DRAFT-to-APPROVED step is gated on SLT Hash equality, so a module cannot advance on content the chain did not receive. Backward resets are a supported recovery path, not a violation — an operator moves a module back to APPROVED when a transaction fails to build or submit, or back to DRAFT to correct its content and re-register.
+Only a DRAFT accepts SLT edits — once a module leaves DRAFT its SLTs are locked, because changing them would change the identity the chain has already recorded or is about to. Forward advancement is earned rather than declared: the DRAFT-to-APPROVED step is gated on SLT Hash equality, so a module cannot advance on content the chain did not receive. Backward resets are a supported recovery path, not a violation: an operator moves a module back to DRAFT to correct its content and re-register, as long as it is not yet on chain.
 
 ### SLT Hash
 The content-derived identity of a Course Module: a digest computed over the ordered list of its SLT texts and nothing else — not the module code, not the course, not the title.

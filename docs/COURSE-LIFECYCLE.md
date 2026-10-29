@@ -33,18 +33,19 @@ andamio config show
 
 ## Module Status Lifecycle
 
-Modules move through four states. Understanding these states is critical for knowing which operations are allowed at each stage.
+Modules move through three states. Understanding these states is critical for knowing which operations are allowed at each stage.
 
 ```
-DRAFT --> APPROVED --> PENDING_TX --> ON_CHAIN
+DRAFT --> APPROVED --> ON_CHAIN
 ```
+
+Since Andamio API 2.6.0, `ON_CHAIN` is read from chain rather than stored. A module reads `ON_CHAIN` once andamioscan lists a minted module with the same SLT hash. No command sets it, and `update-module-status` accepts only `DRAFT` and `APPROVED`.
 
 | Status | SLTs editable? | Content editable? | How it transitions |
 |--------|---------------|-------------------|-------------------|
 | **DRAFT** | Yes | Yes | Created by `course import --create`. Full import works. |
-| **APPROVED** | No (locked) | Yes | Set by `register-module` or automatic gateway sync after `modules_manage` TX. |
-| **PENDING_TX** | No (locked) | Yes | Set by `update-module-status --status PENDING_TX` before submitting the `modules_manage` TX. **Required** — the gateway will not advance a module to ON_CHAIN unless it is in PENDING_TX when the TX confirms. |
-| **ON_CHAIN** | No (locked) | Yes | Set by gateway batch confirm when the `modules_manage` TX reaches `updated`. Module has on-chain counterpart and merged DB record. |
+| **APPROVED** | No (locked) | Yes | Set by `register-module`, or by `update-module-status --status APPROVED --slt-hash <hash>`. |
+| **ON_CHAIN** | No (locked) | Yes | Read from chain once the module is minted and andamioscan lists it with a matching SLT hash. Its SLTs are the ones on chain. An on-chain module cannot return to DRAFT. |
 
 Once SLTs are locked, `course import` skips sending SLT data to avoid `SLT_LOCKED` errors. Lessons, introduction, and assignment content remain editable at all statuses.
 
@@ -157,16 +158,9 @@ andamio course credential compute-hash --file ./compiled/my-course/101/outline.m
 andamio course modules <course-id>
 ```
 
-### Step 5: Set module to PENDING_TX and mint on-chain
+### Step 5: Mint the module on-chain
 
-Before submitting the on-chain transaction, advance the module to `PENDING_TX`. The gateway requires this status before it can confirm the module to `ON_CHAIN`.
-
-```bash
-andamio course teacher update-module-status \
-  --course-id <course-id> --module-code 101 --status PENDING_TX
-```
-
-Then submit the on-chain transaction. The SLT texts in the body must exactly match what was imported in Step 4.
+Submit the on-chain transaction. No status change comes first. The SLT texts in the body must exactly match what was imported in Step 4.
 
 ```bash
 andamio tx run /v2/tx/course/teacher/modules/manage \
@@ -175,18 +169,13 @@ andamio tx run /v2/tx/course/teacher/modules/manage \
   --tx-type modules_manage
 ```
 
-When the transaction confirms, the gateway matches the on-chain module to the DB record by SLT hash and advances it from `PENDING_TX` to `ON_CHAIN`.
+When the transaction confirms and andamioscan indexes it, the module reads `ON_CHAIN`: the gateway matches the on-chain module to the DB record by SLT hash.
 
 **Verify**: A `state: updated` response means the gateway successfully matched and synced. Proceed to Step 7.
 
 If the response shows `state: failed`, the gateway could not match the module. Proceed to Step 6.
 
-**If the TX fails to build or submit**: Reset the module back to `APPROVED` so it is not stuck in `PENDING_TX`:
-
-```bash
-andamio course teacher update-module-status \
-  --course-id <course-id> --module-code 101 --status APPROVED
-```
+If the TX fails to build or submit, nothing on the module changed. Fix the cause and submit again.
 
 ### Step 6: Register module (recovery only)
 
@@ -203,15 +192,13 @@ andamio course teacher register-module \
 
 This sets the module status to **APPROVED**, which locks SLTs.
 
-### Step 7: Publish module
+### Step 7: Confirm the module is live
 
-Publish the module to finalize its on-chain/off-chain link:
+Since Andamio API 2.6.0, publishing writes nothing: a module is live when it is on chain. `publish-module` still works as a check. Its response carries the module's `module_status` and `is_live` as read from chain, and the CLI warns on stderr when the module is not linked on-chain:
 
 ```bash
 andamio course teacher publish-module --course-id <course-id> --module-code 101
 ```
-
-Look for a "merged" source signal in the response, which confirms the on-chain and DB records are fully synchronized.
 
 ### Step 8: Update content (ongoing)
 
@@ -245,7 +232,7 @@ andamio course import-assignment <course-id> 101 quiz.json --title "Module Quiz"
 
 Only the `assignment` key is sent — lessons, SLTs and the introduction are untouched. After the POST the module is re-fetched and `assignment.content_json` is deep-compared to the file; a mismatch, a degraded (206) read-back, or a read-back request that fails exits 1 with `kind: verify`, meaning the update was applied but could not be confirmed and should be inspected.
 
-**Published modules.** Assignments are editable in any module status; only SLTs lock after DRAFT (db-api's aggregate update soft-skips SLTs on non-DRAFT modules and states that lessons, assignments and introductions remain editable). `import-assignment` therefore works on DRAFT, APPROVED, PENDING_TX and ON_CHAIN modules alike. This statement rests on the gateway and db-api source; see the release notes for the live verification status.
+**Published modules.** Assignments are editable in any module status; only SLTs lock after DRAFT (db-api's aggregate update soft-skips SLTs on non-DRAFT modules and states that lessons, assignments and introductions remain editable). `import-assignment` therefore works on DRAFT, APPROVED and ON_CHAIN modules alike. This statement rests on the gateway and db-api source; see the release notes for the live verification status.
 
 **In a module directory** the quiz lives at `assignment.quiz.json` in place of `assignment.md`. `course export` writes that file for a quiz module and no `assignment.md`; `course import` validates it and sends it back verbatim, so export followed by import of a quiz module is a server-side no-op. A directory holding both `assignment.md` and `assignment.quiz.json` is refused before any request. A file in that slot that is not a valid v1 quiz (for example an envelope from a newer app version) is preserved on disk but blocks re-import of the whole directory, lessons and introduction included, until it is valid.
 
@@ -426,16 +413,20 @@ This fetches each module's SLTs from the API, re-computes the hash, and reports 
 
 ### `modules_manage` TX confirmed but module stuck in APPROVED
 
-**Cause**: The module was not advanced to `PENDING_TX` before the on-chain TX was submitted. The gateway's batch confirm requires `PENDING_TX` status — it will not transition a module from `APPROVED` directly to `ON_CHAIN`.
+**Cause**: Since Andamio API 2.6.0, `ON_CHAIN` is read from andamioscan, so one of these holds:
 
-**Fix**: Set the module to `PENDING_TX`, then the gateway's retry/healer mechanism should pick it up:
+- andamioscan has not indexed the transaction yet. Wait and check again.
+- andamioscan is unavailable. The CLI prints the gateway's partial-data warning on stderr, and on-chain modules read `APPROVED` until it recovers.
+- The SLT hash stored for the module does not match the module on chain. The SLT texts in the `tx run` body differed from the imported outline.
+
+**Fix**: Check the module and compare hashes:
 
 ```bash
-andamio course teacher update-module-status \
-  --course-id <course-id> --module-code 101 --status PENDING_TX
+andamio course modules <course-id> --output json
+andamio course credential verify-hash <course-id>
 ```
 
-If the TX has already reached terminal `failed` state, you may need to re-register manually (Step 6).
+If the hashes differ, the on-chain SLTs are the source of truth. Use `register-module` (Step 6) with the on-chain hash.
 
 ### "Module not found" after `modules_manage` TX
 
@@ -449,7 +440,7 @@ If the TX already confirmed, use `register-module` (Step 6) to manually link the
 
 **Cause**: The module was registered (status is APPROVED) but has no SLT records in the database. This can happen if `register-module` was called before content was imported.
 
-**Fix**: Reset the module to DRAFT, import content, then re-register:
+**Fix**: If the module is not on chain yet, reset it to DRAFT, import content, then re-register. Since Andamio API 2.6.0 the gateway refuses to move an on-chain module back to DRAFT, because its SLTs are fixed on chain. For an on-chain module, re-import without the DRAFT step: lessons, introduction and assignment update, and SLTs are skipped.
 
 ```bash
 andamio course teacher update-module-status \
@@ -467,27 +458,13 @@ andamio course import ./compiled/my-course/101 --course-id <course-id>
 **Fix**: `register-module` is now idempotent on hash match. Re-running it is safe:
 
 - If the existing module is in **DRAFT** with a matching `slt_hash`, `register-module` advances it to APPROVED and exits 0.
-- If the existing module is already **APPROVED / PENDING_TX / ON_CHAIN** with a matching `slt_hash`, `register-module` exits 0 as a no-op.
+- If the existing module is already **APPROVED / ON_CHAIN** with a matching `slt_hash`, `register-module` exits 0 as a no-op.
 - If the existing module's `slt_hash` does **not** match what you supplied, `register-module` exits non-zero and names both hashes. The escape hatch is destructive — delete and re-import with correct SLTs:
 
 ```bash
 andamio course teacher delete-module --course-id <course-id> --module-code 101
 andamio course import ./compiled/my-course/101 --course-id <course-id> --create
 ```
-
-### Module on-chain (source: merged) but stuck at DRAFT
-
-**Cause**: The `modules_manage` TX confirmed and the gateway merged the on-chain record, but the DB module was never advanced past DRAFT — typically because the `update-module-status --status PENDING_TX` step (Step 5) was skipped, or because modules were re-minted after a delete cycle without rerunning the lifecycle.
-
-**Fix**: Run `register-module` with the on-chain `slt_hash`. With a matching hash on a DRAFT module, it advances to APPROVED. Then publish:
-
-```bash
-andamio course teacher register-module \
-  --course-id <course-id> --module-code 101 --slt-hash <hash>
-andamio course teacher publish-module --course-id <course-id> --module-code 101
-```
-
-Find the on-chain `slt_hash` via `andamio course modules <course-id> --output json` or compute it from the outline: `andamio course credential compute-hash --file ./compiled/my-course/101/outline.md`.
 
 ### TX confirmed but DB update failed
 
@@ -515,10 +492,9 @@ Recommended sequence for creating a course with modules:
 | 2 | `course owner register` | Course metadata stored in DB |
 | 3 | Prepare `outline.md`, `lesson-N.md` files | Local content ready |
 | 4 | `course import --create` | DRAFT module in DB with SLT hash |
-| 5a | `course teacher update-module-status --status PENDING_TX` | Module ready for chain confirmation |
-| 5b | `tx run .../modules/manage` | Modules minted on-chain, gateway syncs by hash |
-| 6 | `course teacher register-module` | (Recovery only) Manual hash link if Step 5b failed |
-| 7 | `course teacher publish-module` | Module fully published, on-chain + DB merged |
+| 5 | `tx run .../modules/manage` | Modules minted on-chain, read as ON_CHAIN once indexed |
+| 6 | `course teacher register-module` | (Recovery only) Manual hash link if Step 5 failed |
+| 7 | `course teacher publish-module` | Check only: confirms the module reads ON_CHAIN and live |
 | 8 | `course import` (no `--create`) | Update content anytime (SLTs locked, content open) |
 
-Key principle: **always create the DB record before the on-chain record**. The gateway matches them by SLT hash. If the DB module does not exist or has a different hash when the on-chain TX confirms, the automatic sync fails and manual recovery is needed.
+Key principle: **always create the DB record before the on-chain record**. The gateway matches them by SLT hash. If the DB module does not exist or has a different hash, the module does not read as ON_CHAIN until `register-module` links it.
