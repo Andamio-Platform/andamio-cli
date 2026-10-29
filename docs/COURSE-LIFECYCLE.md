@@ -194,11 +194,13 @@ This sets the module status to **APPROVED**, which locks SLTs.
 
 ### Step 7: Confirm the module is live
 
-Since Andamio API 2.6.0, publishing writes nothing: a module is live when it is on chain. `publish-module` still works as a check. Its response carries the module's `module_status` and `is_live` as read from chain, and the CLI warns on stderr when the module is not linked on-chain:
+Since Andamio API 2.6.0, publishing writes nothing: a module is live when it is on chain. Confirm it from the module list. The module should read `module_status: ON_CHAIN` and `is_live: true`:
 
 ```bash
-andamio course teacher publish-module --course-id <course-id> --module-code 101
+andamio course modules <course-id> --output json
 ```
+
+`publish-module` still runs and changes nothing. It is not a liveness check: it stays quiet for any module with an SLT hash, including an `APPROVED` module that is not on chain yet.
 
 ### Step 8: Update content (ongoing)
 
@@ -494,7 +496,7 @@ Recommended sequence for creating a course with modules:
 | 4 | `course import --create` | DRAFT module in DB with SLT hash |
 | 5 | `tx run .../modules/manage` | Modules minted on-chain, read as ON_CHAIN once indexed |
 | 6 | `course teacher register-module` | (Recovery only) Manual hash link if Step 5 failed |
-| 7 | `course teacher publish-module` | Check only: confirms the module reads ON_CHAIN and live |
+| 7 | `course modules <course-id> --output json` | Confirms the module reads ON_CHAIN and live |
 | 8 | `course import` (no `--create`) | Update content anytime (SLTs locked, content open) |
 
 Key principle: **always create the DB record before the on-chain record**. The gateway matches them by SLT hash. If the DB module does not exist or has a different hash, the module does not read as ON_CHAIN until `register-module` links it.

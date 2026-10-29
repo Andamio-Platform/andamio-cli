@@ -16,7 +16,7 @@ The CLI is built to be driven by programs as well as people. Every list and get 
 
 > **1.0 requires Andamio API 2.5 or later.** It was built and verified against 2.5 and has never been tested against the 2.4 line.
 >
-> Both **preprod and mainnet run 2.6.0** (mainnet since 2026-10-29), so 1.x is the release to use on either. 2.6.0 changed how course modules reach `ON_CHAIN`; see [docs/COURSE-LIFECYCLE.md](docs/COURSE-LIFECYCLE.md). If you are on a self-hosted or pinned gateway older than 2.5, stay on 0.13.x. See the [CHANGELOG](CHANGELOG.md#requires-andamio-api-25-or-later) for what the requirement covers.
+> Both **preprod and mainnet run 2.6.0** (mainnet since 2026-10-29), so 1.x is the release to use on either. 2.6.0 changed how course modules reach `ON_CHAIN`, and the course lifecycle in [docs/COURSE-LIFECYCLE.md](docs/COURSE-LIFECYCLE.md) needs 2.6.0. If you are on a self-hosted or pinned gateway older than 2.5, stay on 0.13.x. See the [CHANGELOG](CHANGELOG.md#requires-andamio-api-25-or-later) for what the requirement covers.
 
 ## Installation
 
@@ -508,7 +508,7 @@ This time without `--create`, because the modules already exist. Lessons, introd
 
 - **On-chain modules cannot return to DRAFT**: Since Andamio API 2.6.0, `update-module-status --status DRAFT` is refused for a module on chain. Import skips SLT updates for non-DRAFT modules and still updates the rest.
 - **Module hash ordering is non-deterministic**: On-chain token names (slt_hashes) don't sort in the same order as your module codes. Check the register response to map hashes to codes.
-- **`publish-module` does not publish on-chain**: To publish modules on-chain, use `tx run` with `modules_manage`. Since Andamio API 2.6.0, `publish-module` writes nothing and works as a check that the module reads `ON_CHAIN`.
+- **`publish-module` does not publish on-chain**: To publish modules on-chain, use `tx run` with `modules_manage`. Since Andamio API 2.6.0, `publish-module` writes nothing. To confirm a module is live, check `module_status` and `is_live` in `andamio course modules <id> --output json`.
 - **`course owner register` vs `update`**: After `tx run` with `course_create`, the course is auto-registered. Use `update` to set metadata. `register` is only needed when auto-registration failed. `create` is deprecated and does the same as `register`.
 
 ## Project Tasks
