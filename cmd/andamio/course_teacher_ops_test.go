@@ -217,9 +217,9 @@ func TestLookupTeacherModule(t *testing.T) {
 			response: map[string]interface{}{
 				"data": []interface{}{
 					map[string]interface{}{
-						"course_module_code":   "201",
+						"course_module_code":     "201",
 						"course_module_slt_hash": "h201",
-						"course_module_status": "APPROVED",
+						"course_module_status":   "APPROVED",
 					},
 				},
 			},
@@ -383,7 +383,7 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 		registerResp       map[string]interface{}
 		listStatus         int // HTTP status for the list POST; 0 defaults to OK
 		listResponse       map[string]interface{}
-		updateStatusStatus int // HTTP status for the update-status POST; 0 defaults to OK
+		updateStatusStatus int                    // HTTP status for the update-status POST; 0 defaults to OK
 		updateStatusResp   map[string]interface{} // body the gateway returns on update-status; defaults to {"ok": true}
 		wantAction         string
 		wantStatus         string
