@@ -6,6 +6,15 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Changed
+
+- **Course module help and docs follow Andamio API 2.6.0.** A module's status is `DRAFT`, `APPROVED` or `ON_CHAIN`, and 2.6.0 reads `ON_CHAIN` from chain instead of storing it. `docs/COURSE-LIFECYCLE.md` drops the step that set `PENDING_TX` before minting, which 2.6.0 refuses, and the README stops resetting on-chain modules to `DRAFT` before re-import, which 2.6.0 also refuses. `register-module` now treats a `PENDING_TX` module as an unexpected status. Only a gateway older than 2.6.0 can report one.
+- **`course owner register --tx-hash` is ignored.** Andamio API 2.6.0 no longer takes `tx_hash` on the register request, so the CLI stops sending it. The flag is still accepted, so scripts that pass it keep working until it is removed in 2.0.0.
+
+### Deprecated
+
+- **`dev` and `apikey` are deprecated and will be removed in 2.0.0.** API keys are managed in the developer portal at https://app.andamio.io/api-setup. Every `dev` command (`login`, `logout`, `refresh`, `status`, `keys list`, `keys create`, `keys delete`) and both `apikey` commands still work. Each prints where keys are managed on stderr, in every output mode. Stdout, exit codes and `--output json` shapes are unchanged, so `dev keys create | pbcopy` still captures only the key.
+
 ### Fixed
 
 - **`project task import` no longer skips the DRAFT check when it can't fetch the existing tasks.** If the task list request failed, the error was ignored and every file with an `index` was sent as an update, including tasks that are on-chain or have a pending transaction. The import now stops with an error before sending anything, with or without `--dry-run`.
