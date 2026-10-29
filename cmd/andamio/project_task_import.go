@@ -80,17 +80,20 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	// Single fetch: resolve project, policy ID, and slug from one API call
-	proj, projects, err := resolveProject(ctx, c, args)
+	proj, err := resolveProject(ctx, c, args)
 	if err != nil {
 		return err
 	}
 
-	policyID, err := findProjectPolicyID(projects, proj.ProjectID)
-	if err != nil {
-		return err
+	policyID := proj.ContributorStateID
+	if policyID == "" {
+		return fmt.Errorf("project %s has no contributor_state_id (may not be on-chain yet)", proj.ProjectID)
 	}
 
-	projectSlug := projectSlugFromList(projects, proj.ProjectID)
+	projectSlug := slugify(proj.Title)
+	if proj.Title == "" {
+		projectSlug = slugify(proj.ProjectID)
+	}
 	taskDir := filepath.Join("tasks", projectSlug)
 	absDir, err := filepath.Abs(taskDir)
 	if err != nil {
@@ -118,12 +121,13 @@ func runTaskImport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Fetch existing tasks to check status for updates
-	var existingTasks []map[string]interface{}
+	// Fetch existing tasks to check status for updates. Without this list the
+	// DRAFT guard can't run, so a failed fetch stops the import.
 	resp, err := fetchTasks(ctx, c, proj.ProjectID)
-	if err == nil {
-		existingTasks = extractTaskList(resp)
+	if err != nil {
+		return fmt.Errorf("failed to fetch existing tasks (needed for the DRAFT status check): %w", err)
 	}
+	existingTasks := extractTaskList(resp)
 
 	if !isJSON {
 		action := "Importing"
@@ -249,9 +253,9 @@ func importTaskFile(ctx context.Context, c *client.Client, filePath, filename, p
 func createTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, filename string, dryRun, isJSON bool) (string, error) {
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"title":                   fm.Title,
-		"lovelace_amount":         fm.Lovelace,
-		"expiration_time":         expirationMs,
+		"title":                fm.Title,
+		"lovelace_amount":      fm.Lovelace,
+		"expiration_time":      expirationMs,
 	}
 
 	if fm.Description != "" {
@@ -271,7 +275,7 @@ func createTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 	if dryRun {
 		data, _ := json.MarshalIndent(payload, "", "  ")
 		if !isJSON {
-			fmt.Fprintf(os.Stderr,"  %s: CREATE (dry-run)\n%s\n", filename, string(data))
+			fmt.Fprintf(os.Stderr, "  %s: CREATE (dry-run)\n%s\n", filename, string(data))
 		}
 		return "created", nil
 	}
@@ -282,7 +286,7 @@ func createTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr,"  %s: CREATED %q\n", filename, fm.Title)
+		fmt.Fprintf(os.Stderr, "  %s: CREATED %q\n", filename, fm.Title)
 	}
 	return "created", nil
 }
@@ -290,10 +294,10 @@ func createTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 func updateTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatter, policyID, expirationMs string, contentJSON interface{}, index int, filename string, dryRun, isJSON bool) (string, error) {
 	payload := map[string]interface{}{
 		"contributor_state_id": policyID,
-		"index":                   index,
-		"title":                   fm.Title,
-		"lovelace_amount":         fm.Lovelace,
-		"expiration_time":         expirationMs,
+		"index":                index,
+		"title":                fm.Title,
+		"lovelace_amount":      fm.Lovelace,
+		"expiration_time":      expirationMs,
 	}
 
 	if fm.Description != "" {
@@ -311,13 +315,13 @@ func updateTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 	}
 
 	if !isJSON && !dryRun {
-		fmt.Fprintf(os.Stderr,"  %s: WARNING: updating existing task %d %q\n", filename, index, fm.Title)
+		fmt.Fprintf(os.Stderr, "  %s: WARNING: updating existing task %d %q\n", filename, index, fm.Title)
 	}
 
 	if dryRun {
 		data, _ := json.MarshalIndent(payload, "", "  ")
 		if !isJSON {
-			fmt.Fprintf(os.Stderr,"  %s: UPDATE task %d (dry-run)\n%s\n", filename, index, string(data))
+			fmt.Fprintf(os.Stderr, "  %s: UPDATE task %d (dry-run)\n%s\n", filename, index, string(data))
 		}
 		return "updated", nil
 	}
@@ -328,7 +332,7 @@ func updateTaskFromFile(ctx context.Context, c *client.Client, fm TaskFrontmatte
 	}
 
 	if !isJSON {
-		fmt.Fprintf(os.Stderr,"  %s: UPDATED task %d %q\n", filename, index, fm.Title)
+		fmt.Fprintf(os.Stderr, "  %s: UPDATED task %d %q\n", filename, index, fm.Title)
 	}
 	return "updated", nil
 }

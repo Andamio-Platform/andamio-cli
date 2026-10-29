@@ -35,10 +35,10 @@ func init() {
 
 // TaskExportResult holds the result for structured output
 type TaskExportResult struct {
-	ProjectID    string   `json:"project_id"`
-	Directory    string   `json:"directory"`
-	TasksExported int     `json:"tasks_exported"`
-	Files        []string `json:"files"`
+	ProjectID     string   `json:"project_id"`
+	Directory     string   `json:"directory"`
+	TasksExported int      `json:"tasks_exported"`
+	Files         []string `json:"files"`
 }
 
 // formatExpirationISO converts Unix ms (float64 from JSON) to ISO 8601 string
@@ -61,7 +61,7 @@ func runTaskExport(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	proj, _, err := resolveProject(ctx, c, args)
+	proj, err := resolveProject(ctx, c, args)
 	if err != nil {
 		return err
 	}
@@ -245,14 +245,4 @@ func exportTask(dir string, item map[string]interface{}, projectID, policyID str
 	}
 
 	return filename, nil
-}
-
-// projectSlugFromList finds a project's slug from a pre-fetched projects list
-func projectSlugFromList(projects []managerProject, projectID string) string {
-	for _, p := range projects {
-		if p.ProjectID == projectID && p.Title != "" {
-			return slugify(p.Title)
-		}
-	}
-	return slugify(projectID)
 }

@@ -6,6 +6,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Fixed
+
+- **`project task import` no longer skips the DRAFT check when it can't fetch the existing tasks.** If the task list request failed, the error was ignored and every file with an `index` was sent as an update, including tasks that are on-chain or have a pending transaction. The import now stops with an error before sending anything, with or without `--dry-run`.
+
 ## [1.2.0] - 2026-10-13
 
 ### Added

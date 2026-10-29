@@ -224,22 +224,22 @@ func fetchManagerProjects(ctx context.Context, c *client.Client) ([]managerProje
 }
 
 // resolveProject validates the project-id arg against the manager's project list
-// and returns the matching project along with the full list (for policy ID lookups).
-func resolveProject(ctx context.Context, c *client.Client, args []string) (*managerProject, []managerProject, error) {
+// and returns the matching project.
+func resolveProject(ctx context.Context, c *client.Client, args []string) (*managerProject, error) {
 	projects, err := fetchManagerProjects(ctx, c)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if len(projects) == 0 {
-		return nil, nil, fmt.Errorf("no managed projects found")
+		return nil, fmt.Errorf("no managed projects found")
 	}
 
 	for i := range projects {
 		if projects[i].ProjectID == args[0] {
-			return &projects[i], projects, nil
+			return &projects[i], nil
 		}
 	}
-	return nil, nil, fmt.Errorf("project %s not found in your managed projects\n\nList your projects with:\n  andamio project list --output json", args[0])
+	return nil, fmt.Errorf("project %s not found in your managed projects\n\nList your projects with:\n  andamio project list --output json", args[0])
 }
 
 // findProjectPolicyID looks up the contributor_state_id from a pre-fetched projects list
@@ -288,7 +288,7 @@ func runTasksList(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
-	proj, _, err := resolveProject(ctx, c, args)
+	proj, err := resolveProject(ctx, c, args)
 	if err != nil {
 		return err
 	}
@@ -443,14 +443,14 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	c := client.New(cfg)
 
 	ctx := cmd.Context()
-	proj, projects, err := resolveProject(ctx, c, args)
+	proj, err := resolveProject(ctx, c, args)
 	if err != nil {
 		return err
 	}
 
-	policyID, err := findProjectPolicyID(projects, proj.ProjectID)
-	if err != nil {
-		return err
+	policyID := proj.ContributorStateID
+	if policyID == "" {
+		return fmt.Errorf("project %s has no contributor_state_id (may not be on-chain yet)", proj.ProjectID)
 	}
 
 	// Convert expiration to Unix ms
@@ -637,6 +637,8 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
+	// The API identifies tasks by contributor_state_id, not project_id, and the
+	// manager projects list is the only place to look it up.
 	projects, err := fetchManagerProjects(ctx, c)
 	if err != nil {
 		return err
@@ -723,6 +725,8 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 	}
 	c := client.New(cfg)
 
+	// The API identifies tasks by contributor_state_id, not project_id, and the
+	// manager projects list is the only place to look it up.
 	projects, err := fetchManagerProjects(ctx, c)
 	if err != nil {
 		return err
