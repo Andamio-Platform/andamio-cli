@@ -44,8 +44,8 @@ Only the assignment is sent. Lessons, SLTs and the introduction are untouched.
 The existing assignment's title, description, image and video URLs are kept
 unless --title / --description override them; a module with no assignment yet
 requires --title. Assignments are editable in any module status — only SLTs
-lock after DRAFT — so this works on DRAFT, APPROVED, PENDING_TX and ON_CHAIN
-modules alike.
+lock after DRAFT — so this works on DRAFT, APPROVED and ON_CHAIN modules
+alike.
 
 After the update the module is re-fetched and the stored content_json is
 deep-compared to the file. A mismatch, a degraded (206) read-back, or a
