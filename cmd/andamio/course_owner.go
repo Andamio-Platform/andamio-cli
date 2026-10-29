@@ -123,8 +123,8 @@ func init() {
 	// register flags
 	courseOwnerRegisterCmd.Flags().String("course-id", "", "Course ID (required)")
 	courseOwnerRegisterCmd.MarkFlagRequired("course-id")
-	courseOwnerRegisterCmd.Flags().String("tx-hash", "", "Transaction hash from on-chain creation (deprecated)")
-	courseOwnerRegisterCmd.Flags().MarkDeprecated("tx-hash", "the API stops taking it when andamio-api#884 ships, and ignores it after that")
+	courseOwnerRegisterCmd.Flags().String("tx-hash", "", "Ignored")
+	courseOwnerRegisterCmd.Flags().MarkDeprecated("tx-hash", "Andamio API 2.6.0 no longer takes it, so it is ignored. It is removed in 2.0.0")
 	courseOwnerRegisterCmd.Flags().String("title", "", "Course title (required)")
 	courseOwnerRegisterCmd.MarkFlagRequired("title")
 	courseOwnerRegisterCmd.Flags().String("description", "", "Course description")
@@ -232,11 +232,6 @@ func registerCourse(cmd *cobra.Command, requireTitle bool) error {
 
 	payload := map[string]interface{}{
 		"course_id": courseID,
-	}
-	// Still sent when given: the API stores it until andamio-api#884 ships,
-	// and ignores it after. Drop with the flag at the next major.
-	if v, _ := cmd.Flags().GetString("tx-hash"); v != "" {
-		payload["tx_hash"] = v
 	}
 	title, _ := cmd.Flags().GetString("title")
 	if title == "" && requireTitle {
