@@ -12,8 +12,12 @@ import (
 
 var apikeyCmd = &cobra.Command{
 	Use:   "apikey",
-	Short: "API key management",
-	Long: `Developer API key management.
+	Short: "Deprecated: API key usage and profile (use app.andamio.io/api-setup)",
+	Long: `Deprecated: API keys are managed in the developer portal at
+https://app.andamio.io/api-setup. These commands keep working, print that
+notice on every run, and are removed in andamio CLI 2.0.0.
+
+Developer API key management.
 
 Subcommands query the developer-portal apikey surface
 (/api/v2/apikey/developer/*), which is a dual-credential gateway surface:

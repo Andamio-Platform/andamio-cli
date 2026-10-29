@@ -75,7 +75,6 @@ partially completed), behavior depends on its current status:
 
   DRAFT          + matching hash -> advances to APPROVED
   APPROVED       + matching hash -> no-op (exit 0)
-  PENDING_TX     + matching hash -> no-op (exit 0)
   ON_CHAIN       + matching hash -> no-op (exit 0)
   hash mismatch  (any status)    -> error; suggests delete-module
 
@@ -106,7 +105,8 @@ var courseTeacherDeleteModuleCmd = &cobra.Command{
 var courseTeacherUpdateModuleStatusCmd = &cobra.Command{
 	Use:   "update-module-status",
 	Short: "Update a course module's status",
-	Long: `Update the status of a course module.
+	Long: `Update the status of a course module. The status is DRAFT or APPROVED;
+APPROVED requires --slt-hash. ON_CHAIN is read from chain and cannot be set.
 
 Examples:
   andamio course teacher update-module-status --course-id <id> --module-code 101 --status DRAFT`,
@@ -167,7 +167,7 @@ func init() {
 	courseTeacherUpdateModuleStatusCmd.MarkFlagRequired("course-id")
 	courseTeacherUpdateModuleStatusCmd.Flags().String("module-code", "", "Module code (required)")
 	courseTeacherUpdateModuleStatusCmd.MarkFlagRequired("module-code")
-	courseTeacherUpdateModuleStatusCmd.Flags().String("status", "", "New status (required)")
+	courseTeacherUpdateModuleStatusCmd.Flags().String("status", "", "New status: DRAFT or APPROVED (required)")
 	courseTeacherUpdateModuleStatusCmd.MarkFlagRequired("status")
 	courseTeacherUpdateModuleStatusCmd.Flags().String("slt-hash", "", "SLT hash (required when status is APPROVED)")
 
@@ -316,7 +316,7 @@ func registerOrRecoverModule(ctx context.Context, c *client.Client, courseID, mo
 			Response:     updateResp,
 		}, fmt.Sprintf("Module %s: advanced from DRAFT to APPROVED.", moduleCode), nil
 
-	case "APPROVED", "PENDING_TX", "ON_CHAIN":
+	case "APPROVED", "ON_CHAIN":
 		// Canonical values from the teacher-list lookup. No additional gateway
 		// round-trip happened on this branch — Response is nil. This is the only
 		// branch where SltHash is guaranteed canonical today (survives the

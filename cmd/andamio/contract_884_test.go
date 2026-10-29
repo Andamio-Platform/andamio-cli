@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
@@ -143,8 +144,8 @@ func TestCourseOwnerCreate_TitleStaysOptional(t *testing.T) {
 	}
 }
 
-func TestCourseOwnerRegister_StillSendsTxHashWhenGiven(t *testing.T) {
-	// The API before andamio-api#884 stores it; after, it ignores it.
+func TestCourseOwnerRegister_IgnoresTxHash(t *testing.T) {
+	// Andamio API 2.6.0 dropped tx_hash from the register request.
 	mux, body, _ := captureRegister(t)
 	contract884Env(t, mux)
 
@@ -152,8 +153,20 @@ func TestCourseOwnerRegister_StillSendsTxHashWhenGiven(t *testing.T) {
 	if err := runCourseOwnerRegister(cmd, nil); err != nil {
 		t.Fatalf("runCourseOwnerRegister: %v", err)
 	}
-	if (*body)["tx_hash"] != "tx1" {
-		t.Errorf("tx_hash = %v, want tx1 while the API still stores it", (*body)["tx_hash"])
+	if _, ok := (*body)["tx_hash"]; ok {
+		t.Error("sent tx_hash, which the API no longer takes")
+	}
+}
+
+// Scripts that still pass --tx-hash must not fail with "unknown flag" before
+// 2.0.0. registerTestCmd builds its own flags, so check the real command.
+func TestCourseOwnerRegister_TxHashFlagStaysUntil2(t *testing.T) {
+	f := courseOwnerRegisterCmd.Flags().Lookup("tx-hash")
+	if f == nil {
+		t.Fatal("course owner register no longer accepts --tx-hash")
+	}
+	if !strings.Contains(f.Deprecated, "2.0.0") {
+		t.Errorf("--tx-hash deprecation = %q, want it to name 2.0.0", f.Deprecated)
 	}
 }
 

@@ -56,8 +56,12 @@ const (
 
 var devKeysCmd = &cobra.Command{
 	Use:   "keys",
-	Short: "Manage developer API keys (mainnet + preprod)",
-	Long: `Developer API key management.
+	Short: "Deprecated: manage developer API keys (use app.andamio.io/api-setup)",
+	Long: `Deprecated: API keys are managed in the developer portal at
+https://app.andamio.io/api-setup. These commands keep working, print that
+notice on every run, and are removed in andamio CLI 2.0.0.
+
+Developer API key management.
 
 Wraps the gateway's /api/v2/keys surface — list, create, and delete API
 keys across both mainnet and preprod environments. Requires both an

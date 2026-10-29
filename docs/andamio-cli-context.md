@@ -39,7 +39,7 @@ Two auth methods coexist:
 - Config stored at `~/.andamio/config.json` (permissions 0600)
 - Environment variable `ANDAMIO_JWT` overrides stored JWT (useful for CI/CD)
 - Both headers are sent simultaneously when both credentials exist
-- Some endpoints require dual credentials (e.g., `apikey` commands require both `auth login --api-key` and `dev login`)
+- Some endpoints require dual credentials (e.g., `apikey` commands require both `auth login --api-key` and `dev login`). The `dev` and `apikey` commands are deprecated: keys are managed at https://app.andamio.io/api-setup, and the commands are removed in 2.0.0
 
 ## Output Formats
 
@@ -229,6 +229,8 @@ Submissions carry two evidence fields:
 | `tx status <hash>` | either | Get transaction status |
 
 ### apikey — API key info
+
+Deprecated: keys are managed at https://app.andamio.io/api-setup. Removed in 2.0.0.
 
 | Command | Auth | Description |
 |---------|------|-------------|

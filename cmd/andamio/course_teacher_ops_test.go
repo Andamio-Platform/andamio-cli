@@ -14,6 +14,7 @@ import (
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
+	"github.com/spf13/cobra"
 )
 
 func TestIsModuleAlreadyExistsError(t *testing.T) {
@@ -216,9 +217,9 @@ func TestLookupTeacherModule(t *testing.T) {
 			response: map[string]interface{}{
 				"data": []interface{}{
 					map[string]interface{}{
-						"course_module_code":   "201",
+						"course_module_code":     "201",
 						"course_module_slt_hash": "h201",
-						"course_module_status": "APPROVED",
+						"course_module_status":   "APPROVED",
 					},
 				},
 			},
@@ -382,7 +383,7 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 		registerResp       map[string]interface{}
 		listStatus         int // HTTP status for the list POST; 0 defaults to OK
 		listResponse       map[string]interface{}
-		updateStatusStatus int // HTTP status for the update-status POST; 0 defaults to OK
+		updateStatusStatus int                    // HTTP status for the update-status POST; 0 defaults to OK
 		updateStatusResp   map[string]interface{} // body the gateway returns on update-status; defaults to {"ok": true}
 		wantAction         string
 		wantStatus         string
@@ -541,6 +542,23 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 						"course_module_code": "101",
 						"slt_hash":           "abc",
 						"module_status":      "WITHDRAWN",
+					}},
+				},
+			},
+			wantErrSubstr: "unexpected status",
+		},
+		{
+			// Andamio API 2.6.0 removed PENDING_TX from module status and maps a
+			// stored one to APPROVED, so only a pre-2.6 gateway can return it.
+			name:           "conflict + PENDING_TX + matching hash errors out",
+			suppliedHash:   "abc",
+			registerStatus: http.StatusConflict,
+			listResponse: map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"slt_hash":           "abc",
+						"module_status":      "PENDING_TX",
 					}},
 				},
 			},
@@ -969,4 +987,25 @@ func TestRegisterOrRecover_WrapChainPreservesServerError_OnListExhaustion(t *tes
 	if !strings.Contains(err.Error(), "could not locate it for recovery") {
 		t.Errorf("outer error message should preserve recovery context; got %q", err.Error())
 	}
+}
+
+// Andamio API 2.6.0 cut course-module status to DRAFT, APPROVED and ON_CHAIN.
+// Task and commitment statuses (PENDING_TX, PENDING_TX_*) live outside the
+// course command tree, so this guard does not reach them.
+func TestCourseHelpNamesOnlyCurrentModuleStatuses(t *testing.T) {
+	removed := []string{"PENDING_TX", "ARCHIVED", "DEPRECATED"}
+	var walk func(cmd *cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		for _, text := range []string{cmd.Short, cmd.Long} {
+			for _, status := range removed {
+				if strings.Contains(text, status) {
+					t.Errorf("%q help mentions removed module status %s", cmd.CommandPath(), status)
+				}
+			}
+		}
+		for _, sub := range cmd.Commands() {
+			walk(sub)
+		}
+	}
+	walk(courseCmd)
 }

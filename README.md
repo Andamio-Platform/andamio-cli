@@ -16,7 +16,7 @@ The CLI is built to be driven by programs as well as people. Every list and get 
 
 > **1.0 requires Andamio API 2.5 or later.** It was built and verified against 2.5 and has never been tested against the 2.4 line.
 >
-> Both **preprod and mainnet run 2.5** (mainnet cut over on 2026-08-25, `andamio-ops#189`), so 1.0 is the release to use on either. If you are on a self-hosted or pinned gateway older than 2.5, stay on 0.13.x. See the [CHANGELOG](CHANGELOG.md#requires-andamio-api-25-or-later) for what the requirement covers.
+> Both **preprod and mainnet run 2.6.0** (mainnet since 2026-10-29), so 1.x is the release to use on either. 2.6.0 changed how course modules reach `ON_CHAIN`, and the course lifecycle in [docs/COURSE-LIFECYCLE.md](docs/COURSE-LIFECYCLE.md) needs 2.6.0. If you are on a self-hosted or pinned gateway older than 2.5, stay on 0.13.x. See the [CHANGELOG](CHANGELOG.md#requires-andamio-api-25-or-later) for what the requirement covers.
 
 ## Installation
 
@@ -272,6 +272,8 @@ A new wallet has no funds and no Access Token, so it can't log in or build trans
 
 ### `andamio apikey`
 
+Deprecated: API keys are managed at [app.andamio.io/api-setup](https://app.andamio.io/api-setup). Every `dev` and `apikey` command prints that on stderr, and they are removed in 2.0.0.
+
 - `apikey usage` — Get API key usage stats
 - `apikey profile` — Get API key profile
 
@@ -483,9 +485,9 @@ andamio tx run /v2/tx/course/teacher/modules/manage \
   --instance-id <course-id>
 ```
 
-### 6. Link On-Chain Modules to DB
+### 6. Link On-Chain Modules to DB (if needed)
 
-For each module, link the on-chain module (identified by `slt_hash`) to the DB module:
+A minted module reads `ON_CHAIN` once andamioscan indexes it with the SLT hash its DB record carries. If one does not, link it by `slt_hash`:
 
 ```bash
 andamio course teacher register-module \
@@ -494,28 +496,19 @@ andamio course teacher register-module \
 
 Get slt_hashes from the TX response or by inspecting the on-chain state.
 
-### 7. Set Modules to DRAFT for Content Import
-
-`register-module` sets the module status to APPROVED, but content import requires DRAFT status:
-
-```bash
-andamio course teacher update-module-status \
-  --course-id <id> --module-code 101 --status DRAFT
-```
-
-### 8. Re-Import Content into Linked Modules
+### 7. Re-Import Content into Linked Modules
 
 ```bash
 andamio course import-all ./compiled/my-course --course-id <id>
 ```
 
-This time without `--create` — the modules already exist. Content (lessons, intro, assignment, SLTs) is imported into the linked modules.
+This time without `--create`, because the modules already exist. Lessons, introduction and assignment are imported into the linked modules. SLTs are skipped: an on-chain module's SLTs are fixed on chain, and Andamio API 2.6.0 refuses to move it back to DRAFT.
 
 ### Common Gotchas
 
-- **`register-module` sets APPROVED**: You must set status back to DRAFT before importing content (step 7). Import skips SLT updates for non-DRAFT modules.
+- **On-chain modules cannot return to DRAFT**: Since Andamio API 2.6.0, `update-module-status --status DRAFT` is refused for a module on chain. Import skips SLT updates for non-DRAFT modules and still updates the rest.
 - **Module hash ordering is non-deterministic**: On-chain token names (slt_hashes) don't sort in the same order as your module codes. Check the register response to map hashes to codes.
-- **`publish-module` is for DB→chain linking, not on-chain publishing**: To publish modules on-chain, use `tx run` with `modules_manage`. The `publish-module` command links an existing on-chain module to a DB record.
+- **`publish-module` does not publish on-chain**: To publish modules on-chain, use `tx run` with `modules_manage`. Since Andamio API 2.6.0, `publish-module` writes nothing. To confirm a module is live, check `module_status` and `is_live` in `andamio course modules <id> --output json`.
 - **`course owner register` vs `update`**: After `tx run` with `course_create`, the course is auto-registered. Use `update` to set metadata. `register` is only needed when auto-registration failed. `create` is deprecated and does the same as `register`.
 
 ## Project Tasks

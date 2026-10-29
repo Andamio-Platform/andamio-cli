@@ -154,8 +154,12 @@ const (
 
 var devCmd = &cobra.Command{
 	Use:   "dev",
-	Short: "Developer-portal operations (login, manage API keys)",
-	Long: `Developer-portal commands operate on the developer JWT slot — distinct
+	Short: "Deprecated: developer-portal login and API keys (use app.andamio.io/api-setup)",
+	Long: `Deprecated: API keys are managed in the developer portal at
+https://app.andamio.io/api-setup. These commands keep working, print that
+notice on every run, and are removed in andamio CLI 2.0.0.
+
+Developer-portal commands operate on the developer JWT slot — distinct
 from the wallet/user JWT used by course/project commands. The dev JWT is
 required for /v2/keys and other developer-scoped endpoints.
 
