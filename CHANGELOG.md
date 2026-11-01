@@ -17,6 +17,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ### Fixed
 
+- **`spec fetch` and `spec paths` read the public spec at `/openapi/swagger.public.json`.** The gateway no longer serves `/openapi/swagger.json`, so both commands got a 404. The public spec does not list the developer auth, developer key and billing routes, which the deprecated `dev` and `apikey` commands call.
 - **`project task import` no longer skips the DRAFT check when it can't fetch the existing tasks.** If the task list request failed, the error was ignored and every file with an `index` was sent as an update, including tasks that are on-chain or have a pending transaction. The import now stops with an error before sending anything, with or without `--dry-run`.
 
 ## [1.2.0] - 2026-10-13

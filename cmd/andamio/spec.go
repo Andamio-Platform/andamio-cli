@@ -18,12 +18,13 @@ import (
 // specHTTPClient is a dedicated client for spec fetching with proper timeout
 var specHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-// specDocPath is the gateway route serving the rendered OpenAPI document.
-// andamio-api#652 removed the previous /api/v1/docs/doc.json on 2026-07-28;
-// the gateway has served /openapi/swagger.json since. Keep this in one place —
-// spec fetch and spec paths' network fallback both used to hardcode the dead
-// route separately, so fixing one still left the other pointed at a 404.
-const specDocPath = "/openapi/swagger.json"
+// specDocPath is the gateway route serving the public OpenAPI document. The
+// gateway does not serve its full spec without authentication, and the
+// public one does not list the developer auth, developer key and billing
+// routes that the deprecated dev and apikey commands call. Keep this in one
+// place: spec fetch and spec paths' network fallback both read it, and
+// hardcoding it at each use-site lets one drift to a 404.
+const specDocPath = "/openapi/swagger.public.json"
 
 var specCmd = &cobra.Command{
 	Use:   "spec",
