@@ -123,7 +123,7 @@ Removed commands are not deleted from the routing table. `cmd/andamio/retired.go
 Two properties are load-bearing and easy to break:
 
 - Stubs use `FParseErrWhitelist{UnknownFlags: true}`, **not** `DisableFlagParsing`. The latter also skips the root's persistent `--output` flag, so `course student claim --output json` would emit plain text instead of a JSON error envelope.
-- Stubs must not inherit an auth `PersistentPreRunE`. Both retired groups gated on `jwtAuthPreRunE`; inheriting it would greet an unauthenticated caller with "not authenticated" instead of the removal notice.
+- Stubs must not inherit an auth `PersistentPreRunE`, which would greet an unauthenticated caller with "not authenticated" instead of the removal notice. A stub can sit under a live auth-gated group (`course teacher review` sits under `course teacher`), so each stub defines its own hook that runs only the root's.
 
 `TestNoSourceFileCallsARetiredRoute` walks the AST of every non-test source file and fails on a string literal referencing `/course/student/` or `/project/contributor/`. It inspects literals rather than raw text so comments explaining a removal stay legal.
 
@@ -210,7 +210,6 @@ Exit codes 0–3 predate 1.0 and are fixed. `conflict` moved from 1 to 6 in 1.0.
 | `course teacher publish-module` | `/v2/course/teacher/course-module/publish` | jwt | Publish module. Since Andamio API 2.6.0 the gateway writes nothing (a module is live when it is on chain). It is not a liveness check: the warning below stays quiet for any module with an `slt_hash`, including an APPROVED one not yet on chain. Confirm liveness from `course modules --output json` (`module_status`, `is_live`). `--course-id`, `--module-code`. Warns on stderr only when the response shows the module is not linked on-chain (`module_status` not `ON_CHAIN` and no `slt_hash`) — the response is a `CourseModuleEntity`, which never carries `source` (#158) |
 | `course teacher delete-module` | `/v2/course/teacher/course-module/delete` | jwt | Delete module. `--course-id`, `--module-code` |
 | `course teacher update-module-status` | `/v2/course/teacher/course-module/update-status` | jwt | Update module status. `--status` is `DRAFT` or `APPROVED` (with `--slt-hash`); 2.6.0 refuses anything else, and refuses DRAFT for an on-chain module. `--course-id`, `--module-code`, `--status` |
-| `course teacher review` | `/v2/course/teacher/assignment-commitment/review` | jwt | Review commitment. `--course-id`, `--module-code`, `--participant-alias`, `--decision` (accept/refuse) |
 | `course teacher commitments` | `/v2/course/teacher/assignment-commitments/list` | jwt | List pending reviews. `--course-id` |
 | `course credential verify-hash <course-id>` | `/api/v2/course/user/modules/{id}` | either | Verify credential hashes match computed SLT hashes |
 | `course credential compute-hash` | local | none | Compute SLT hash from `--slt` flags or `--file` (outline.md). No auth required |

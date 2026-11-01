@@ -23,10 +23,9 @@ import (
 const statusEmpty = "—"
 
 // statusMinWidth is the floor for the Status column. The widest known DB
-// enum string is CREDENTIAL_CLAIMED (18 runes); PENDING_TX_* variants fall
-// in the same range. 20 leaves a column of breathing room and keeps short
-// result sets aligned. The column expands beyond 20 when a value exceeds it
-// so the enum is never truncated.
+// enum string is CREDENTIAL_CLAIMED (18 runes). 20 leaves a column of
+// breathing room and keeps short result sets aligned. The column expands
+// beyond 20 when a value exceeds it so the enum is never truncated.
 const statusMinWidth = 20
 
 var teacherAssignmentsCmd = &cobra.Command{
@@ -51,8 +50,10 @@ enum, displayed verbatim). For scripting, use:
     | jq '.data[].content.commitment_status'
 
 Known commitment_status values: AWAITING_SUBMISSION, SUBMITTED, ACCEPTED,
-REFUSED, CREDENTIAL_CLAIMED, LEFT, PENDING_TX_* (transient). The CLI does
-not validate or alias — whatever string the gateway returns is what you see.
+REFUSED, CREDENTIAL_CLAIMED, LEFT. The gateway reads them from chain, so a
+status changes once its transaction is on chain. When the chain read fails,
+the field is absent, meaning unknown: list again. The CLI does not validate
+or alias — whatever string the gateway returns is what you see.
 
 Machine-readable output contract (--output json):
 
@@ -308,8 +309,8 @@ func enrichCommitmentEvidence(row map[string]interface{}) {
 func renderTeacherAssignmentsListText(data []interface{}, stdout io.Writer) error {
 	// First pass: compute the Status column width from the actual data.
 	// The width expands above statusMinWidth if any enum exceeds it, so a
-	// future longer value (e.g., a new PENDING_TX_* variant) renders verbatim
-	// rather than getting silently sliced.
+	// future longer enum value renders verbatim rather than getting silently
+	// sliced.
 	statusWidth := statusMinWidth
 	for _, item := range data {
 		m, ok := item.(map[string]interface{})

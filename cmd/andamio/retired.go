@@ -44,39 +44,53 @@ const retiredAppGuidance = "Learner and contributor work now happens in the Anda
 //
 // Guidance is the sentence shown after the removal notice. It should name where
 // the operation lives now, not merely state that it is gone.
+//
+// RemovedIn is the release named in the removal notice. Leave it empty when
+// the removal ships in a release whose number is not yet fixed; the notice then
+// says the command was removed without naming a version.
 type retiredCommand struct {
-	Path     string
-	Guidance string
+	Path      string
+	Guidance  string
+	RemovedIn string
 }
+
+// retiredTeacherReviewGuidance points `course teacher review` at the on-chain
+// assessment. The gateway route it called records nothing: an assessment
+// counts only as an assess transaction.
+const retiredTeacherReviewGuidance = "An assessment is an on-chain transaction. " +
+	"Build it with 'andamio teacher assessment build', then sign and submit it " +
+	"with 'andamio tx sign' and 'andamio tx submit'."
 
 // retiredCommands is the single source of truth for what was retired.
 //
-// Two groups and their fifteen subcommands, matching what
-// cmd/andamio/course_student.go and cmd/andamio/project_contributor.go
-// registered before they were deleted. The group entries matter as much as the
-// leaves: without them, `andamio course student` alone would fall through to
-// cobra's unknown-command error instead of explaining itself.
+// The group entries matter as much as the leaves: without them, `andamio
+// course student` alone would fall through to cobra's unknown-command error
+// instead of explaining itself.
 var retiredCommands = []retiredCommand{
 	// course student — removed in 1.0 (issue #129)
-	{Path: "course student", Guidance: retiredAppGuidance},
-	{Path: "course student courses", Guidance: retiredAppGuidance},
-	{Path: "course student credentials", Guidance: retiredAppGuidance},
-	{Path: "course student commitments", Guidance: retiredAppGuidance},
-	{Path: "course student commitment", Guidance: retiredAppGuidance},
-	{Path: "course student create", Guidance: retiredAppGuidance},
-	{Path: "course student submit", Guidance: retiredAppGuidance},
-	{Path: "course student update", Guidance: retiredAppGuidance},
-	{Path: "course student leave", Guidance: retiredAppGuidance},
-	{Path: "course student claim", Guidance: retiredAppGuidance},
+	{Path: "course student", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "course student courses", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "course student credentials", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "course student commitments", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "course student commitment", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "course student create", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "course student submit", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "course student update", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "course student leave", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "course student claim", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
 
 	// project contributor — removed in 1.0 (issue #129)
-	{Path: "project contributor", Guidance: retiredAppGuidance},
-	{Path: "project contributor list", Guidance: retiredAppGuidance},
-	{Path: "project contributor commitments", Guidance: retiredAppGuidance},
-	{Path: "project contributor commitment", Guidance: retiredAppGuidance},
-	{Path: "project contributor commit", Guidance: retiredAppGuidance},
-	{Path: "project contributor update", Guidance: retiredAppGuidance},
-	{Path: "project contributor delete", Guidance: retiredAppGuidance},
+	{Path: "project contributor", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "project contributor list", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "project contributor commitments", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "project contributor commitment", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "project contributor commit", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "project contributor update", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+	{Path: "project contributor delete", Guidance: retiredAppGuidance, RemovedIn: "1.0"},
+
+	// course teacher review called a gateway route that records nothing, yet
+	// reported the commitment as reviewed (issue #177).
+	{Path: "course teacher review", Guidance: retiredTeacherReviewGuidance},
 }
 
 func init() {
@@ -159,11 +173,13 @@ func registerRetiredCommands(root *cobra.Command, entries []retiredCommand) erro
 // envelope in main.go. A caller that asked for JSON gets JSON, even when the
 // answer is "this command is gone".
 //
-// The stub deliberately does not inherit an auth PersistentPreRunE. The groups
-// this replaces both gated on jwtAuthPreRunE, and inheriting that would greet an
+// The stub must not run an auth PersistentPreRunE. A retired command can sit
+// under a live group gated on jwtAuthPreRunE (`course teacher review` does),
+// and cobra runs the nearest ancestor's hook, which would greet an
 // unauthenticated caller with "not authenticated. Run 'andamio user login'
 // first" — technically true, entirely unhelpful, and not the message issue #123
-// asks for.
+// asks for. So the stub defines its own hook that runs only the root's, which
+// applies --output.
 func newRetiredCommand(use string, entry retiredCommand) *cobra.Command {
 	return &cobra.Command{
 		Use:    use,
@@ -172,10 +188,17 @@ func newRetiredCommand(use string, entry retiredCommand) *cobra.Command {
 		FParseErrWhitelist: cobra.FParseErrWhitelist{
 			UnknownFlags: true,
 		},
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if hook := cmd.Root().PersistentPreRunE; hook != nil {
+				return hook(cmd, args)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return &apierr.RemovedCommandError{
-				Command:  entry.Path,
-				Guidance: entry.Guidance,
+				Command:   entry.Path,
+				Guidance:  entry.Guidance,
+				RemovedIn: entry.RemovedIn,
 			}
 		},
 	}

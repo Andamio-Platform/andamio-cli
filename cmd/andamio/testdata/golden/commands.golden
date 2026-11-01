@@ -123,10 +123,6 @@ name: course-id | shorthand:  | type: string
 name: module-code | shorthand:  | type: string
 name: slt-hash | shorthand:  | type: string
 andamio course teacher review
-name: course-id | shorthand:  | type: string
-name: decision | shorthand:  | type: string
-name: module-code | shorthand:  | type: string
-name: participant-alias | shorthand:  | type: string
 andamio course teacher update-module-status
 name: course-id | shorthand:  | type: string
 name: module-code | shorthand:  | type: string

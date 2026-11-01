@@ -56,7 +56,7 @@ type RegisterModuleEnvelope struct {
 	Response     map[string]any `json:"response"`
 }
 
-// courseTeacherCmd is the nested "course teacher" subgroup for module lifecycle and reviews.
+// courseTeacherCmd is the nested "course teacher" subgroup for module lifecycle and commitment listing.
 // The existing top-level "teacher" command stays as-is — both work.
 var courseTeacherCmd = &cobra.Command{
 	Use:               "teacher",
@@ -113,17 +113,6 @@ Examples:
 	RunE: runCourseTeacherUpdateModuleStatus,
 }
 
-var courseTeacherReviewCmd = &cobra.Command{
-	Use:   "review",
-	Short: "Review a student assignment commitment",
-	Long: `Review a student's assignment submission. Accept or refuse.
-
-Examples:
-  andamio course teacher review --course-id <id> --module-code 101 --participant-alias student1 --decision accept
-  andamio course teacher review --course-id <id> --module-code 101 --participant-alias student1 --decision refuse`,
-	RunE: runCourseTeacherReview,
-}
-
 var courseTeacherCommitmentsCmd = &cobra.Command{
 	Use:   "commitments",
 	Short: "List pending assignment reviews",
@@ -140,7 +129,6 @@ func init() {
 	courseTeacherCmd.AddCommand(courseTeacherPublishModuleCmd)
 	courseTeacherCmd.AddCommand(courseTeacherDeleteModuleCmd)
 	courseTeacherCmd.AddCommand(courseTeacherUpdateModuleStatusCmd)
-	courseTeacherCmd.AddCommand(courseTeacherReviewCmd)
 	courseTeacherCmd.AddCommand(courseTeacherCommitmentsCmd)
 
 	// register-module has an extra required flag (slt-hash)
@@ -170,16 +158,6 @@ func init() {
 	courseTeacherUpdateModuleStatusCmd.Flags().String("status", "", "New status: DRAFT or APPROVED (required)")
 	courseTeacherUpdateModuleStatusCmd.MarkFlagRequired("status")
 	courseTeacherUpdateModuleStatusCmd.Flags().String("slt-hash", "", "SLT hash (required when status is APPROVED)")
-
-	// review flags
-	courseTeacherReviewCmd.Flags().String("course-id", "", "Course ID (required)")
-	courseTeacherReviewCmd.MarkFlagRequired("course-id")
-	courseTeacherReviewCmd.Flags().String("module-code", "", "Module code (required)")
-	courseTeacherReviewCmd.MarkFlagRequired("module-code")
-	courseTeacherReviewCmd.Flags().String("participant-alias", "", "Student alias (required)")
-	courseTeacherReviewCmd.MarkFlagRequired("participant-alias")
-	courseTeacherReviewCmd.Flags().String("decision", "", "Review decision: accept or refuse (required)")
-	courseTeacherReviewCmd.MarkFlagRequired("decision")
 
 	// commitments flags
 	courseTeacherCommitmentsCmd.Flags().String("course-id", "", "Course ID (required)")
@@ -654,47 +632,6 @@ func postUpdateModuleStatus(ctx context.Context, c *client.Client, courseID, mod
 		return nil, err
 	}
 	return resp, nil
-}
-
-func runCourseTeacherReview(cmd *cobra.Command, args []string) error {
-	courseID, _ := cmd.Flags().GetString("course-id")
-	moduleCode, _ := cmd.Flags().GetString("module-code")
-	participantAlias, _ := cmd.Flags().GetString("participant-alias")
-	decision, _ := cmd.Flags().GetString("decision")
-	isJSON := output.GetFormat() == output.FormatJSON
-
-	if decision != "accept" && decision != "refuse" {
-		return fmt.Errorf("--decision must be 'accept' or 'refuse', got %q", decision)
-	}
-
-	payload := map[string]interface{}{
-		"course_id":          courseID,
-		"course_module_code": moduleCode,
-		"participant_alias":  participantAlias,
-		"decision":           decision,
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-
-	if !isJSON {
-		fmt.Fprintf(os.Stderr, "Reviewing %s (module %s): %s\n", participantAlias, moduleCode, decision)
-	}
-
-	c := client.New(cfg)
-	var resp map[string]interface{}
-	if err := c.Post(cmd.Context(), "/api/v2/course/teacher/assignment-commitment/review", payload, &resp); err != nil {
-		return fmt.Errorf("failed to review commitment: %w", err)
-	}
-
-	if isJSON {
-		return output.PrintJSON(resp)
-	}
-
-	fmt.Fprintf(os.Stderr, "Commitment reviewed: %s.\n", decision)
-	return nil
 }
 
 func runCourseTeacherCommitments(cmd *cobra.Command, args []string) error {

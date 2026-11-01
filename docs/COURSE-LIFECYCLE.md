@@ -245,14 +245,16 @@ Validation enforces the union of the two apps' rules (`src/lib/quiz/quiz-envelop
 Assignment commitments track a student's progress through a module. They use different status names and transitions from project task commitments.
 
 ```
-AWAITING_SUBMISSION → PENDING_TX_COMMIT → SUBMITTED
-                                              → PENDING_TX_ASSESS → ACCEPTED / REFUSED
-                                              → PENDING_TX_LEAVE  → LEFT
-ACCEPTED → PENDING_TX_CLAIM → CREDENTIAL_CLAIMED
-REFUSED  → PENDING_TX_COMMIT → SUBMITTED  (resubmit via new commit TX)
+AWAITING_SUBMISSION → SUBMITTED              (commit TX)
+                      SUBMITTED → ACCEPTED / REFUSED  (assess TX)
+                      SUBMITTED → LEFT                (leave TX)
+ACCEPTED → CREDENTIAL_CLAIMED                (claim TX)
+REFUSED  → SUBMITTED                         (resubmit via new commit TX)
 ```
 
-**Key difference from project tasks:** Assignments have **no `PENDING_TX_SUBMIT` status**. On-chain, commit and submit use the same redeemer. Evidence resubmission requires a full new commit TX through `PENDING_TX_COMMIT`, not a separate update TX.
+The gateway reads the status from chain, so it changes once the transaction is on chain. There are no pending states. When the chain read fails, `commitment_status` and `assignment_outcome` are absent, meaning unknown: read the commitment again.
+
+**Key difference from project tasks:** Assignments have **no separate evidence-update TX**. On-chain, commit and submit use the same redeemer, so evidence resubmission is a full new commit TX.
 
 Terminal states (no further transitions):
 - **CREDENTIAL_CLAIMED** — credential NFT claimed by student
@@ -362,21 +364,9 @@ andamio tx run /v2/tx/course/teacher/assignments/assess \
   --tx-type assessment_assess
 ```
 
-### Off-chain review
-
-To record a decision in the database without an on-chain transaction:
-
-```bash
-andamio course teacher review \
-  --course-id <course-id> \
-  --module-code 101 \
-  --participant-alias <student-alias> \
-  --decision accept
-```
-
-After you accept, the learner claims their credential in the app. The
-commitment reaches `CREDENTIAL_CLAIMED` on its own; nothing further is required
-from you.
+The assess transaction is the only way to record a decision. Once it is on
+chain, an accepted learner claims their credential in the app. The commitment
+reaches `CREDENTIAL_CLAIMED` on its own; nothing further is required from you.
 
 ## Verifying Hashes
 

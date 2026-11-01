@@ -196,22 +196,28 @@ type NetworkError struct {
 func (e *NetworkError) Error() string { return e.Message }
 func (e *NetworkError) Unwrap() error { return e.Err }
 
-// RemovedCommandError is returned when a caller invokes a command that was
-// retired in Andamio CLI 1.0. main.go maps this to exit code 4.
+// RemovedCommandError is returned when a caller invokes a retired command.
+// main.go maps this to exit code 4.
 //
 // This is not an "unknown command" — the CLI knows exactly what was asked for
 // and is declining to do it because the operation moved elsewhere. Command
 // carries the full retired path (e.g. "course student submit") and Guidance
-// names where the operation lives now. Both are populated from the single
-// registry in cmd/andamio/retired.go so every retired command explains itself
-// the same way.
+// names where the operation lives now. RemovedIn names the release that
+// removed it, when the message should say so. All three are populated from the
+// single registry in cmd/andamio/retired.go so every retired command explains
+// itself the same way.
 type RemovedCommandError struct {
-	Command  string
-	Guidance string
+	Command   string
+	Guidance  string
+	RemovedIn string
 }
 
 func (e *RemovedCommandError) Error() string {
-	return "'andamio " + e.Command + "' was removed in Andamio CLI 1.0.\n" + e.Guidance
+	removed := "was removed from Andamio CLI."
+	if e.RemovedIn != "" {
+		removed = "was removed in Andamio CLI " + e.RemovedIn + "."
+	}
+	return "'andamio " + e.Command + "' " + removed + "\n" + e.Guidance
 }
 
 // VerifyError is returned when a write was accepted by the gateway but the
