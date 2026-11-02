@@ -52,8 +52,9 @@ func TestNewRetiredCommand_ReturnsTypedError(t *testing.T) {
 // than the generic one it replaces.
 func TestRemovedCommandError_MessageNamesCommandAndAlternative(t *testing.T) {
 	err := &apierr.RemovedCommandError{
-		Command:  "project contributor commit",
-		Guidance: retiredAppGuidance,
+		Command:   "project contributor commit",
+		Guidance:  retiredAppGuidance,
+		RemovedIn: "1.0",
 	}
 	msg := err.Error()
 
@@ -561,6 +562,42 @@ func TestRetiredCommand_EndToEnd_JSONMode(t *testing.T) {
 				t.Errorf("JSON error message does not name the alternative: %q", msg)
 			}
 		})
+	}
+}
+
+// `course teacher review` is retired under a live group gated on
+// jwtAuthPreRunE. Without the stub's own PersistentPreRunE, cobra would run
+// that auth hook first and an unauthenticated caller (the isolated env has no
+// credentials) would get exit 3 "not authenticated" instead of the removal.
+// The JSON case checks the stub still applies the root's --output handling.
+func TestRetiredCommand_UnderAuthGatedGroup_SkipsAuth(t *testing.T) {
+	bin := buildTestBinary(t)
+	args := []string{"course", "teacher", "review", "--course-id", "c", "--module-code", "101",
+		"--participant-alias", "s", "--decision", "accept"}
+
+	stdout, stderr, code := runRetired(t, bin, args...)
+	if code != 4 {
+		t.Fatalf("exit code = %d, want 4 (removed command)\nstderr: %s", code, stderr)
+	}
+	for _, want := range []string{"'andamio course teacher review' was removed from Andamio CLI.", "teacher assessment build"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+	if stdout != "" {
+		t.Errorf("retired command wrote to stdout (%q); errors belong on stderr", stdout)
+	}
+
+	stdout, _, code = runRetired(t, bin, append(args, "--output", "json")...)
+	if code != 4 {
+		t.Errorf("JSON mode exit code = %d, want 4", code)
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(stdout), &parsed); err != nil {
+		t.Fatalf("--output json did not emit JSON on stdout: %v\nraw: %q", err, stdout)
+	}
+	if parsed["kind"] != "removed_command" {
+		t.Errorf("kind = %q, want removed_command", parsed["kind"])
 	}
 }
 

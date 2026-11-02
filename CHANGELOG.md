@@ -10,6 +10,11 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 - **Course module help and docs follow Andamio API 2.6.0.** A module's status is `DRAFT`, `APPROVED` or `ON_CHAIN`, and 2.6.0 reads `ON_CHAIN` from chain instead of storing it. `docs/COURSE-LIFECYCLE.md` drops the step that set `PENDING_TX` before minting, which 2.6.0 refuses, and the README stops resetting on-chain modules to `DRAFT` before re-import, which 2.6.0 also refuses. `register-module` now treats a `PENDING_TX` module as an unexpected status. Only a gateway older than 2.6.0 can report one.
 - **`course owner register --tx-hash` is ignored.** Andamio API 2.6.0 no longer takes `tx_hash` on the register request, so the CLI stops sending it. The flag is still accepted, so scripts that pass it keep working until it is removed in 2.0.0.
+- **Course commitment statuses are read from chain.** `teacher assignments list` help and `docs/COURSE-LIFECYCLE.md` stop listing `PENDING_TX_*` course statuses, which Andamio API 2.6.0 no longer returns.
+
+### Removed
+
+- **`course teacher review` is removed, outside a major version.** It exits 4 (`kind: removed_command`) and points at `teacher assessment build`, `tx sign` and `tx submit`. The gateway route it called records nothing, but the command reported the commitment as reviewed and exited 0. A script relying on it was already failing silently, so it now fails loudly. A course assessment is recorded only by the assess transaction.
 
 ### Deprecated
 

@@ -283,20 +283,17 @@ andamio tx run /v2/tx/course/student/assignment/commit \
   --body '{"alias":"learner","course_id":"<id>","slt_hash":"<hash-101>","assignment_info":"module 1 submission"}' \
   --skey ~/.andamio/wallet/learner/payment.skey --tx-type assignment_submit --instance-id <course-id>
 
-# Teacher: off-chain review record (distinct from the on-chain assess tx below)
-andamio course teacher review --course-id <id> --module-code 101 \
-  --participant-alias learner --decision accept
-
-# Teacher: the actual on-chain assessment tx. Build-only first, so the unsigned tx + the
-# echoed decision set can be inspected before anything gets signed (this envelope pairing is
-# the whole point of `assessment build` over `tx run` directly — see teacher_assessment.go's
-# own doc comment on why this exists post-1.0).
+# Teacher: the on-chain assessment tx, the only way to record a decision.
+# Build-only first, so the unsigned tx + the echoed decision set can be
+# inspected before anything gets signed (this envelope pairing is the whole
+# point of `assessment build` over `tx run` directly — see
+# teacher_assessment.go's own doc comment on why this exists post-1.0).
 andamio teacher assessment build --course-id <id> --alias teacher \
   --decision learner=accept --output json > assess-101.json
 andamio tx sign --tx "$(jq -r .unsigned_tx assess-101.json)" --skey .../teacher/payment.skey
 andamio tx submit --tx <signed-tx>
 
-# Repeat commit + review + assess for module 102 (slt_hash-102)
+# Repeat commit + assess for module 102 (slt_hash-102)
 
 # Learner claims the course credential — the route `course student claim` used to wrap.
 andamio tx run /v2/tx/course/student/credential/claim \

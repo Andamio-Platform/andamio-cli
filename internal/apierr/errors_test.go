@@ -157,9 +157,21 @@ func TestTierLimitError_Message(t *testing.T) {
 }
 
 func TestRemovedCommandError_Message(t *testing.T) {
-	err := &RemovedCommandError{Command: "course student submit", Guidance: "Use the app."}
-	want := "'andamio course student submit' was removed in Andamio CLI 1.0.\nUse the app."
-	if err.Error() != want {
-		t.Errorf("Error() = %q, want %q", err.Error(), want)
+	cases := []struct {
+		name string
+		err  *RemovedCommandError
+		want string
+	}{
+		{"with release", &RemovedCommandError{Command: "course student submit", Guidance: "Use the app.", RemovedIn: "1.0"},
+			"'andamio course student submit' was removed in Andamio CLI 1.0.\nUse the app."},
+		{"without release", &RemovedCommandError{Command: "course teacher review", Guidance: "Build the TX."},
+			"'andamio course teacher review' was removed from Andamio CLI.\nBuild the TX."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.err.Error(); got != tc.want {
+				t.Errorf("Error() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
