@@ -74,8 +74,12 @@ type ExportResult struct {
 	Status     string   `json:"status"`
 	OutputDir  string   `json:"output_dir"`
 	Files      []string `json:"files"`
-	Images     int      `json:"images"`
-	SLTs       []string `json:"slts"`
+	// Titles maps a lesson, introduction or assignment file in Files to its
+	// title, so a script need not read the file's H1. Files with no title, and
+	// outline.md (its title is Title above), have no entry.
+	Titles map[string]string `json:"titles,omitempty"`
+	Images int               `json:"images"`
+	SLTs   []string          `json:"slts"`
 }
 
 func runCourseExport(cmd *cobra.Command, args []string) error {
@@ -152,6 +156,7 @@ func runCourseExport(cmd *cobra.Command, args []string) error {
 		Status:     moduleData.Status,
 		OutputDir:  outputDir,
 		Files:      result.Files,
+		Titles:     result.Titles,
 		Images:     result.Images,
 		SLTs:       sltTexts,
 	}
@@ -185,8 +190,8 @@ type ModuleData struct {
 	Title        string
 	Status       string
 	SLTs         []SLTData
-	Introduction map[string]interface{}
-	Assignment   map[string]interface{}
+	Introduction *exportContent
+	Assignment   *exportContent
 	ImageURLs    []string
 }
 
@@ -194,7 +199,18 @@ type ModuleData struct {
 type SLTData struct {
 	Index  int
 	Text   string
-	Lesson map[string]interface{}
+	Lesson *exportContent
+}
+
+// exportContent is one piece of module content on its way to Markdown: a
+// lesson, the introduction or the assignment. The gateway gives all three the
+// same shape (LessonV2Output, IntroductionV2Output, AssignmentV2Output in the
+// public spec); these are the fields export writes to disk. description and
+// image_url are not exported; import keeps the stored values.
+type exportContent struct {
+	Title       string
+	ContentJSON map[string]interface{} // Tiptap doc; for an assignment it may be a quiz envelope
+	VideoURL    string                 // lessons only, written as frontmatter
 }
 
 var slugifyRe = regexp.MustCompile(`[^a-z0-9]+`)
@@ -308,10 +324,12 @@ func fetchModuleData(ctx context.Context, c *client.Client, courseID, moduleCode
 			}
 		}
 
+		// Every parsed SLT gets a lesson, even with no content: export then
+		// writes an empty lesson-N.md, as it always has.
 		data.SLTs[i] = SLTData{
 			Index:  sltIndex,
 			Text:   sltText,
-			Lesson: map[string]interface{}{"content_json": lessonContent, "title": lessonTitle, "video_url": lessonVideoURL},
+			Lesson: &exportContent{Title: lessonTitle, ContentJSON: lessonContent, VideoURL: lessonVideoURL},
 		}
 	}
 
@@ -319,15 +337,7 @@ func fetchModuleData(ctx context.Context, c *client.Client, courseID, moduleCode
 	if intro, ok := moduleContent["introduction"].(map[string]interface{}); ok {
 		if contentJSON, ok := intro["content_json"].(map[string]interface{}); ok {
 			introTitle, _ := intro["title"].(string)
-			// Wrap in the structure convertContentToMarkdown expects
-			data.Introduction = map[string]interface{}{
-				"data": map[string]interface{}{
-					"content": map[string]interface{}{
-						"content_json": contentJSON,
-						"title":        introTitle,
-					},
-				},
-			}
+			data.Introduction = &exportContent{Title: introTitle, ContentJSON: contentJSON}
 		}
 	}
 
@@ -335,14 +345,7 @@ func fetchModuleData(ctx context.Context, c *client.Client, courseID, moduleCode
 	if assign, ok := moduleContent["assignment"].(map[string]interface{}); ok {
 		if contentJSON, ok := assign["content_json"].(map[string]interface{}); ok {
 			assignTitle, _ := assign["title"].(string)
-			data.Assignment = map[string]interface{}{
-				"data": map[string]interface{}{
-					"content": map[string]interface{}{
-						"content_json": contentJSON,
-						"title":        assignTitle,
-					},
-				},
-			}
+			data.Assignment = &exportContent{Title: assignTitle, ContentJSON: contentJSON}
 		}
 	}
 
@@ -352,7 +355,21 @@ func fetchModuleData(ctx context.Context, c *client.Client, courseID, moduleCode
 // WriteResult tracks what was written during export
 type WriteResult struct {
 	Files  []string
+	Titles map[string]string
 	Images int
+}
+
+// addTitle records file's title, cleaned the same way as the H1 heading. An
+// empty title is left out, so Titles stays nil when nothing has one.
+func (r *WriteResult) addTitle(file, title string) {
+	title = sanitizeTitle(title)
+	if title == "" {
+		return
+	}
+	if r.Titles == nil {
+		r.Titles = map[string]string{}
+	}
+	r.Titles[file] = title
 }
 
 func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, error) {
@@ -395,18 +412,20 @@ func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, erro
 			return nil, fmt.Errorf("failed to write %s: %w", filename, err)
 		}
 		result.Files = append(result.Files, filename)
+		result.addTitle(filename, slt.Lesson.Title)
 	}
 
 	// Write introduction.md if present
 	if data.Introduction != nil {
 		introPath := filepath.Join(absDir, "introduction.md")
-		introContent, urls := convertContentToMarkdown(data.Introduction)
+		introContent, urls := renderContentMarkdown(data.Introduction.ContentJSON, data.Introduction.Title)
 		imageURLs = append(imageURLs, urls...)
 
 		if err := writeFileAtomic(introPath, []byte(introContent)); err != nil {
 			return nil, fmt.Errorf("failed to write introduction.md: %w", err)
 		}
 		result.Files = append(result.Files, "introduction.md")
+		result.addTitle("introduction.md", data.Introduction.Title)
 	}
 
 	// Write the assignment if present. A Tiptap doc becomes assignment.md;
@@ -421,7 +440,7 @@ func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, erro
 	// files go, or the next import would republish it.
 	var wroteAssignment string
 	if data.Assignment != nil {
-		contentJSON, title := unwrapContent(data.Assignment)
+		contentJSON, title := data.Assignment.ContentJSON, data.Assignment.Title
 		if contentJSON != nil && quiz.Classify(contentJSON) != quiz.Doc {
 			pretty, err := json.MarshalIndent(contentJSON, "", "  ")
 			if err != nil {
@@ -441,6 +460,7 @@ func writeCompiledModule(outputDir string, data *ModuleData) (*WriteResult, erro
 			wroteAssignment = "assignment.md"
 		}
 		result.Files = append(result.Files, wroteAssignment)
+		result.addTitle(wroteAssignment, title)
 	}
 	for _, name := range []string{"assignment.md", "assignment.quiz.json"} {
 		if name == wroteAssignment {
@@ -534,43 +554,17 @@ func generateOutline(data *ModuleData) string {
 	return buf.String()
 }
 
-func convertLessonToMarkdown(lesson map[string]interface{}) (string, []string) {
-	// Extract content_json from lesson response
-	var contentJSON map[string]interface{}
-
-	// Try direct content_json (from embedded SLT response)
-	if cj, ok := lesson["content_json"].(map[string]interface{}); ok {
-		contentJSON = cj
-	} else if data, ok := lesson["data"].(map[string]interface{}); ok {
-		// Try nested structure (from separate lesson API call)
-		if lessonData, ok := data["lesson"].(map[string]interface{}); ok {
-			if cj, ok := lessonData["content_json"].(map[string]interface{}); ok {
-				contentJSON = cj
-			}
-		}
-	}
-
-	// A video_url becomes the frontmatter block import reads back. It is built
-	// before the no-content return so a lesson with a video and no body still
-	// shows the video on disk.
+// convertLessonToMarkdown is renderContentMarkdown plus the lesson's
+// video_url frontmatter block, which import reads back. The block is written
+// even when the lesson has no body, so a video-only lesson still shows the
+// video on disk.
+func convertLessonToMarkdown(lesson *exportContent) (string, []string) {
 	var frontmatterBlock string
-	if videoURL, ok := lesson["video_url"].(string); ok {
-		if videoURL = strings.TrimSpace(videoURL); videoURL != "" {
-			frontmatterBlock = fmt.Sprintf("---\n%s: %q\n---\n\n", lessonVideoURLKey, videoURL)
-		}
+	if videoURL := strings.TrimSpace(lesson.VideoURL); videoURL != "" {
+		frontmatterBlock = fmt.Sprintf("---\n%s: %q\n---\n\n", lessonVideoURLKey, videoURL)
 	}
 
-	if contentJSON == nil {
-		return frontmatterBlock, nil
-	}
-
-	md, urls := tiptapToMarkdown(contentJSON)
-
-	// Prepend title as H1 (import expects this per format guide)
-	if title, ok := lesson["title"].(string); ok && title != "" {
-		md = "# " + sanitizeTitle(title) + "\n\n" + md
-	}
-
+	md, urls := renderContentMarkdown(lesson.ContentJSON, lesson.Title)
 	return frontmatterBlock + md, urls
 }
 
@@ -580,31 +574,6 @@ func sanitizeTitle(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
 	return strings.TrimSpace(s)
-}
-
-// unwrapContent pulls content_json and title out of the wrapped
-// introduction/assignment shape fetchModuleData builds:
-// { "data": { "content": { "content_json": {...}, "title": "..." } } }.
-// Falls back to a direct content_json on data in case the shape flattens.
-func unwrapContent(resp map[string]interface{}) (contentJSON map[string]interface{}, title string) {
-	data, ok := resp["data"].(map[string]interface{})
-	if !ok {
-		return nil, ""
-	}
-	if content, ok := data["content"].(map[string]interface{}); ok {
-		if cj, ok := content["content_json"].(map[string]interface{}); ok {
-			contentJSON = cj
-		}
-		if t, ok := content["title"].(string); ok {
-			title = t
-		}
-	}
-	if contentJSON == nil {
-		if cj, ok := data["content_json"].(map[string]interface{}); ok {
-			contentJSON = cj
-		}
-	}
-	return contentJSON, title
 }
 
 // removeIfExists deletes path when present and tolerates its absence. It
@@ -620,13 +589,9 @@ func removeIfExists(path string) (bool, error) {
 	return false, fmt.Errorf("failed to remove stale %s: %w", filepath.Base(path), err)
 }
 
-func convertContentToMarkdown(resp map[string]interface{}) (string, []string) {
-	contentJSON, title := unwrapContent(resp)
-	return renderContentMarkdown(contentJSON, title)
-}
-
-// renderContentMarkdown converts an already-unwrapped content_json to Markdown
-// with the title as an H1. A nil contentJSON renders nothing.
+// renderContentMarkdown converts content_json to Markdown with the title as an
+// H1. Lessons, the introduction and the assignment all go through it. A nil
+// contentJSON renders nothing.
 func renderContentMarkdown(contentJSON map[string]interface{}, title string) (string, []string) {
 	if contentJSON == nil {
 		return "", nil

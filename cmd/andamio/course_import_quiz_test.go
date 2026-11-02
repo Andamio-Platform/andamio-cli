@@ -181,7 +181,7 @@ func TestUpdateModuleContent_QuizPayloadPreservesMetadata(t *testing.T) {
 func TestExportImportRoundTrip_QuizIsServerNoOp(t *testing.T) {
 	dir := t.TempDir()
 	quiz := quizEnvelope()
-	if _, err := writeCompiledModule(dir, exportModuleData(wrapAssignment(quiz, "Module Quiz"))); err != nil {
+	if _, err := writeCompiledModule(dir, exportModuleData(&exportContent{ContentJSON: quiz, Title: "Module Quiz"})); err != nil {
 		t.Fatal(err)
 	}
 
