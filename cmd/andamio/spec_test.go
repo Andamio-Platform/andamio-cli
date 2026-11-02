@@ -46,8 +46,12 @@ func writeLocalSpec(t *testing.T, dir, body string, mtime time.Time) string {
 
 const specDocBody = `{"swagger":"2.0","info":{"title":"Andamio API Gateway","version":"2.5.0"},"paths":{"/v2/tx/types":{"get":{"summary":"List TX types"}}}}`
 
+// liveSpecRoute is the route the gateway serves the public spec at, spelled
+// out rather than taken from specDocPath so a wrong constant fails the tests.
+const liveSpecRoute = "/openapi/swagger.public.json"
+
 // specStub serves the OpenAPI document at the live gateway route and records
-// every path requested, so a regression back to the sunset route is visible as
+// every path requested, so a regression back to a removed route is visible as
 // a wrong path rather than only as a downstream failure.
 func specStub(t *testing.T) (url string, requested func() []string) {
 	t.Helper()
@@ -60,7 +64,7 @@ func specStub(t *testing.T) (url string, requested func() []string) {
 		seen = append(seen, r.URL.Path)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == specDocPath {
+		if r.URL.Path == liveSpecRoute {
 			_, _ = w.Write([]byte(specDocBody))
 			return
 		}

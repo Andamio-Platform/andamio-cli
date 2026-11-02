@@ -311,16 +311,17 @@ Supplies the `policy_id` / `asset_name` values for `project task create --token 
 ### spec — OpenAPI spec
 | Command | Endpoint | Auth | Description |
 |---------|----------|------|-------------|
-| `spec fetch` | `/openapi/swagger.json` | none | Download OpenAPI spec to openapi.json |
-| `spec paths [--filter <pattern>]` | local/remote | none | List API endpoints. Serves a local `openapi.json` when present and warns on stderr with its age (every output mode); falls back to `/openapi/swagger.json` |
+| `spec fetch` | `/openapi/swagger.public.json` | none | Download the public OpenAPI spec to openapi.json |
+| `spec paths [--filter <pattern>]` | local/remote | none | List API endpoints. Serves a local `openapi.json` when present and warns on stderr with its age (every output mode); falls back to `/openapi/swagger.public.json` |
 
 ## API
 
 - Base URLs: `https://preprod.api.andamio.io` (default), `https://mainnet.api.andamio.io`
-- Application paths start with `/api/v1/` or `/api/v2/`. The rendered OpenAPI
-  document is the one exception: it is served at `/openapi/swagger.json`, outside
-  the versioned prefixes (andamio-api#652 removed the previous
-  `/api/v1/docs/doc.json` on 2026-07-28).
+- Application paths start with `/api/v1/` or `/api/v2/`. The OpenAPI documents
+  are the one exception: they are served under `/openapi/`, outside the
+  versioned prefixes. The CLI reads the public spec, `/openapi/swagger.public.json`.
+  The gateway does not serve a full spec without authentication, so the
+  developer auth, developer key and billing routes are not listed in it.
 - Auth via `X-API-Key` header (read access) and/or `Authorization: Bearer <jwt>` (edit access)
 - OpenAPI spec: `andamio spec fetch` downloads to `openapi.json`
 
