@@ -6,6 +6,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Added
+
+- **`course export --output json` reports file titles.** A new `titles` field maps each lesson, introduction and assignment file in `files` to its title, so a script no longer has to read the file's heading. It includes a quiz assignment's title, which `assignment.quiz.json` has no heading for. Files without a title, and `outline.md` (its title is the top-level `title`), have no entry, and the field is left out when nothing has a title. `files` is unchanged.
+
 ### Changed
 
 - **Course module help and docs follow Andamio API 2.6.0.** A module's status is `DRAFT`, `APPROVED` or `ON_CHAIN`, and 2.6.0 reads `ON_CHAIN` from chain instead of storing it. `docs/COURSE-LIFECYCLE.md` drops the step that set `PENDING_TX` before minting, which 2.6.0 refuses, and the README stops resetting on-chain modules to `DRAFT` before re-import, which 2.6.0 also refuses. `register-module` now treats a `PENDING_TX` module as an unexpected status. Only a gateway older than 2.6.0 can report one.

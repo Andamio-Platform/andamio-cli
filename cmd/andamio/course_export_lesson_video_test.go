@@ -22,13 +22,13 @@ func lessonDoc(text string) map[string]interface{} {
 	}
 }
 
-func exportLessonModule(lesson map[string]interface{}) *ModuleData {
+func exportLessonModule(lesson *exportContent) *ModuleData {
 	data := exportModuleData(nil)
 	data.SLTs[0].Lesson = lesson
 	return data
 }
 
-func exportedLesson(t *testing.T, lesson map[string]interface{}) (dir, content string) {
+func exportedLesson(t *testing.T, lesson *exportContent) (dir, content string) {
 	t.Helper()
 	dir = t.TempDir()
 	if _, err := writeCompiledModule(dir, exportLessonModule(lesson)); err != nil {
@@ -43,8 +43,8 @@ func exportedLesson(t *testing.T, lesson map[string]interface{}) (dir, content s
 
 // R7: a lesson with a video gets a frontmatter block ahead of its H1.
 func TestExportLesson_WritesVideoURLFrontmatter(t *testing.T) {
-	_, got := exportedLesson(t, map[string]interface{}{
-		"title": "Intro", "content_json": lessonDoc("Hello."), "video_url": lessonVideoNew,
+	_, got := exportedLesson(t, &exportContent{
+		Title: "Intro", ContentJSON: lessonDoc("Hello."), VideoURL: lessonVideoNew,
 	})
 	want := "---\nvideo_url: \"" + lessonVideoNew + "\"\n---\n\n# Intro\n\n"
 	if !strings.HasPrefix(got, want) {
@@ -54,12 +54,14 @@ func TestExportLesson_WritesVideoURLFrontmatter(t *testing.T) {
 
 // R7: without a video the file is what it was before the feature.
 func TestExportLesson_NoVideoURLIsUnchanged(t *testing.T) {
-	_, plain := exportedLesson(t, map[string]interface{}{"title": "Intro", "content_json": lessonDoc("Hello.")})
+	_, plain := exportedLesson(t, &exportContent{Title: "Intro", ContentJSON: lessonDoc("Hello.")})
 	if strings.Contains(plain, "---") {
 		t.Fatalf("lesson-1.md = %q, want no frontmatter", plain)
 	}
-	for name, v := range map[string]interface{}{"empty": "", "null": nil, "whitespace": "  "} {
-		_, got := exportedLesson(t, map[string]interface{}{"title": "Intro", "content_json": lessonDoc("Hello."), "video_url": v})
+	// A null video_url from the gateway becomes "" in fetchModuleData; that
+	// case is covered in TestFetchModuleData_CarriesLessonVideoURL.
+	for name, v := range map[string]string{"empty": "", "whitespace": "  "} {
+		_, got := exportedLesson(t, &exportContent{Title: "Intro", ContentJSON: lessonDoc("Hello."), VideoURL: v})
 		if got != plain {
 			t.Errorf("%s video_url: lesson-1.md = %q, want %q", name, got, plain)
 		}
@@ -68,7 +70,7 @@ func TestExportLesson_NoVideoURLIsUnchanged(t *testing.T) {
 
 // A lesson that has a video and no body still shows the video on disk.
 func TestExportLesson_VideoURLWithoutContent(t *testing.T) {
-	dir, got := exportedLesson(t, map[string]interface{}{"title": "", "content_json": nil, "video_url": lessonVideoNew})
+	dir, got := exportedLesson(t, &exportContent{VideoURL: lessonVideoNew})
 	if !strings.Contains(got, "video_url: \""+lessonVideoNew+"\"") {
 		t.Errorf("lesson-1.md = %q, want the frontmatter block", got)
 	}
@@ -96,6 +98,7 @@ func TestFetchModuleData_CarriesLessonVideoURL(t *testing.T) {
 				},
 			},
 			map[string]interface{}{"slt_text": "Do another", "lesson": map[string]interface{}{"title": "Two", "content_json": lessonDoc("Hi.")}},
+			map[string]interface{}{"slt_text": "Do a third", "lesson": map[string]interface{}{"title": "Three", "content_json": lessonDoc("Yo."), "video_url": nil}},
 		},
 	}
 	body, err := json.Marshal(map[string]interface{}{"data": []interface{}{map[string]interface{}{"content": content}}})
@@ -121,6 +124,10 @@ func TestFetchModuleData_CarriesLessonVideoURL(t *testing.T) {
 	if strings.Contains(string(two), "video_url") {
 		t.Errorf("lesson-2.md = %q, want no frontmatter", two)
 	}
+	three, _ := os.ReadFile(filepath.Join(dir, "lesson-3.md"))
+	if strings.Contains(string(three), "video_url") || !strings.HasPrefix(string(three), "# Three") {
+		t.Errorf("lesson-3.md = %q, want a null video_url to give no frontmatter", three)
+	}
 }
 
 // R8: export then import sends the video the gateway already holds, for
@@ -132,8 +139,8 @@ func TestExportImportRoundTrip_LessonVideoURL(t *testing.T) {
 		"https://example.com/a: b\"c'd #e",
 	} {
 		t.Run(videoURL, func(t *testing.T) {
-			dir, _ := exportedLesson(t, map[string]interface{}{
-				"title": "Intro", "content_json": lessonDoc("Hello."), "video_url": videoURL,
+			dir, _ := exportedLesson(t, &exportContent{
+				Title: "Intro", ContentJSON: lessonDoc("Hello."), VideoURL: videoURL,
 			})
 			data, err := readCompiledModule(dir)
 			if err != nil {

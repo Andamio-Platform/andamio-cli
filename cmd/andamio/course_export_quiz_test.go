@@ -41,19 +41,7 @@ func quizEnvelope() map[string]interface{} {
 	}
 }
 
-// wrapAssignment mirrors the shape fetchModuleData hands writeCompiledModule.
-func wrapAssignment(contentJSON map[string]interface{}, title string) map[string]interface{} {
-	return map[string]interface{}{
-		"data": map[string]interface{}{
-			"content": map[string]interface{}{
-				"content_json": contentJSON,
-				"title":        title,
-			},
-		},
-	}
-}
-
-func exportModuleData(assignment map[string]interface{}) *ModuleData {
+func exportModuleData(assignment *exportContent) *ModuleData {
 	return &ModuleData{
 		CourseID:   "course-1",
 		CourseSlug: "course",
@@ -85,7 +73,7 @@ func TestWriteCompiledModule_QuizAssignmentWritesQuizJSON(t *testing.T) {
 	dir := t.TempDir()
 	quiz := quizEnvelope()
 
-	result, err := writeCompiledModule(dir, exportModuleData(wrapAssignment(quiz, "Module Quiz")))
+	result, err := writeCompiledModule(dir, exportModuleData(&exportContent{ContentJSON: quiz, Title: "Module Quiz"}))
 	if err != nil {
 		t.Fatalf("writeCompiledModule: %v", err)
 	}
@@ -129,7 +117,7 @@ func TestWriteCompiledModule_DocAssignmentUnchanged(t *testing.T) {
 		},
 	}
 
-	result, err := writeCompiledModule(dir, exportModuleData(wrapAssignment(doc, "Essay")))
+	result, err := writeCompiledModule(dir, exportModuleData(&exportContent{ContentJSON: doc, Title: "Essay"}))
 	if err != nil {
 		t.Fatalf("writeCompiledModule: %v", err)
 	}
@@ -181,7 +169,7 @@ func TestWriteCompiledModule_NoAssignmentRemovesStaleFiles(t *testing.T) {
 // lossy (an H1-only file), so it takes the verbatim path like any non-doc.
 func TestWriteCompiledModule_TypelessObjectExportsVerbatim(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := writeCompiledModule(dir, exportModuleData(wrapAssignment(map[string]interface{}{"foo": "bar"}, "Odd"))); err != nil {
+	if _, err := writeCompiledModule(dir, exportModuleData(&exportContent{ContentJSON: map[string]interface{}{"foo": "bar"}, Title: "Odd"})); err != nil {
 		t.Fatal(err)
 	}
 	if !fileExists(t, filepath.Join(dir, "assignment.quiz.json")) || fileExists(t, filepath.Join(dir, "assignment.md")) {
@@ -200,7 +188,7 @@ func TestWriteCompiledModule_ReexportRemovesStaleCounterpart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := writeCompiledModule(dir, exportModuleData(wrapAssignment(quizEnvelope(), "Quiz"))); err != nil {
+	if _, err := writeCompiledModule(dir, exportModuleData(&exportContent{ContentJSON: quizEnvelope(), Title: "Quiz"})); err != nil {
 		t.Fatalf("writeCompiledModule: %v", err)
 	}
 	if fileExists(t, stale) {
@@ -212,7 +200,7 @@ func TestWriteCompiledModule_ReexportRemovesStaleCounterpart(t *testing.T) {
 
 	// Reverse transition: quiz back to doc removes the stale quiz file.
 	doc := map[string]interface{}{"type": "doc", "content": []interface{}{}}
-	if _, err := writeCompiledModule(dir, exportModuleData(wrapAssignment(doc, "Essay"))); err != nil {
+	if _, err := writeCompiledModule(dir, exportModuleData(&exportContent{ContentJSON: doc, Title: "Essay"})); err != nil {
 		t.Fatalf("writeCompiledModule: %v", err)
 	}
 	if fileExists(t, filepath.Join(dir, "assignment.quiz.json")) {
