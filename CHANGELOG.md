@@ -6,6 +6,8 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-04
+
 ### Added
 
 - **`course export --output json` reports file titles.** A new `titles` field maps each lesson, introduction and assignment file in `files` to its title, so a script no longer has to read the file's heading. It includes a quiz assignment's title, which `assignment.quiz.json` has no heading for. Files without a title, and `outline.md` (its title is the top-level `title`), have no entry, and the field is left out when nothing has a title. `files` is unchanged.
