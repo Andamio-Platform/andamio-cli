@@ -47,6 +47,9 @@ homebrew_casks:
       owner: Andamio-Platform
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      # The tap's main requires a PR, so each release opens one instead of pushing.
+      pull_request:
+        enabled: true
     # Skip publishing the cask for prerelease tags (e.g. vX.Y.Z-rc.1) so a
     # prerelease never becomes the `brew install` default and validation/test
     # tags can't push a broken cask to the public tap. Real vX.Y.Z tags publish
