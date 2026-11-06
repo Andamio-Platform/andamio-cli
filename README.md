@@ -44,6 +44,8 @@ sudo mv andamio /usr/local/bin/
 
 Available platforms: `darwin_arm64`, `darwin_amd64`, `linux_amd64`, `linux_arm64`, `windows_amd64`, `windows_arm64`.
 
+**macOS:** the binaries are not signed or notarized. A binary downloaded through a browser is blocked by Gatekeeper on first run. Install with Homebrew to avoid this, since the cask clears the quarantine flag.
+
 ### Build from source
 
 Requires Go 1.21+.
