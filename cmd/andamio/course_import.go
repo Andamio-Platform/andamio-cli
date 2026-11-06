@@ -1503,32 +1503,15 @@ func fetchExistingModule(ctx context.Context, c *client.Client, courseID, module
 	return nil, fmt.Errorf("%w: '%s' in course '%s'", errModuleNotFound, moduleCode, courseID)
 }
 
-// onChainOnlyWarningPrefixes are the lowercased starts of the merged-read
-// warnings that mean only the on-chain side (Andamioscan) was missing, so the
-// db list is still complete. The first is the gateway's wording since
-// andamio-api#893 (internal/orchestration/warnings.go, WarnOnChainMissing and
-// its variants). The second is the wording before #893, kept for gateways
-// that have not deployed it.
-var onChainOnlyWarningPrefixes = []string{
-	"on-chain state not available",
-	"andamioscan unavailable",
-}
-
 // warningHidesDBContent reports whether a merged-read meta.warning means the
 // db-api side — the only source of module content — was unavailable. Only the
-// on-chain-only warnings in onChainOnlyWarningPrefixes leave the db list
-// authoritative. Anything else, including the off-chain warnings ("Off-chain
+// on-chain-only warning ("On-chain state not available, ...") leaves the db
+// list authoritative. Anything else, including the off-chain warnings ("Off-chain
 // content not available, ...", formerly "DB API unavailable, ...") and text
 // this CLI does not recognise, is treated as hiding content, the conservative
 // reading.
 func warningHidesDBContent(warning string) bool {
-	w := strings.ToLower(strings.TrimSpace(warning))
-	for _, p := range onChainOnlyWarningPrefixes {
-		if strings.HasPrefix(w, p) {
-			return false
-		}
-	}
-	return true
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(warning)), "on-chain state not available")
 }
 
 func updateModuleContent(ctx context.Context, c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool, dryRun bool, showPayload bool) (map[string]interface{}, error) {
