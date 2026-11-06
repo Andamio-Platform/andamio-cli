@@ -20,7 +20,7 @@ The CLI is built to be driven by programs as well as people. Every list and get 
 
 ## Installation
 
-### Homebrew (macOS)
+### Homebrew (macOS and Linux)
 
 ```bash
 brew install Andamio-Platform/tap/andamio-cli
@@ -33,8 +33,8 @@ Prebuilt binaries for macOS, Linux, and Windows are available on the [Releases p
 Download the archive for your platform, extract it, and move the binary to your PATH:
 
 ```bash
-# Example: macOS Apple Silicon — replace VERSION with the latest release
-VERSION=1.0.0
+# Example: macOS Apple Silicon. VERSION resolves to the latest release.
+VERSION=$(curl -sLo /dev/null -w '%{url_effective}' https://github.com/Andamio-Platform/andamio-cli/releases/latest | sed 's|.*/v||')
 curl -sLO "https://github.com/Andamio-Platform/andamio-cli/releases/download/v${VERSION}/andamio_${VERSION}_darwin_arm64.tar.gz"
 curl -sLO "https://github.com/Andamio-Platform/andamio-cli/releases/download/v${VERSION}/checksums.txt"
 shasum -a 256 --check --ignore-missing checksums.txt
