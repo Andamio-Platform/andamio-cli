@@ -55,6 +55,13 @@ jobs:
             exit 1
           fi
 
+      # The release no longer runs `go mod tidy`, so an untidy module has to
+      # fail here instead of being fixed silently at release time.
+      - name: go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
       - name: go vet
         run: go vet ./...
 
