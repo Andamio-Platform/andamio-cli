@@ -1,14 +1,16 @@
 version: 2
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - main: ./cmd/andamio
     binary: andamio
+    # Reproducible builds: no build-machine paths, and every timestamp comes
+    # from the tagged commit rather than the wall clock, so building the same
+    # tag twice gives the same archives (cli#199 checks this).
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.CommitDate}}
     env:
       - CGO_ENABLED=0
     goos:
@@ -70,5 +72,9 @@ release:
   github:
     owner: Andamio-Platform
     name: andamio-cli
+  # draft: false still uploads into a draft and publishes at the end. GoReleaser
+  # 2.x always creates the release as a draft, uploads every asset, then
+  # publishes, which is what immutable releases require. Do not downgrade
+  # below the version pinned in release.yml without rechecking that.
   draft: false
   prerelease: auto
