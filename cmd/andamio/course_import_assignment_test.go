@@ -356,8 +356,8 @@ func TestImportAssignment_AndamioscanOnlyWarningStillPublishes(t *testing.T) {
 	quiz := quizEnvelope()
 	stub := &assignmentStub{
 		listBodies: []string{
-			listBody(t, docAssignment("Quiz"), "Andamioscan unavailable, showing database data only"),
-			listBody(t, map[string]interface{}{"title": "Quiz", "content_json": quiz}, "Andamioscan unavailable, showing database data only"),
+			listBody(t, docAssignment("Quiz"), "On-chain state not available, showing off-chain content only"),
+			listBody(t, map[string]interface{}{"title": "Quiz", "content_json": quiz}, "On-chain state not available, showing off-chain content only"),
 		},
 		listStatus: []int{http.StatusPartialContent, http.StatusPartialContent},
 	}
@@ -392,7 +392,7 @@ func TestImportAssignment_ModuleNotInListIsNotFound(t *testing.T) {
 // course import --create keeps working through such an outage.
 func TestImportAssignment_AndamioscanOnlyWarningMissingModuleIsNotFound(t *testing.T) {
 	stub := &assignmentStub{
-		listBodies: []string{`{"data":[{"content":{"course_module_code":"999","module_status":"DRAFT"}}],"meta":{"warning":"Andamioscan unavailable, showing DB data only"}}`},
+		listBodies: []string{`{"data":[{"content":{"course_module_code":"999","module_status":"DRAFT"}}],"meta":{"warning":"On-chain state not available, showing off-chain content only"}}`},
 		listStatus: []int{http.StatusPartialContent},
 	}
 	c, _ := stub.serve(t)

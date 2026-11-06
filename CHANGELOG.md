@@ -6,6 +6,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Fixed
+
+- **`course import --create` works again during an on-chain outage** (#186). The gateway reworded its merged-read warnings, so the warning sent when on-chain data is unavailable now reads "On-chain state not available, ...". The CLI only recognised the old "Andamioscan unavailable, ..." text, so it treated the new warning as possibly hiding off-chain content and stopped with the degraded-read error, even though the module list was complete. Off-chain warnings and unrecognised text still stop the import, as before.
+
 ## [1.3.0] - 2026-11-04
 
 ### Added
