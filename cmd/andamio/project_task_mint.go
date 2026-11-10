@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -246,6 +247,11 @@ func taskSourceFromItem(item map[string]interface{}) (mintTaskSource, bool) {
 		if idx, ok = numberField(content, "task_index"); !ok {
 			return mintTaskSource{}, false
 		}
+	}
+	// A task index is non-negative and fits an int on every platform; an
+	// out-of-range value from the gateway is unreadable, not truncated.
+	if idx < 0 || idx > math.MaxInt32 {
+		return mintTaskSource{}, false
 	}
 	src := mintTaskSource{Index: int(idx)}
 	src.Status, _ = item["task_status"].(string)

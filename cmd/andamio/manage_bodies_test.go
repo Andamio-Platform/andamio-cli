@@ -293,6 +293,14 @@ func TestTaskSourceFromItem_ReadsMergedTaskListItem(t *testing.T) {
 	}
 }
 
+func TestTaskSourceFromItem_RejectsOutOfRangeIndex(t *testing.T) {
+	for _, raw := range []interface{}{"-1", "2147483648", "9223372036854775807", float64(-5)} {
+		if _, ok := taskSourceFromItem(map[string]interface{}{"task_index": raw}); ok {
+			t.Errorf("task_index %v read as valid, want rejected", raw)
+		}
+	}
+}
+
 // --- Command level: the body that reaches the gateway's build endpoint. ---
 
 // manageStub serves the reads each command makes and records the first
