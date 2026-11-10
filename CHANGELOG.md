@@ -6,6 +6,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Added
+
+- **`course teacher mint-modules` and `project task mint` build the manage transaction bodies** (#215). `tx run` for `modules_manage` and `tasks_manage` needed a hand-written body. Name the modules by `--module-code` or the tasks by `--index`, and the command reads what was already imported and runs the same build, sign, submit, register and poll lifecycle as `tx run`. A module's SLTs go into the body exactly as its record holds them, so the minted module's hash is the `slt_hash` on its record and the README's `register-module` linking step is no longer needed after a normal publish. Every required key is sent, empty lists included. `--dry-run` prints the body and builds nothing. `project task mint` takes `--deposit-lovelace` and `--deposit-token` for `deposit_value`, which is empty by default. `tx run` with a hand-written body still works.
+
 ### Changed
 
 - **`built` in `andamio --version --output json` is now the commit date.** Release binaries take their timestamp from the tagged commit instead of the build clock, so building the same tag twice gives identical archives. The value is still RFC3339 UTC. Release archives also ship with build provenance, which `gh attestation verify` can check.
