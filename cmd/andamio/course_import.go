@@ -1504,13 +1504,14 @@ func fetchExistingModule(ctx context.Context, c *client.Client, courseID, module
 }
 
 // warningHidesDBContent reports whether a merged-read meta.warning means the
-// db-api side — the only source of module content — was unavailable. The
-// gateway's strings (andamio-api course_orchestrator.go) begin "DB API
-// unavailable, ..." or "Andamioscan unavailable, ...". Only the Andamioscan
-// form leaves the db list authoritative; unknown text is treated as hiding
-// content, the conservative reading.
+// db-api side — the only source of module content — was unavailable. Only the
+// on-chain-only warning ("On-chain state not available, ...") leaves the db
+// list authoritative. Anything else, including the off-chain warnings ("Off-chain
+// content not available, ...", formerly "DB API unavailable, ...") and text
+// this CLI does not recognise, is treated as hiding content, the conservative
+// reading.
 func warningHidesDBContent(warning string) bool {
-	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(warning)), "andamioscan unavailable")
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(warning)), "on-chain state not available")
 }
 
 func updateModuleContent(ctx context.Context, c *client.Client, courseID string, data *ImportData, existing *ExistingModuleData, sltsLocked bool, dryRun bool, showPayload bool) (map[string]interface{}, error) {
