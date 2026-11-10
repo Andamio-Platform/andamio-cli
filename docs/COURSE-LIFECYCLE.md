@@ -160,14 +160,17 @@ andamio course modules <course-id>
 
 ### Step 5: Mint the module on-chain
 
-Submit the on-chain transaction. No status change comes first. The SLT texts in the body must exactly match what was imported in Step 4.
+Mint the imported module. No status change comes first.
 
 ```bash
-andamio tx run /v2/tx/course/teacher/modules/manage \
-  --body '{"alias":"<your-alias>","course_id":"<course-id>","modules":[{"module_code":"101","slts":["Describe the protocol architecture","Build a basic transaction","Verify credential hashes"]}]}' \
-  --skey ./payment.skey \
-  --tx-type modules_manage
+andamio course teacher mint-modules \
+  --course-id <course-id> \
+  --alias <your-alias> \
+  --module-code 101 \
+  --skey ./payment.skey
 ```
+
+The command reads the module's SLTs from the record Step 4 created and builds the `modules_manage` body itself, so the SLT texts in the transaction are the imported ones, byte for byte. It computes the SLT hash first and refuses a module whose record carries a different `slt_hash`, one already `ON_CHAIN`, and one with no SLTs. `--module-code` is repeatable, and `--dry-run` prints the body without building anything. The command runs the same build, sign, submit, register and poll lifecycle as `tx run`.
 
 When the transaction confirms and andamioscan indexes it, the module reads `ON_CHAIN`: the gateway matches the on-chain module to the DB record by SLT hash.
 
@@ -179,7 +182,7 @@ If the TX fails to build or submit, nothing on the module changed. Fix the cause
 
 ### Step 6: Register module (recovery only)
 
-This step is only needed if Step 5 returned `state: failed`, meaning the gateway could not automatically link the on-chain module to the DB record.
+This step is only needed if Step 5 returned `state: failed`, meaning the gateway could not automatically link the on-chain module to the DB record. After `mint-modules` the minted hash is the record's hash, so this applies mainly to a module minted with `tx run` and a hand-written body.
 
 Manually link them by providing the SLT hash:
 
@@ -409,7 +412,7 @@ This fetches each module's SLTs from the API, re-computes the hash, and reports 
 
 - andamioscan has not indexed the transaction yet. Wait and check again.
 - andamioscan is unavailable. The CLI prints the gateway's partial-data warning on stderr, and on-chain modules read `APPROVED` until it recovers.
-- The SLT hash stored for the module does not match the module on chain. The SLT texts in the `tx run` body differed from the imported outline.
+- The SLT hash stored for the module does not match the module on chain. The SLT texts in a hand-written `tx run` body differed from the imported outline. `mint-modules` sends the record's own texts, so it cannot cause this.
 
 **Fix**: Check the module and compare hashes:
 
@@ -424,7 +427,7 @@ If the hashes differ, the on-chain SLTs are the source of truth. Use `register-m
 
 **Cause**: The gateway could not find a DB module with a matching SLT hash when the on-chain transaction confirmed. This happens when the module was never imported (no DB record), or the SLTs in the TX body do not match the imported SLTs.
 
-**Fix**: Always import content first (Step 4), which computes and stores the hash, before minting on-chain (Step 5). Ensure the SLT texts in the `tx run` body exactly match the outline.
+**Fix**: Always import content first (Step 4), which computes and stores the hash, before minting on-chain (Step 5). `mint-modules` refuses a module with no record. With a hand-written `tx run` body, ensure its SLT texts exactly match the outline.
 
 If the TX already confirmed, use `register-module` (Step 6) to manually link the records.
 
