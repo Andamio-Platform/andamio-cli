@@ -6,6 +6,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Changed
+
+- **`built` in `andamio --version --output json` is now the commit date.** Release binaries take their timestamp from the tagged commit instead of the build clock, so building the same tag twice gives identical archives. The value is still RFC3339 UTC. Release archives also ship with build provenance, which `gh attestation verify` can check.
+
 ## [1.3.0] - 2026-11-04
 
 ### Added

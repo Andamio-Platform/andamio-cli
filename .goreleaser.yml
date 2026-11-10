@@ -5,7 +5,8 @@ builds:
     binary: andamio
     # Reproducible builds: no build-machine paths, and every timestamp comes
     # from the tagged commit rather than the wall clock, so building the same
-    # tag twice gives the same archives (cli#199 checks this).
+    # tag twice gives the same archives. The archive entries below need the
+    # same treatment.
     flags:
       - -trimpath
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -25,6 +26,19 @@ archives:
   - formats:
       - tar.gz
     name_template: "andamio_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # mod_timestamp only fixes the binary on disk. Archive entries otherwise
+    # carry the checkout time of the docs and the runner's user, so a rebuild
+    # from a fresh checkout would produce different archive bytes.
+    builds_info:
+      mtime: "{{ .CommitDate }}"
+      owner: root
+      group: root
+    files:
+      - src: "{README,LICENSE,CHANGELOG}*"
+        info:
+          mtime: "{{ .CommitDate }}"
+          owner: root
+          group: root
     format_overrides:
       - goos: windows
         formats:
