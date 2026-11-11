@@ -146,7 +146,7 @@ andamio project task mint <project-id> \
   --skey ./payment.skey
 ```
 
-The command reads each DRAFT task's title, reward and expiration from its draft and builds the `tasks_manage` body itself. A task's title is its on-chain content and must be 140 characters or fewer; a task that is not DRAFT is refused. `--deposit-lovelace` and `--deposit-token` set what your wallet adds to the project treasury in the same transaction. With neither, nothing is deposited and the treasury must already cover the rewards. `--dry-run` prints the body without building anything. The command runs the same build, sign, submit, register and poll lifecycle as `tx run`.
+The command reads each DRAFT task's title, reward and expiration from its draft and builds the `tasks_manage` body itself. A task's title is its on-chain content and must be 140 characters or fewer; a task that is not DRAFT, or whose expiration has passed, is refused. Each reward token's on-chain asset name is looked up in the token registry (`andamio token list`); a token missing from the registry, or matching more than one entry, is refused rather than guessed. `--deposit-lovelace` and `--deposit-token` set what your wallet adds to the project treasury in the same transaction. With neither, nothing is deposited and the treasury must already cover the rewards. `--dry-run` prints the body without building anything. The command runs the same build, sign, submit, register and poll lifecycle as `tx run`.
 
 To write the body by hand instead, use `tx run`:
 
