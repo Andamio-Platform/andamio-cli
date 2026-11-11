@@ -37,7 +37,12 @@ reads each task's title, reward and expiration from its draft and builds the
 tasks_manage transaction body itself.
 
 Each task's on-chain project_content is its title as stored, which must be 140
-characters or fewer. Only DRAFT tasks can be minted.
+characters or fewer. Only DRAFT tasks can be minted, and a task whose
+expiration has passed is refused.
+
+A reward token's on-chain asset name is looked up in the token registry by
+policy id and name. A token missing from the registry, or matching more than
+one registry entry, is refused rather than guessed. Check with: andamio token list
 
 --deposit-lovelace and --deposit-token set deposit_value, what your wallet adds
 to the project treasury in the same transaction. With neither, deposit_value
@@ -101,10 +106,19 @@ type MintTaskSummary struct {
 }
 
 // mintTaskAsset is one native asset of a draft task reward.
+//
+// The manager tasks list names a draft's reward tokens by their decoded
+// (display) name, not the hex asset name that goes on chain, so the hex is
+// looked up in the token registry by resolveTaskAssetNames. Re-encoding the
+// display name is not safe: a name that already looks like hex ("CAFE")
+// would be taken as hex, and a registry entry's decoded name can be set
+// freely when the token is registered.
 type mintTaskAsset struct {
-	PolicyID  string
-	AssetName string // hex
-	Quantity  int64
+	PolicyID    string
+	DisplayName string // as the tasks list names it
+	AssetName   string // hex, valid once HexKnown
+	HexKnown    bool
+	Quantity    int64
 }
 
 // mintTaskSource is what task mint reads from one draft task.
@@ -162,6 +176,9 @@ func buildManageTasksBody(alias, projectID, contributorStateID string, tasks []m
 		if t.ExpirationPosix <= 0 {
 			return manageTasksBody{}, nil, fmt.Errorf("task %d has no expiration", t.Index)
 		}
+		if now := time.Now().UnixMilli(); t.ExpirationPosix <= now {
+			return manageTasksBody{}, nil, fmt.Errorf("task %d expired at %s. Set a later one with: andamio project task update %d --project-id %s --expiration YYYY-MM-DD", t.Index, time.UnixMilli(t.ExpirationPosix).UTC().Format(time.RFC3339), t.Index, projectID)
+		}
 		if t.LovelaceAmount < 0 {
 			return manageTasksBody{}, nil, fmt.Errorf("task %d has a negative lovelace amount", t.Index)
 		}
@@ -169,6 +186,9 @@ func buildManageTasksBody(alias, projectID, contributorStateID string, tasks []m
 		assets := make([][]interface{}, 0, len(t.Assets))
 		hashAssets := make([]cardano.NativeAsset, 0, len(t.Assets))
 		for _, a := range t.Assets {
+			if !a.HexKnown {
+				return manageTasksBody{}, nil, fmt.Errorf("task %d: the on-chain name of reward token %q was not resolved", t.Index, a.DisplayName)
+			}
 			if a.Quantity < 0 {
 				return manageTasksBody{}, nil, fmt.Errorf("task %d has a negative quantity for asset %s", t.Index, assetClass(a.PolicyID, a.AssetName))
 			}
@@ -277,23 +297,84 @@ func taskSourceFromItem(item map[string]interface{}) (mintTaskSource, bool) {
 			if !ok {
 				continue
 			}
-			policyID, _ := a["policy_id"].(string)
-			name, _ := a["name"].(string)
-			if name == "" {
-				name, _ = a["asset_name"].(string)
+			asset := mintTaskAsset{}
+			asset.PolicyID, _ = a["policy_id"].(string)
+			asset.DisplayName, _ = a["name"].(string)
+			// A hex asset_name, when the gateway sends one, is the on-chain
+			// name itself and needs no registry lookup.
+			if hexName, ok := a["asset_name"].(string); ok {
+				asset.AssetName, asset.HexKnown = hexName, true
 			}
 			qty, ok := numberField(a, "amount")
 			if !ok {
 				qty, _ = numberField(a, "quantity")
 			}
-			src.Assets = append(src.Assets, mintTaskAsset{
-				PolicyID:  policyID,
-				AssetName: hexEncodeAssetName(name),
-				Quantity:  qty,
-			})
+			asset.Quantity = qty
+			src.Assets = append(src.Assets, asset)
 		}
 	}
 	return src, true
+}
+
+// resolveTaskAssetNames sets the hex asset name of every reward token whose
+// hex is not yet known, from the token registry entry with the same policy
+// id and decoded name. It refuses rather than guesses: no match or more than
+// one distinct hex for a token is an error, and so is a hex name that does
+// not decode. An empty display name is refused too: it would match any
+// policy-only entry under that policy. Tasks that are not DRAFT are skipped,
+// since the build refuses them with a clearer message.
+// registryWarning is the registry's degraded-read warning, if any.
+func resolveTaskAssetNames(sources []mintTaskSource, registry []interface{}, registryWarning string) error {
+	for si := range sources {
+		t := &sources[si]
+		if !strings.EqualFold(t.Status, "DRAFT") {
+			continue
+		}
+		for ai := range t.Assets {
+			a := &t.Assets[ai]
+			if !a.HexKnown && a.DisplayName == "" {
+				return fmt.Errorf("task %d: a reward token under policy %s has no name in the task list, so its on-chain asset name cannot be determined", t.Index, a.PolicyID)
+			}
+			if !a.HexKnown {
+				var matches []string
+				for _, raw := range registry {
+					e, ok := raw.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					policyID, _ := e["policy_id"].(string)
+					decoded, _ := e["asset_name_decoded"].(string)
+					hexName, _ := e["asset_name"].(string)
+					if policyID != a.PolicyID || decoded != a.DisplayName {
+						continue
+					}
+					dup := false
+					for _, m := range matches {
+						dup = dup || m == hexName
+					}
+					if !dup {
+						matches = append(matches, hexName)
+					}
+				}
+				switch len(matches) {
+				case 0:
+					msg := fmt.Sprintf("task %d: reward token %q (policy %s) is not in the token registry, so its on-chain asset name cannot be determined. Check with: andamio token list", t.Index, a.DisplayName, a.PolicyID)
+					if registryWarning != "" {
+						msg += fmt.Sprintf(" (the registry read was degraded: %s)", registryWarning)
+					}
+					return fmt.Errorf("%s", msg)
+				case 1:
+					a.AssetName, a.HexKnown = matches[0], true
+				default:
+					return fmt.Errorf("task %d: reward token %q (policy %s) matches %d registry entries with different asset names (%s); refusing to guess", t.Index, a.DisplayName, a.PolicyID, len(matches), strings.Join(matches, ", "))
+				}
+			}
+			if a.AssetName != "" && !isHex(a.AssetName) {
+				return fmt.Errorf("task %d: reward token %q has asset name %q, which is not hex", t.Index, a.DisplayName, a.AssetName)
+			}
+		}
+	}
+	return nil
 }
 
 func runProjectTaskMint(cmd *cobra.Command, args []string) error {
@@ -362,6 +443,28 @@ func runProjectTaskMint(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("task %d not found in project %s. List tasks with: andamio project task list %s", i, proj.ProjectID, proj.ProjectID)
 		}
 		sources = append(sources, src)
+	}
+
+	needsRegistry := false
+	for _, src := range sources {
+		if !strings.EqualFold(src.Status, "DRAFT") {
+			continue
+		}
+		for _, a := range src.Assets {
+			needsRegistry = needsRegistry || !a.HexKnown
+		}
+	}
+	var registry []interface{}
+	var registryWarning string
+	if needsRegistry {
+		envelope, data, err := fetchTokenRegistry(ctx, c)
+		if err != nil {
+			return fmt.Errorf("failed to read the token registry to resolve reward asset names: %w", err)
+		}
+		registry, registryWarning = data, metaWarning(envelope)
+	}
+	if err := resolveTaskAssetNames(sources, registry, registryWarning); err != nil {
+		return err
 	}
 
 	body, summaries, err := buildManageTasksBody(alias, proj.ProjectID, proj.ContributorStateID, sources, deposit)

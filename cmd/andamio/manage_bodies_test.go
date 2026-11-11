@@ -22,6 +22,9 @@ import (
 //   - A module's SLT strings reach the body byte for byte as the DB record
 //     holds them, so the minted module's hash is the hash on its record.
 
+// Task fixtures expire at 2100-01-01 (ms): task mint refuses a task whose
+// expiration has passed, so a fixed date in the near future would rot.
+
 // marshalToMap round-trips a body through JSON, so assertions see the wire
 // shape rather than the Go struct.
 func marshalToMap(t *testing.T, v interface{}) map[string]interface{} {
@@ -182,7 +185,7 @@ func TestModuleSourceFromItem_OrdersBySltIndex(t *testing.T) {
 
 func TestBuildManageTasksBody_RequiredKeysAndEmptyLists(t *testing.T) {
 	body, summaries, err := buildManageTasksBody("manager-01", "proj-1", "state-1", []mintTaskSource{
-		{Index: 1, Status: "DRAFT", Title: "Fix login bug", ExpirationPosix: 1780000000000, LovelaceAmount: 5000000},
+		{Index: 1, Status: "DRAFT", Title: "Fix login bug", ExpirationPosix: 4102444800000, LovelaceAmount: 5000000},
 	}, nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -206,11 +209,11 @@ func TestBuildManageTasksBody_RequiredKeysAndEmptyLists(t *testing.T) {
 	if task["project_content"] != "Fix login bug" {
 		t.Errorf("project_content = %v", task["project_content"])
 	}
-	if task["expiration_posix"] != float64(1780000000000) || task["lovelace_amount"] != float64(5000000) {
+	if task["expiration_posix"] != float64(4102444800000) || task["lovelace_amount"] != float64(5000000) {
 		t.Errorf("expiration_posix/lovelace_amount = %v/%v", task["expiration_posix"], task["lovelace_amount"])
 	}
 
-	wantHash, _ := cardano.ComputeTaskHash(cardano.TaskData{ProjectContent: "Fix login bug", ExpirationTime: 1780000000000, LovelaceAmount: 5000000})
+	wantHash, _ := cardano.ComputeTaskHash(cardano.TaskData{ProjectContent: "Fix login bug", ExpirationTime: 4102444800000, LovelaceAmount: 5000000})
 	if summaries[0].TaskHash != wantHash {
 		t.Errorf("task hash = %s, want %s", summaries[0].TaskHash, wantHash)
 	}
@@ -223,8 +226,8 @@ func TestBuildManageTasksBody_AssetsAndDeposit(t *testing.T) {
 		t.Fatalf("deposit: %v", err)
 	}
 	body, _, err := buildManageTasksBody("m", "p", "s", []mintTaskSource{{
-		Index: 2, Status: "DRAFT", Title: "Earn XP", ExpirationPosix: 1780000000000, LovelaceAmount: 2000000,
-		Assets: []mintTaskAsset{{PolicyID: policy, AssetName: "5850", Quantity: 50}},
+		Index: 2, Status: "DRAFT", Title: "Earn XP", ExpirationPosix: 4102444800000, LovelaceAmount: 2000000,
+		Assets: []mintTaskAsset{{PolicyID: policy, DisplayName: "XP", AssetName: "5850", HexKnown: true, Quantity: 50}},
 	}}, deposit)
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -242,7 +245,7 @@ func TestBuildManageTasksBody_AssetsAndDeposit(t *testing.T) {
 }
 
 func TestBuildManageTasksBody_Refusals(t *testing.T) {
-	ok := mintTaskSource{Index: 1, Status: "DRAFT", Title: "t", ExpirationPosix: 1780000000000, LovelaceAmount: 1}
+	ok := mintTaskSource{Index: 1, Status: "DRAFT", Title: "t", ExpirationPosix: 4102444800000, LovelaceAmount: 1}
 	cases := []struct {
 		name  string
 		mut   func(*mintTaskSource)
@@ -253,6 +256,10 @@ func TestBuildManageTasksBody_Refusals(t *testing.T) {
 		{"no title", func(s *mintTaskSource) { s.Title = "" }, "s", "no title"},
 		{"long title", func(s *mintTaskSource) { s.Title = strings.Repeat("x", 141) }, "s", "140"},
 		{"no expiration", func(s *mintTaskSource) { s.ExpirationPosix = 0 }, "s", "no expiration"},
+		{"expired", func(s *mintTaskSource) { s.ExpirationPosix = 1000000000000 }, "s", "expired at 2001-09-09"},
+		{"unresolved asset", func(s *mintTaskSource) {
+			s.Assets = []mintTaskAsset{{PolicyID: "ab", DisplayName: "XP", Quantity: 1}}
+		}, "s", "not resolved"},
 		{"no state id", func(s *mintTaskSource) {}, "", "contributor_state_id"},
 	}
 	for _, tc := range cases {
@@ -288,8 +295,77 @@ func TestTaskSourceFromItem_ReadsMergedTaskListItem(t *testing.T) {
 	if src.ExpirationPosix != 1780000000000 {
 		t.Errorf("expiration = %d, want seconds normalized to ms", src.ExpirationPosix)
 	}
-	if len(src.Assets) != 1 || src.Assets[0].AssetName != "5850" || src.Assets[0].Quantity != 50 {
-		t.Errorf("assets = %+v, want XP hex-encoded as 5850 with quantity 50", src.Assets)
+	// The list names the token by its decoded name; the hex comes from the
+	// registry later, never from re-encoding the display name.
+	if len(src.Assets) != 1 || src.Assets[0].DisplayName != "XP" || src.Assets[0].HexKnown || src.Assets[0].Quantity != 50 {
+		t.Errorf("assets = %+v, want display name XP, hex unresolved, quantity 50", src.Assets)
+	}
+
+	item["assets"] = []interface{}{
+		map[string]interface{}{"policy_id": "pol", "name": "XP", "asset_name": "5850", "amount": "50"},
+	}
+	src, _ = taskSourceFromItem(item)
+	if !src.Assets[0].HexKnown || src.Assets[0].AssetName != "5850" {
+		t.Errorf("assets = %+v, want a sent hex asset_name taken as the on-chain name", src.Assets)
+	}
+}
+
+// A draft's reward token is named by its decoded name, so the on-chain hex
+// must come from the registry. Re-encoding the display name is wrong for one
+// that already looks like hex ("CAFE"), and the decoded name in the registry
+// can be set freely at registration, so the lookup refuses rather than
+// guesses (review on cli#216).
+func TestResolveTaskAssetNames(t *testing.T) {
+	policy := strings.Repeat("ab", 28)
+	entry := func(policyID, hexName, decoded string) interface{} {
+		return map[string]interface{}{"policy_id": policyID, "asset_name": hexName, "asset_name_decoded": decoded}
+	}
+	source := func(a mintTaskAsset) []mintTaskSource {
+		return []mintTaskSource{{Index: 4, Status: "DRAFT", Assets: []mintTaskAsset{a}}}
+	}
+
+	t.Run("hex-looking name resolves through the registry", func(t *testing.T) {
+		srcs := source(mintTaskAsset{PolicyID: policy, DisplayName: "CAFE", Quantity: 1})
+		registry := []interface{}{entry(policy, "43414645", "CAFE"), entry(strings.Repeat("cd", 28), "cafe", "\xca\xfe")}
+		if err := resolveTaskAssetNames(srcs, registry, ""); err != nil {
+			t.Fatal(err)
+		}
+		if a := srcs[0].Assets[0]; !a.HexKnown || a.AssetName != "43414645" {
+			t.Errorf("asset = %+v, want hex 43414645", a)
+		}
+	})
+	t.Run("known hex skips the lookup", func(t *testing.T) {
+		srcs := source(mintTaskAsset{PolicyID: policy, DisplayName: "CAFE", AssetName: "cafe", HexKnown: true})
+		if err := resolveTaskAssetNames(srcs, nil, ""); err != nil {
+			t.Fatal(err)
+		}
+		if srcs[0].Assets[0].AssetName != "cafe" {
+			t.Errorf("asset = %+v", srcs[0].Assets[0])
+		}
+	})
+
+	refusals := []struct {
+		name     string
+		asset    mintTaskAsset
+		registry []interface{}
+		warning  string
+		want     string
+	}{
+		{"not in registry", mintTaskAsset{PolicyID: policy, DisplayName: "XP"}, nil, "", "not in the token registry"},
+		{"other policy only", mintTaskAsset{PolicyID: policy, DisplayName: "XP"}, []interface{}{entry(strings.Repeat("cd", 28), "5850", "XP")}, "", "not in the token registry"},
+		{"degraded registry is named", mintTaskAsset{PolicyID: policy, DisplayName: "XP"}, nil, "scan backend down", "scan backend down"},
+		{"ambiguous", mintTaskAsset{PolicyID: policy, DisplayName: "XP"}, []interface{}{entry(policy, "5850", "XP"), entry(policy, "585000", "XP")}, "", "refusing to guess"},
+		{"registry hex not hex", mintTaskAsset{PolicyID: policy, DisplayName: "XP"}, []interface{}{entry(policy, "XP", "XP")}, "", "not hex"},
+		{"empty name with unknown hex", mintTaskAsset{PolicyID: policy}, []interface{}{entry(policy, "", "")}, "", "has no name"},
+		{"sent hex not hex", mintTaskAsset{PolicyID: policy, DisplayName: "XP", AssetName: "zz", HexKnown: true}, nil, "", "not hex"},
+	}
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			err := resolveTaskAssetNames(source(tc.asset), tc.registry, tc.warning)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one containing %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -450,8 +526,8 @@ func TestProjectTaskMint_SendsBodyBuiltFromDraft(t *testing.T) {
 	stub := &manageStub{reads: map[string]string{
 		"/project/manager/projects/list": managerProjectsList,
 		"/project/manager/tasks/list": `{"data":[
-			{"task_index":1,"task_status":"DRAFT","lovelace_amount":5000000,"expiration_posix":1780000000000,"content":{"title":"Fix login bug"}},
-			{"task_index":2,"task_status":"ON_CHAIN","lovelace_amount":1,"expiration_posix":1780000000000,"content":{"title":"Other"}}
+			{"task_index":1,"task_status":"DRAFT","lovelace_amount":5000000,"expiration_posix":4102444800000,"content":{"title":"Fix login bug"}},
+			{"task_index":2,"task_status":"ON_CHAIN","lovelace_amount":1,"expiration_posix":4102444800000,"content":{"title":"Other"}}
 		]}`,
 	}}
 	srv := httptest.NewServer(stub.handler())
@@ -474,16 +550,84 @@ func TestProjectTaskMint_SendsBodyBuiltFromDraft(t *testing.T) {
 	if stub.buildBody["contributor_state_id"] != "state-1" {
 		t.Errorf("contributor_state_id = %v, want state-1 from the manager projects list", stub.buildBody["contributor_state_id"])
 	}
-	want := `"tasks_to_add":[{"project_content":"Fix login bug","expiration_posix":1780000000000,"lovelace_amount":5000000,"native_assets":[]}]`
+	want := `"tasks_to_add":[{"project_content":"Fix login bug","expiration_posix":4102444800000,"lovelace_amount":5000000,"native_assets":[]}]`
 	if !strings.Contains(stub.buildRaw, want) {
 		t.Errorf("build body %s\nmissing %s", stub.buildRaw, want)
+	}
+}
+
+func TestProjectTaskMint_ResolvesRewardAssetFromRegistry(t *testing.T) {
+	policy := strings.Repeat("ab", 28)
+	stub := &manageStub{reads: map[string]string{
+		"/project/manager/projects/list": managerProjectsList,
+		"/project/manager/tasks/list": `{"data":[{"task_index":1,"task_status":"DRAFT","lovelace_amount":2000000,"expiration_posix":4102444800000,
+			"assets":[{"policy_id":"` + policy + `","name":"CAFE","amount":"5"}],"content":{"title":"Earn"}}]}`,
+		"/project/user/token-registry/list": `{"data":[{"policy_id":"` + policy + `","asset_name":"43414645","asset_name_decoded":"CAFE","subject":"x"}]}`,
+	}}
+	srv := httptest.NewServer(stub.handler())
+	defer srv.Close()
+
+	bin := buildTestBinary(t)
+	runCLIWithJWT(t, bin, srv.URL, "test-jwt", nil,
+		"project", "task", "mint", "proj-1", "--alias", "manager-01", "--index", "1",
+		"--skey", "/nonexistent/payment.skey", "--submit-url", srv.URL)
+
+	if !stub.built {
+		t.Fatal("command never called the build endpoint")
+	}
+	want := `"native_assets":[["` + policy + `.43414645",5]]`
+	if !strings.Contains(stub.buildRaw, want) {
+		t.Errorf("build body %s\nmissing %s", stub.buildRaw, want)
+	}
+}
+
+func TestProjectTaskMint_RefusesUnregisteredRewardAsset(t *testing.T) {
+	stub := &manageStub{reads: map[string]string{
+		"/project/manager/projects/list": managerProjectsList,
+		"/project/manager/tasks/list": `{"data":[{"task_index":1,"task_status":"DRAFT","lovelace_amount":2000000,"expiration_posix":4102444800000,
+			"assets":[{"policy_id":"abab","name":"XP","amount":"5"}],"content":{"title":"Earn"}}]}`,
+		"/project/user/token-registry/list": `{"data":[]}`,
+	}}
+	srv := httptest.NewServer(stub.handler())
+	defer srv.Close()
+
+	bin := buildTestBinary(t)
+	_, stderr, code := runCLIWithJWT(t, bin, srv.URL, "test-jwt", nil,
+		"project", "task", "mint", "proj-1", "--alias", "manager-01", "--index", "1", "--dry-run")
+	if code == 0 || stub.built {
+		t.Fatalf("exit %d, built %v; want a refusal before any build", code, stub.built)
+	}
+	if !strings.Contains(stderr, "not in the token registry") {
+		t.Errorf("stderr = %s", stderr)
+	}
+}
+
+// A non-DRAFT task is refused as such, not as an unresolvable reward, and
+// costs no registry read.
+func TestProjectTaskMint_NonDraftWithAssetsSkipsRegistry(t *testing.T) {
+	stub := &manageStub{reads: map[string]string{
+		"/project/manager/projects/list": managerProjectsList,
+		"/project/manager/tasks/list": `{"data":[{"task_index":2,"task_status":"ON_CHAIN","lovelace_amount":1,"expiration_posix":4102444800000,
+			"assets":[{"policy_id":"abab","name":"5850","amount":"5"}],"content":{"title":"Other"}}]}`,
+	}}
+	srv := httptest.NewServer(stub.handler())
+	defer srv.Close()
+
+	bin := buildTestBinary(t)
+	_, stderr, code := runCLIWithJWT(t, bin, srv.URL, "test-jwt", nil,
+		"project", "task", "mint", "proj-1", "--alias", "manager-01", "--index", "2", "--dry-run")
+	if code == 0 || stub.built {
+		t.Fatalf("exit %d, built %v; want a refusal before any build", code, stub.built)
+	}
+	if !strings.Contains(stderr, "only DRAFT") || strings.Contains(stderr, "registry") {
+		t.Errorf("stderr = %s, want the DRAFT refusal and no registry error", stderr)
 	}
 }
 
 func TestProjectTaskMint_RefusesNonDraft(t *testing.T) {
 	stub := &manageStub{reads: map[string]string{
 		"/project/manager/projects/list": managerProjectsList,
-		"/project/manager/tasks/list":    `{"data":[{"task_index":2,"task_status":"ON_CHAIN","lovelace_amount":1,"expiration_posix":1780000000000,"content":{"title":"Other"}}]}`,
+		"/project/manager/tasks/list":    `{"data":[{"task_index":2,"task_status":"ON_CHAIN","lovelace_amount":1,"expiration_posix":4102444800000,"content":{"title":"Other"}}]}`,
 	}}
 	srv := httptest.NewServer(stub.handler())
 	defer srv.Close()
