@@ -209,6 +209,7 @@ Author:
 - `course import-assignment <course-id> <module-code> <file.json>` — Publish a quiz assignment (JSON envelope) and verify it by read-back
 - `course owner register|update` — Register a course and set its metadata (`create` is deprecated and now registers)
 - `course owner teachers --course-id <id> --alias <you> --skey <path> --add <alias>` — Manage teachers (on-chain transaction)
+- `course teacher mint-modules --course-id <id> --alias <you> --module-code <code>` — Mint imported modules on-chain (`modules_manage` transaction, body built from the module records)
 - `course teacher register-module|publish-module|update-module-status` — Module lifecycle
 - `course credential verify-hash <course-id>` — Verify credential hashes
 - `course credential compute-hash` — Compute an SLT hash locally (no auth needed)
@@ -247,6 +248,7 @@ want that.
 - `project task delete <index> --project-id <id>` — Delete a DRAFT task
 - `project task export <project-id>` — Export tasks to `tasks/<slug>/` as Markdown files
 - `project task import <project-id>` — Import tasks from Markdown files (`--dry-run` supported)
+- `project task mint <project-id> --alias <you> --index <n>` — Mint DRAFT tasks on-chain (`tasks_manage` transaction, body built from the drafts)
 
 ### `andamio user`
 
@@ -480,6 +482,18 @@ Creates DRAFT modules with content. The `--create` flag creates new modules (omi
 ### 5. Publish Modules On-Chain
 
 ```bash
+andamio course teacher mint-modules \
+  --course-id <id> \
+  --alias <your-alias> \
+  --module-code 101 --module-code 102 \
+  --skey ./payment.skey
+```
+
+The command reads each module's SLTs from the record step 4 created and builds the `modules_manage` transaction itself, so you never write the body. The body carries the SLT text exactly as the record holds it, so each minted module's hash is the `slt_hash` on its record. Once andamioscan indexes the mint, the module reads `ON_CHAIN` with no further step. Add `--dry-run` to print the body without building anything.
+
+To write the body by hand instead, use `tx run`:
+
+```bash
 andamio tx run /v2/tx/course/teacher/modules/manage \
   --body-file manage-modules.json \
   --skey ./payment.skey \
@@ -487,9 +501,9 @@ andamio tx run /v2/tx/course/teacher/modules/manage \
   --instance-id <course-id>
 ```
 
-### 6. Link On-Chain Modules to DB (if needed)
+### 6. Link On-Chain Modules to DB (hand-written `tx run` only)
 
-A minted module reads `ON_CHAIN` once andamioscan indexes it with the SLT hash its DB record carries. If one does not, link it by `slt_hash`:
+Skip this step after `mint-modules`. It applies only to a module minted with `andamio tx run /v2/tx/course/teacher/modules/manage` and a hand-written body. A minted module reads `ON_CHAIN` once andamioscan indexes it with the SLT hash its DB record carries. If one does not, link it by `slt_hash`:
 
 ```bash
 andamio course teacher register-module \
@@ -510,7 +524,7 @@ This time without `--create`, because the modules already exist. Lessons, introd
 
 - **On-chain modules cannot return to DRAFT**: Since Andamio API 2.6.0, `update-module-status --status DRAFT` is refused for a module on chain. Import skips SLT updates for non-DRAFT modules and still updates the rest.
 - **Module hash ordering is non-deterministic**: On-chain token names (slt_hashes) don't sort in the same order as your module codes. Check the register response to map hashes to codes.
-- **`publish-module` does not publish on-chain**: To publish modules on-chain, use `tx run` with `modules_manage`. Since Andamio API 2.6.0, `publish-module` writes nothing. To confirm a module is live, check `module_status` and `is_live` in `andamio course modules <id> --output json`.
+- **`publish-module` does not publish on-chain**: To publish modules on-chain, use `course teacher mint-modules`. Since Andamio API 2.6.0, `publish-module` writes nothing. To confirm a module is live, check `module_status` and `is_live` in `andamio course modules <id> --output json`.
 - **`course owner register` vs `update`**: After `tx run` with `course_create`, the course is auto-registered. Use `update` to set metadata. `register` is only needed when auto-registration failed. `create` is deprecated and does the same as `register`.
 
 ## Project Tasks
@@ -599,6 +613,14 @@ andamio project task import "$PROJECT_ID"
 Each exported file has YAML frontmatter (`title`, `lovelace`, `expiration_time`, `index`, `project_id`) and a Markdown body. Files without an `index` field create new tasks on import.
 
 Only DRAFT tasks can be updated or deleted. ACTIVE and COMPLETED tasks are skipped during import.
+
+### Mint Tasks On-Chain
+
+```bash
+andamio project task mint "$PROJECT_ID" --alias <your-alias> --index 1 --index 2 --skey ./payment.skey
+```
+
+The command reads each task's title, reward and expiration from its draft and builds the `tasks_manage` transaction itself. A task's title is its on-chain content and must be 140 characters or fewer. `--deposit-lovelace` and `--deposit-token` add funds to the project treasury in the same transaction; with neither, the treasury must already cover the rewards. Add `--dry-run` to print the body without building anything.
 
 ## Networks
 

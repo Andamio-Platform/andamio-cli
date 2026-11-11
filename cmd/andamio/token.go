@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,29 +42,27 @@ const (
 	legacyTokenListPath   = "/api/v2/token/user/tokens/list"
 )
 
-func runTokenList(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	c := client.New(cfg)
+var errUnexpectedTokenList = errors.New("unexpected token list response format")
 
-	// API may return {data: [...]} envelope or a raw array.
-	// The registry moved to tokenRegistryListPath in andamio-api#884; the old
-	// path is tried only when the new one is not served yet (404), so this
-	// works against the API on either side of that change.
+// fetchTokenRegistry reads the token registry and normalizes the response to
+// a {data: [...]} envelope plus its data list. The API may answer with that
+// envelope or a bare array.
+//
+// The registry moved to tokenRegistryListPath in andamio-api#884; the old
+// path is tried only when the new one is not served yet (404), so this
+// works against the API on either side of that change.
+func fetchTokenRegistry(ctx context.Context, c *client.Client) (map[string]interface{}, []interface{}, error) {
 	var raw json.RawMessage
-	err = c.Get(cmd.Context(), tokenRegistryListPath, &raw)
+	err := c.Get(ctx, tokenRegistryListPath, &raw)
 	var notFound *apierr.NotFoundError
 	if errors.As(err, &notFound) {
 		raw = nil
-		err = c.Get(cmd.Context(), legacyTokenListPath, &raw)
+		err = c.Get(ctx, legacyTokenListPath, &raw)
 	}
 	if err != nil {
-		return fmt.Errorf("failed to list tokens: %w", err)
+		return nil, nil, err
 	}
 
-	// Normalize to {data: [...]} envelope
 	var data []interface{}
 	var envelope map[string]interface{}
 	if json.Unmarshal(raw, &envelope) == nil {
@@ -71,7 +70,24 @@ func runTokenList(cmd *cobra.Command, args []string) error {
 	} else if json.Unmarshal(raw, &data) == nil {
 		envelope = map[string]interface{}{"data": data}
 	} else {
-		return fmt.Errorf("unexpected token list response format")
+		return nil, nil, errUnexpectedTokenList
+	}
+	return envelope, data, nil
+}
+
+func runTokenList(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	c := client.New(cfg)
+
+	envelope, data, err := fetchTokenRegistry(cmd.Context(), c)
+	if err != nil {
+		if errors.Is(err, errUnexpectedTokenList) {
+			return err
+		}
+		return fmt.Errorf("failed to list tokens: %w", err)
 	}
 
 	if output.GetFormat() == output.FormatJSON {
