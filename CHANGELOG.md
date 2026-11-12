@@ -12,6 +12,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ### Fixed
 
+- **`project task verify-hash` no longer reports false mismatches for reward tokens whose names look like hex.** An on-chain task's reward token arrives under its on-chain name, which the command now always hex-encodes. Before, a name such as `CAFE` or `2024` was taken as hex already, and the task reported a hash mismatch that was not there. A token name that is not valid UTF-8 (a CIP-68 fungible token, for example) is changed before it reaches the CLI, so its task is now reported as unverifiable in `error` instead of as a mismatch.
 - **`course import --create` works again during an on-chain outage** (#186). The gateway reworded its merged-read warnings, so the warning sent when on-chain data is unavailable now reads "On-chain state not available, ...". The CLI only recognised the old "Andamioscan unavailable, ..." text, so it treated the new warning as possibly hiding off-chain content and stopped with the degraded-read error, even though the module list was complete. Off-chain warnings and unrecognised text still stop the import, as before.
 
 ## [1.3.0] - 2026-11-04
