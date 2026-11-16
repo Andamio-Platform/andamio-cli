@@ -85,7 +85,8 @@ func TestProjectTaskVerifyHash_OnChainAssetNames(t *testing.T) {
 			Match     bool   `json:"match"`
 			Error     string `json:"error"`
 		} `json:"results"`
-		Mismatches int `json:"mismatches"`
+		Mismatches   int `json:"mismatches"`
+		Unverifiable int `json:"unverifiable"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
@@ -98,5 +99,10 @@ func TestProjectTaskVerifyHash_OnChainAssetNames(t *testing.T) {
 	}
 	if out.Results[2].Match || !strings.Contains(out.Results[2].Error, "not valid UTF-8") {
 		t.Errorf("altered name should be reported unverifiable, not matched: %+v", out.Results[2])
+	}
+	// A row that could not be recomputed is not a hash mismatch: it is
+	// counted on its own, so mismatches means only "the hash differs".
+	if out.Mismatches != 0 || out.Unverifiable != 1 {
+		t.Errorf("mismatches = %d, unverifiable = %d; want 0 and 1", out.Mismatches, out.Unverifiable)
 	}
 }

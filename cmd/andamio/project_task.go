@@ -779,7 +779,7 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 	data, ok := resp["data"].([]interface{})
 	if !ok || len(data) == 0 {
 		if isJSON {
-			return output.PrintJSON(map[string]interface{}{"results": []interface{}{}, "mismatches": 0})
+			return output.PrintJSON(map[string]interface{}{"results": []interface{}{}, "mismatches": 0, "unverifiable": 0})
 		}
 		fmt.Fprintln(os.Stderr, "No tasks found.")
 		return nil
@@ -799,7 +799,12 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 	}
 
 	var results []verifyResult
+	// mismatches counts rows whose recomputed hash differs from the API's.
+	// unverifiable counts rows whose hash could not be recomputed at all
+	// (r.Error is set); those say nothing about the hash, so they are kept
+	// out of mismatches.
 	mismatches := 0
+	unverifiable := 0
 
 	for _, item := range data {
 		m, ok := item.(map[string]interface{})
@@ -893,7 +898,9 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 			r.Match = computedHash == apiHash
 		}
 
-		if !r.Match {
+		if r.Error != "" {
+			unverifiable++
+		} else if !r.Match {
 			mismatches++
 		}
 
@@ -902,16 +909,19 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 
 	if isJSON {
 		return output.PrintJSON(map[string]interface{}{
-			"results":    results,
-			"total":      len(results),
-			"mismatches": mismatches,
+			"results":      results,
+			"total":        len(results),
+			"mismatches":   mismatches,
+			"unverifiable": unverifiable,
 		})
 	}
 
 	// Text output
 	for _, r := range results {
 		status := "\u2713"
-		if !r.Match {
+		if r.Error != "" {
+			status = "?"
+		} else if !r.Match {
 			status = "\u2717"
 		}
 		fmt.Printf("%s Task %d: %q\n", status, r.TaskIndex, r.Content)
@@ -930,7 +940,7 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\n%d tasks checked, %d mismatches\n", len(results), mismatches)
+	fmt.Fprintf(os.Stderr, "\n%d tasks checked, %d mismatches, %d unverifiable\n", len(results), mismatches, unverifiable)
 	return nil
 }
 
