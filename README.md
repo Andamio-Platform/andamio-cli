@@ -610,12 +610,24 @@ The CLI works with two Cardano networks. Start on preprod for development.
 | App | [preprod.app.andamio.io](https://preprod.app.andamio.io) | [app.andamio.io](https://app.andamio.io) |
 | API key | [app.andamio.io/api-setup](https://app.andamio.io/api-setup) (select preprod) | [app.andamio.io/api-setup](https://app.andamio.io/api-setup) |
 | Access Token | Free (test ADA) | Requires real ADA |
+| Submit URL (Blockfrost) | `https://cardano-preprod.blockfrost.io/api/v0/tx/submit` | `https://cardano-mainnet.blockfrost.io/api/v0/tx/submit` |
 
 Switch networks:
 
 ```bash
 andamio config set-url https://mainnet.api.andamio.io
 ```
+
+### Submitting transactions
+
+The Andamio API builds transactions but never submits them for you. `tx run` and `tx submit` send the signed transaction to a Cardano submit API that you configure. Blockfrost is the default choice: create a free project at [blockfrost.io](https://blockfrost.io) for the network you're on, then:
+
+```bash
+andamio config set-submit-url https://cardano-preprod.blockfrost.io/api/v0/tx/submit
+andamio config set-submit-header project_id <your-blockfrost-project-id>
+```
+
+Use the full URL, ending in `/api/v0/tx/submit`. A Blockfrost project belongs to one network, so switching networks means a different project ID as well as a different URL. Any other submit API that accepts raw CBOR (`Content-Type: application/cbor`) works the same way.
 
 **Important:**
 - API keys are network-specific — a preprod key won't work on mainnet

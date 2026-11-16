@@ -12,6 +12,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ### Fixed
 
+- **A submit URL that redirects is now reported as a failed submit.** The CLI used to follow the redirect, which sends the transaction nowhere. Blockfrost redirects a wrong path (one missing `/v0`, for example) to its homepage, which answers 200, so `tx run` printed "Submitted to network" and then waited for a transaction that was never sent until it timed out. `tx run` and `tx submit` now stop with an error naming the redirect. The `config set-submit-url` examples had that wrong Blockfrost path and now show the full `/api/v0/tx/submit` URL for both networks, and the README's Networks section covers setting up a submit service.
 - **`course import --create` works again during an on-chain outage** (#186). The gateway reworded its merged-read warnings, so the warning sent when on-chain data is unavailable now reads "On-chain state not available, ...". The CLI only recognised the old "Andamioscan unavailable, ..." text, so it treated the new warning as possibly hiding off-chain content and stopped with the degraded-read error, even though the module list was complete. Off-chain warnings and unrecognised text still stop the import, as before.
 
 ## [1.3.0] - 2026-11-04
