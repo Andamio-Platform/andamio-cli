@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
@@ -837,7 +838,9 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 		expirationPosix, _ := m["expiration_posix"].(float64)
 		lovelaceAmount, _ := m["lovelace_amount"].(float64)
 
+		source, _ := m["source"].(string)
 		var nativeAssets []cardano.NativeAsset
+		var assetErr error
 		if assets, ok := m["assets"].([]interface{}); ok {
 			for _, a := range assets {
 				am, ok := a.(map[string]interface{})
@@ -851,7 +854,10 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 				if amountStr != "" {
 					fmt.Sscanf(amountStr, "%d", &quantity)
 				}
-				tokenNameHex := hexEncodeAssetName(name)
+				tokenNameHex, err := verifyHashAssetNameHex(source, name)
+				if err != nil && assetErr == nil {
+					assetErr = err
+				}
 				nativeAssets = append(nativeAssets, cardano.NativeAsset{
 					PolicyID:  policyID,
 					TokenName: tokenNameHex,
@@ -878,7 +884,9 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 		}
 
 		computedHash, err := cardano.ComputeTaskHash(taskData)
-		if err != nil {
+		if assetErr != nil {
+			r.Error = assetErr.Error()
+		} else if err != nil {
 			r.Error = err.Error()
 		} else {
 			r.ComputedHash = computedHash
@@ -924,6 +932,31 @@ func runTaskVerifyHash(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "\n%d tasks checked, %d mismatches\n", len(results), mismatches)
 	return nil
+}
+
+// verifyHashAssetNameHex returns the hex asset name verify-hash hashes for one
+// reward token of a task in the user tasks list.
+//
+// What the list's assets[].name holds depends on where the row came from. An
+// on-chain row (source chain_only or merged, or no source) carries the
+// on-chain name bytes as a string, as the indexer decodes them, so the hex is
+// those bytes encoded, always. Guessing ("already hex?") was wrong for a name
+// such as "CAFE", whose hash then never matched. A name that was not valid
+// UTF-8 reaches the CLI with U+FFFD in place of the bytes that were lost, so
+// its hex cannot be recovered and the row is reported as unverifiable rather
+// than as a mismatch.
+//
+// A db_only row (not yet indexed on chain) carries the token registry's
+// decoded name instead, which needs a registry lookup to turn back into hex;
+// that row keeps the previous behaviour.
+func verifyHashAssetNameHex(source, name string) (string, error) {
+	if source == "db_only" {
+		return hexEncodeAssetName(name), nil
+	}
+	if strings.ContainsRune(name, utf8.RuneError) {
+		return "", fmt.Errorf("asset name %q is not valid UTF-8 on chain and was altered before it reached the CLI, so this task's hash cannot be recomputed", name)
+	}
+	return hex.EncodeToString([]byte(name)), nil
 }
 
 func runTaskComputeHash(cmd *cobra.Command, args []string) error {

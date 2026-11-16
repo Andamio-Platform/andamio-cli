@@ -6,6 +6,10 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+### Added
+
+- **`course teacher mint-modules` and `project task mint` build the manage transaction bodies** (#215). `tx run` for `modules_manage` and `tasks_manage` needed a hand-written body. Name the modules by `--module-code` or the tasks by `--index`, and the command reads what was already imported and runs the same build, sign, submit, register and poll lifecycle as `tx run`. A module's SLTs go into the body exactly as its record holds them, so the minted module's hash is the `slt_hash` on its record and the README's `register-module` linking step is no longer needed after a normal publish. Every required key is sent, empty lists included. `--dry-run` prints the body and builds nothing. `project task mint` takes `--deposit-lovelace` and `--deposit-token` for `deposit_value`, which is empty by default. It refuses a task whose expiration has passed, and takes each reward token's hex asset name from the token registry, refusing a token it cannot match to exactly one entry. `tx run` with a hand-written body still works.
+
 ### Changed
 
 - **`built` in `andamio --version --output json` is now the commit date.** Release binaries take their timestamp from the tagged commit instead of the build clock, so building the same tag twice gives identical archives. The value is still RFC3339 UTC. Release archives also ship with build provenance, which `gh attestation verify` can check.
@@ -13,6 +17,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 ### Fixed
 
 - **A submit URL that redirects is now reported as a failed submit.** The CLI used to follow the redirect, which sends the transaction nowhere. Blockfrost redirects a wrong path (one missing `/v0`, for example) to its homepage, which answers 200, so `tx run` printed "Submitted to network" and then waited for a transaction that was never sent until it timed out. `tx run` and `tx submit` now stop with an error naming the redirect. The `config set-submit-url` examples had that wrong Blockfrost path and now show the full `/api/v0/tx/submit` URL for both networks, and the README's Networks section covers setting up a submit service.
+- **`project task verify-hash` no longer reports false mismatches for reward tokens whose names look like hex.** An on-chain task's reward token arrives under its on-chain name, which the command now always hex-encodes. Before, a name such as `CAFE` or `2024` was taken as hex already, and the task reported a hash mismatch that was not there. A token name that is not valid UTF-8 (a CIP-68 fungible token, for example) is changed before it reaches the CLI, so its task is now reported as unverifiable in `error` instead of as a mismatch.
 - **`course import --create` works again during an on-chain outage** (#186). The gateway reworded its merged-read warnings, so the warning sent when on-chain data is unavailable now reads "On-chain state not available, ...". The CLI only recognised the old "Andamioscan unavailable, ..." text, so it treated the new warning as possibly hiding off-chain content and stopped with the degraded-read error, even though the module list was complete. Off-chain warnings and unrecognised text still stop the import, as before.
 
 ## [1.3.0] - 2026-11-04
