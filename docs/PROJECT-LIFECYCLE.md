@@ -282,7 +282,7 @@ andamio project task compute-hash --file tasks/my-project/001-fix-login-bug.md
 andamio project task verify-hash <project-id>
 ```
 
-This compares the locally computed hashes against the on-chain values and reports any mismatches.
+This compares the locally computed hashes against the on-chain values and reports any mismatches. A task whose hash cannot be recomputed (a reward token name that is not valid UTF-8, for example) is reported as unverifiable, with the reason in `error`, and is not counted as a mismatch.
 
 ## Troubleshooting
 

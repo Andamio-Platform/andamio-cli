@@ -12,6 +12,7 @@ The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/
 
 ### Changed
 
+- **`project task verify-hash` counts unverifiable tasks separately.** A task whose hash cannot be recomputed (its row has `error` set) is no longer counted in `mismatches`. It is counted in a new `unverifiable` field in the JSON output and in the summary line, and the text output marks it with `?` instead of a cross. `mismatches` now means only that the recomputed hash differs. A script that read `mismatches > 0` as "something needs attention" should check `unverifiable` as well.
 - **`built` in `andamio --version --output json` is now the commit date.** Release binaries take their timestamp from the tagged commit instead of the build clock, so building the same tag twice gives identical archives. The value is still RFC3339 UTC. Release archives also ship with build provenance, which `gh attestation verify` can check.
 
 ### Fixed
