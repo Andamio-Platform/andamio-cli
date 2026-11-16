@@ -54,7 +54,8 @@ This can be any Cardano submit API endpoint (Blockfrost, Maestro, self-hosted, e
 Requires HTTPS for non-localhost URLs. Set ANDAMIO_ALLOW_ANY_URL=1 to bypass.
 
 Examples:
-  andamio config set-submit-url https://cardano-mainnet.blockfrost.io/api/tx/submit
+  andamio config set-submit-url https://cardano-preprod.blockfrost.io/api/v0/tx/submit
+  andamio config set-submit-url https://cardano-mainnet.blockfrost.io/api/v0/tx/submit
   andamio config set-submit-url https://submit-api.example.com`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
