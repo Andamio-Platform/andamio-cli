@@ -76,8 +76,9 @@ var awkwardSLTs = []string{
 }
 
 func TestBuildManageModulesBody_RequiredKeysAndEmptyLists(t *testing.T) {
+	slts := []string{"one", "two"}
 	body, _, err := buildManageModulesBody("teacher-01", "course-abc", []mintModuleSource{
-		{Code: "101", Status: "DRAFT", SLTs: []string{"one", "two"}},
+		{Code: "101", Status: "APPROVED", StoredHash: cardano.ComputeSltHash(slts), SLTs: slts},
 	})
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -146,6 +147,11 @@ func TestBuildManageModulesBody_Refusals(t *testing.T) {
 		{"on chain", mintModuleSource{Code: "101", Status: "ON_CHAIN", SLTs: []string{"a"}}, "already ON_CHAIN"},
 		{"no SLTs", mintModuleSource{Code: "101", Status: "DRAFT"}, "no SLTs"},
 		{"hash mismatch", mintModuleSource{Code: "101", Status: "APPROVED", StoredHash: strings.Repeat("0", 64), SLTs: []string{"a"}}, "hash to"},
+		// cli#221: a DRAFT has no stored hash, so its mint would never link to the record.
+		{"draft", mintModuleSource{Code: "101", Status: "DRAFT", SLTs: []string{"a"}}, "mints only APPROVED"},
+		{"draft carrying a kept hash", mintModuleSource{Code: "101", Status: "DRAFT", StoredHash: cardano.ComputeSltHash([]string{"a"}), SLTs: []string{"a"}}, "mints only APPROVED"},
+		{"no status", mintModuleSource{Code: "101", SLTs: []string{"a"}}, "without a status"},
+		{"approved without a stored hash", mintModuleSource{Code: "101", Status: "APPROVED", SLTs: []string{"a"}}, "has no slt_hash"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -154,6 +160,22 @@ func TestBuildManageModulesBody_Refusals(t *testing.T) {
 				t.Fatalf("err = %v, want one containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// cli#221: the DRAFT refusal is the fix, so it must print the approve command
+// with this course, this module and the hash the SLTs actually produce.
+func TestBuildManageModulesBody_DraftRefusalGivesApproveCommand(t *testing.T) {
+	slts := []string{"one", "two"}
+	_, _, err := buildManageModulesBody("t", "course-abc", []mintModuleSource{
+		{Code: "101", Status: "DRAFT", SLTs: slts},
+	})
+	if err == nil {
+		t.Fatal("a DRAFT module was minted")
+	}
+	want := "andamio course teacher update-module-status --course-id course-abc --module-code 101 --status APPROVED --slt-hash " + cardano.ComputeSltHash(slts)
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to contain %q", err, want)
 	}
 }
 
@@ -420,6 +442,11 @@ func (s *manageStub) handler() http.HandlerFunc {
 
 func teacherModulesList(t *testing.T, slts []string, storedHash string) string {
 	t.Helper()
+	return teacherModulesListWithStatus(t, slts, storedHash, "APPROVED")
+}
+
+func teacherModulesListWithStatus(t *testing.T, slts []string, storedHash, status string) string {
+	t.Helper()
 	items := make([]interface{}, len(slts))
 	for i, s := range slts {
 		items[i] = map[string]interface{}{"slt_index": i + 1, "slt_text": s}
@@ -429,7 +456,7 @@ func teacherModulesList(t *testing.T, slts []string, storedHash string) string {
 			"slt_hash": storedHash,
 			"content": map[string]interface{}{
 				"course_module_code": "101",
-				"module_status":      "APPROVED",
+				"module_status":      status,
 				"slts":               items,
 			},
 		},
@@ -475,7 +502,7 @@ func TestCourseTeacherMintModules_SendsBodyBuiltFromRecord(t *testing.T) {
 
 func TestCourseTeacherMintModules_DryRunBuildsNothing(t *testing.T) {
 	stub := &manageStub{reads: map[string]string{
-		"/course/teacher/course-modules/list": teacherModulesList(t, []string{"a", "b"}, ""),
+		"/course/teacher/course-modules/list": teacherModulesList(t, []string{"a", "b"}, cardano.ComputeSltHash([]string{"a", "b"})),
 	}}
 	srv := httptest.NewServer(stub.handler())
 	defer srv.Close()
@@ -498,6 +525,28 @@ func TestCourseTeacherMintModules_DryRunBuildsNothing(t *testing.T) {
 	}
 	if !preview.DryRun || preview.TxType != "modules_manage" || len(preview.Modules) != 1 || preview.Modules[0].SltHash != cardano.ComputeSltHash([]string{"a", "b"}) {
 		t.Errorf("preview = %+v", preview)
+	}
+}
+
+// cli#221 end to end: a DRAFT, as the teacher list returns it (no slt_hash), is
+// refused before any build, in --dry-run too, with the approve command.
+func TestCourseTeacherMintModules_DraftIsRefusedBeforeBuild(t *testing.T) {
+	slts := []string{"a", "b"}
+	stub := &manageStub{reads: map[string]string{
+		"/course/teacher/course-modules/list": teacherModulesListWithStatus(t, slts, "", "DRAFT"),
+	}}
+	srv := httptest.NewServer(stub.handler())
+	defer srv.Close()
+
+	bin := buildTestBinary(t)
+	_, stderr, code := runCLIWithJWT(t, bin, srv.URL, "test-jwt", nil,
+		"course", "teacher", "mint-modules",
+		"--course-id", "course-abc", "--alias", "teacher-01", "--module-code", "101", "--dry-run")
+	if code == 0 || stub.built {
+		t.Fatalf("exit %d, built %v; want a refusal before any build", code, stub.built)
+	}
+	if !strings.Contains(stderr, "--status APPROVED --slt-hash "+cardano.ComputeSltHash(slts)) {
+		t.Errorf("stderr does not give the approve command: %s", stderr)
 	}
 }
 

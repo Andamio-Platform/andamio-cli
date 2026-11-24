@@ -28,10 +28,14 @@ command reads each module's SLTs from its database record and builds the
 modules_manage transaction body itself.
 
 The body carries the SLT text exactly as the database holds it, in slt_index
-order, so the minted module's hash is the hash its record carries. Before
-anything is built, the command computes that hash locally and refuses a module
-whose stored slt_hash differs, one that is already ON_CHAIN, and one with no
-SLTs.
+order, so the minted module's hash is the hash its record carries. A record
+stores its slt_hash only when the module is approved, so only APPROVED modules
+are minted: approve a DRAFT first with 'course teacher update-module-status
+--status APPROVED --slt-hash <hash>'. Before anything is built, the command
+computes the hash locally and refuses a module that is already ON_CHAIN, one
+with no SLTs, one that is not APPROVED or has no stored slt_hash, and one whose
+stored slt_hash differs. The refusal for a DRAFT prints the approve command
+with the computed hash.
 
 This is an on-chain transaction. Like 'tx run', the command runs the full
 lifecycle: build, sign with your local .skey, submit, register and poll for
@@ -149,7 +153,16 @@ func buildManageModulesBody(alias, courseID string, modules []mintModuleSource) 
 			return manageModulesBody{}, nil, fmt.Errorf("module %s has no SLTs in its record. Import its outline first: andamio course import <dir> --course-id %s", m.Code, courseID)
 		}
 		computed := cardano.ComputeSltHash(m.SLTs)
-		if m.StoredHash != "" && !strings.EqualFold(m.StoredHash, computed) {
+		// The minted module is matched to its record by the record's slt_hash,
+		// which the API stores only on approval (cli#221). A DRAFT minted
+		// here would sit on chain unlinked, with its SLTs still editable.
+		if !strings.EqualFold(m.Status, "APPROVED") {
+			return manageModulesBody{}, nil, fmt.Errorf("module %s is %s; mint-modules mints only APPROVED modules, whose record stores the hash the chain will carry. Approve it first:\n  andamio course teacher update-module-status --course-id %s --module-code %s --status APPROVED --slt-hash %s", m.Code, statusOrUnset(m.Status), courseID, m.Code, computed)
+		}
+		if m.StoredHash == "" {
+			return manageModulesBody{}, nil, fmt.Errorf("module %s is APPROVED but its record has no slt_hash, so the minted module could not be linked to it. Set it back to DRAFT and approve it again with the hash:\n  andamio course teacher update-module-status --course-id %s --module-code %s --status DRAFT\n  andamio course teacher update-module-status --course-id %s --module-code %s --status APPROVED --slt-hash %s", m.Code, courseID, m.Code, courseID, m.Code, computed)
+		}
+		if !strings.EqualFold(m.StoredHash, computed) {
 			return manageModulesBody{}, nil, fmt.Errorf("module %s: its record carries slt_hash %s but its SLTs hash to %s. Minting it would create a module the record does not match; re-import the module before minting", m.Code, m.StoredHash, computed)
 		}
 
@@ -167,6 +180,15 @@ func buildManageModulesBody(alias, courseID string, modules []mintModuleSource) 
 		})
 	}
 	return body, summaries, nil
+}
+
+// statusOrUnset names a module status for an error message, so a record
+// without one doesn't print as "module 101 is ;".
+func statusOrUnset(status string) string {
+	if status == "" {
+		return "without a status"
+	}
+	return status
 }
 
 // moduleSourceFromItem reads one entry of the teacher course-modules list.
