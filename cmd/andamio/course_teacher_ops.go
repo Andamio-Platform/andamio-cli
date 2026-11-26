@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/Andamio-Platform/andamio-cli/internal/output"
@@ -77,6 +78,12 @@ partially completed), behavior depends on its current status:
   APPROVED       + matching hash -> no-op (exit 0)
   ON_CHAIN       + matching hash -> no-op (exit 0)
   hash mismatch  (any status)    -> error; suggests delete-module
+
+A DRAFT that was never approved has no stored hash (the API stores it only
+on approval), which is the usual state of a module minted before it was
+approved. Its SLTs are hashed instead: if they produce --slt-hash it
+advances to APPROVED, which links it to the minted module; if not, the
+command stops and changes nothing.
 
 With --output json, success branches emit RegisterModuleEnvelope (see
 the Go struct for the authoritative field-level contract). Scripts
@@ -263,7 +270,14 @@ func registerOrRecoverModule(ctx context.Context, c *client.Client, courseID, mo
 	// Case-insensitive compare: blake2b hex hashes are case-insensitive by convention and
 	// users commonly paste them from explorers that may use either case. A case-only
 	// difference would otherwise route to the destructive delete-module remediation.
-	if !strings.EqualFold(existing.SltHash, sltHash) {
+	if existing.SltHash == "" {
+		// Only a never-approved DRAFT gets here (lookupTeacherModule refuses an
+		// empty hash on any other status). Check its SLTs against the supplied
+		// hash before the DRAFT branch approves it with that hash (cli#222).
+		if draftErr := checkDraftSLTs(courseID, moduleCode, existing.SLTs, sltHash); draftErr != nil {
+			return nil, "", draftErr
+		}
+	} else if !strings.EqualFold(existing.SltHash, sltHash) {
 		return nil, "", mismatchError(courseID, moduleCode, existing.SltHash, sltHash, err)
 	}
 
@@ -373,6 +387,24 @@ func isModuleAlreadyExistsError(err error) bool {
 type existingModule struct {
 	SltHash string
 	Status  string
+	// SLTs is the record's SLT text in slt_index order. Read only for a DRAFT
+	// with no stored hash, whose SLTs are checked against --slt-hash instead.
+	SLTs []string
+}
+
+// checkDraftSLTs decides whether a DRAFT with no stored slt_hash (one that was
+// never approved, typically minted first) may be approved with the supplied
+// hash: its SLTs must hash to it, so the wrong content is never linked to the
+// minted module. The errors change nothing and don't point at delete-module.
+func checkDraftSLTs(courseID, moduleCode string, slts []string, sltHash string) error {
+	if len(slts) == 0 {
+		return fmt.Errorf("module %s is a DRAFT with no stored slt_hash, and its SLTs could not be read to check them against --slt-hash; nothing was changed. Import its outline (andamio course import <dir> --course-id %s), then run register-module again", moduleCode, courseID)
+	}
+	computed := cardano.ComputeSltHash(slts)
+	if !strings.EqualFold(computed, sltHash) {
+		return fmt.Errorf("module %s is a DRAFT whose SLTs hash to %s, not the supplied %s; nothing was changed. Check --slt-hash against the minted module (andamio course modules %s --output json), or re-import the SLTs that were minted, then run register-module again", moduleCode, computed, sltHash, courseID)
+	}
+	return nil
 }
 
 // normalizeSltHashFlag trims surrounding whitespace from a user-supplied --slt-hash
@@ -429,14 +461,22 @@ func lookupTeacherModule(ctx context.Context, c *client.Client, courseID, module
 			continue
 		}
 		sltHash := lookupStringField(m, "slt_hash", "course_module_slt_hash")
-		if sltHash == "" {
-			// Surface response-shape drift explicitly rather than letting an empty hash
-			// cascade into a mismatch error that points the user at destructive delete-module.
-			return nil, fmt.Errorf("module %s found in teacher list but slt_hash field is missing or empty (response shape may have changed)", moduleCode)
-		}
 		status := lookupStringField(m, "course_module_status", "module_status", "status")
 		if status == "" {
 			return nil, fmt.Errorf("module %s found in teacher list but status field is missing or empty (response shape may have changed)", moduleCode)
+		}
+		if sltHash == "" {
+			// The API stores slt_hash only on approval, so a DRAFT that was never
+			// approved has none: a normal state, not drift (cli#222). Pass it on
+			// with its SLTs for the recovery to check against the supplied hash.
+			if status == "DRAFT" {
+				src, _ := moduleSourceFromItem(m)
+				return &existingModule{Status: status, SLTs: src.SLTs}, nil
+			}
+			// Any other status should carry a hash. Surface it explicitly rather than
+			// letting an empty hash cascade into a mismatch error that points the user
+			// at destructive delete-module.
+			return nil, fmt.Errorf("module %s found in teacher list but slt_hash field is missing or empty (response shape may have changed)", moduleCode)
 		}
 		return &existingModule{
 			SltHash: sltHash,
