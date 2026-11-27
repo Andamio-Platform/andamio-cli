@@ -28,10 +28,17 @@ command reads each module's SLTs from its database record and builds the
 modules_manage transaction body itself.
 
 The body carries the SLT text exactly as the database holds it, in slt_index
-order, so the minted module's hash is the hash its record carries. Before
-anything is built, the command computes that hash locally and refuses a module
-whose stored slt_hash differs, one that is already ON_CHAIN, and one with no
-SLTs.
+order, so the minted module's hash is the hash of its SLTs. Before anything is
+built, the command computes that hash locally and refuses a module that is
+already ON_CHAIN, one with no SLTs, one whose stored slt_hash differs from it,
+and one that is not a DRAFT but has no stored slt_hash.
+
+A DRAFT is minted, but its record isn't linked to the minted module until it's
+approved, because a record stores its slt_hash only on approval. For each
+DRAFT, the command (and --dry-run) prints the command that links it, with the
+computed hash:
+  andamio course teacher register-module --course-id <id> --module-code <code> --slt-hash <hash>
+Run it once the mint is confirmed.
 
 This is an on-chain transaction. Like 'tx run', the command runs the full
 lifecycle: build, sign with your local .skey, submit, register and poll for
@@ -149,6 +156,13 @@ func buildManageModulesBody(alias, courseID string, modules []mintModuleSource) 
 			return manageModulesBody{}, nil, fmt.Errorf("module %s has no SLTs in its record. Import its outline first: andamio course import <dir> --course-id %s", m.Code, courseID)
 		}
 		computed := cardano.ComputeSltHash(m.SLTs)
+		// The minted module is matched to its record by the record's slt_hash,
+		// which the API stores only on approval (cli#221). A DRAFT is minted
+		// and linked afterwards with register-module (cli#222); see
+		// printDraftLinkHints.
+		if m.StoredHash == "" && !strings.EqualFold(m.Status, "DRAFT") {
+			return manageModulesBody{}, nil, fmt.Errorf("module %s is %s but its record has no slt_hash, so the minted module could not be linked to it. Set it back to DRAFT and approve it again with the hash:\n  andamio course teacher update-module-status --course-id %s --module-code %s --status DRAFT\n  andamio course teacher update-module-status --course-id %s --module-code %s --status APPROVED --slt-hash %s", m.Code, statusOrUnset(m.Status), courseID, m.Code, courseID, m.Code, computed)
+		}
 		if m.StoredHash != "" && !strings.EqualFold(m.StoredHash, computed) {
 			return manageModulesBody{}, nil, fmt.Errorf("module %s: its record carries slt_hash %s but its SLTs hash to %s. Minting it would create a module the record does not match; re-import the module before minting", m.Code, m.StoredHash, computed)
 		}
@@ -167,6 +181,28 @@ func buildManageModulesBody(alias, courseID string, modules []mintModuleSource) 
 		})
 	}
 	return body, summaries, nil
+}
+
+// printDraftLinkHints tells the user, on stderr, that each DRAFT in the mint
+// isn't linked to its record until it's approved, and gives the
+// register-module command that links it. summaries is in the order of
+// modules, as buildManageModulesBody returns it.
+func printDraftLinkHints(courseID string, modules []mintModuleSource, summaries []MintModuleSummary) {
+	for i, m := range modules {
+		if !strings.EqualFold(m.Status, "DRAFT") || i >= len(summaries) {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "Module %s is a DRAFT: its record isn't linked until it's approved. Once the mint is confirmed, link it with:\n  andamio course teacher register-module --course-id %s --module-code %s --slt-hash %s\n", m.Code, courseID, m.Code, summaries[i].SltHash)
+	}
+}
+
+// statusOrUnset names a module status for an error message, so a record
+// without one doesn't print as "module 101 is ;".
+func statusOrUnset(status string) string {
+	if status == "" {
+		return "without a status"
+	}
+	return status
 }
 
 // moduleSourceFromItem reads one entry of the teacher course-modules list.
@@ -286,13 +322,17 @@ func runCourseTeacherMintModules(cmd *cobra.Command, args []string) error {
 	}
 
 	if dryRun {
-		return printManageBodyPreview(ManageBodyPreview{
+		if err := printManageBodyPreview(ManageBodyPreview{
 			DryRun:   true,
 			Endpoint: modulesManageEndpoint,
 			TxType:   modulesManageTxType,
 			Body:     body,
 			Modules:  summaries,
-		}, isJSON)
+		}, isJSON); err != nil {
+			return err
+		}
+		printDraftLinkHints(courseID, sources, summaries)
+		return nil
 	}
 
 	if !isJSON {
@@ -302,7 +342,11 @@ func runCourseTeacherMintModules(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return runManageTx(cmd, cfg, c, modulesManageEndpoint, modulesManageTxType, courseID, body, "Modules minted.")
+	if err := runManageTx(cmd, cfg, c, modulesManageEndpoint, modulesManageTxType, courseID, body, "Modules minted."); err != nil {
+		return err
+	}
+	printDraftLinkHints(courseID, sources, summaries)
+	return nil
 }
 
 // printManageBodyPreview writes a --dry-run preview. JSON mode prints the

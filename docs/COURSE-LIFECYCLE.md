@@ -172,7 +172,7 @@ andamio course teacher mint-modules \
 
 The command reads the module's SLTs from the record Step 4 created and builds the `modules_manage` body itself, so the SLT texts in the transaction are the imported ones, byte for byte. It computes the SLT hash first and refuses a module whose record carries a different `slt_hash`, one already `ON_CHAIN`, and one with no SLTs. `--module-code` is repeatable, and `--dry-run` prints the body without building anything. The command runs the same build, sign, submit, register and poll lifecycle as `tx run`.
 
-When the transaction confirms and andamioscan indexes it, the module reads `ON_CHAIN`: the gateway matches the on-chain module to the DB record by SLT hash.
+The module that Step 4 imported is a DRAFT. A record stores its `slt_hash` only on approval, and the gateway matches the on-chain module to the record by that hash, so a minted DRAFT isn't linked until it's approved. The command prints the `register-module` command for each DRAFT, hash included: run it in Step 6 once the mint is confirmed. An APPROVED module reads `ON_CHAIN` once andamioscan indexes the mint.
 
 **Verify**: A `state: updated` response means the gateway successfully matched and synced. Proceed to Step 7.
 
@@ -180,9 +180,9 @@ If the response shows `state: failed`, the gateway could not match the module. P
 
 If the TX fails to build or submit, nothing on the module changed. Fix the cause and submit again.
 
-### Step 6: Register module (recovery only)
+### Step 6: Register module
 
-This step is only needed if Step 5 returned `state: failed`, meaning the gateway could not automatically link the on-chain module to the DB record. After `mint-modules` the minted hash is the record's hash, so this applies mainly to a module minted with `tx run` and a hand-written body.
+Run this after minting a DRAFT, with the command Step 5 printed. It checks the draft's SLTs against the hash and approves the module, which links it to the minted one. It also recovers a module that Step 5 returned `state: failed` for, such as one minted with `tx run` and a hand-written body.
 
 Manually link them by providing the SLT hash:
 
@@ -488,7 +488,7 @@ Recommended sequence for creating a course with modules:
 | 3 | Prepare `outline.md`, `lesson-N.md` files | Local content ready |
 | 4 | `course import --create` | DRAFT module in DB with SLT hash |
 | 5 | `tx run .../modules/manage` | Modules minted on-chain, read as ON_CHAIN once indexed |
-| 6 | `course teacher register-module` | (Recovery only) Manual hash link if Step 5 failed |
+| 6 | `course teacher register-module` | Link a minted DRAFT (or recover a failed match) |
 | 7 | `course modules <course-id> --output json` | Confirms the module reads ON_CHAIN and live |
 | 8 | `course import` (no `--create`) | Update content anytime (SLTs locked, content open) |
 

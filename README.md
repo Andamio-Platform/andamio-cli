@@ -489,7 +489,7 @@ andamio course teacher mint-modules \
   --skey ./payment.skey
 ```
 
-The command reads each module's SLTs from the record step 4 created and builds the `modules_manage` transaction itself, so you never write the body. The body carries the SLT text exactly as the record holds it, so each minted module's hash is the `slt_hash` on its record. Once andamioscan indexes the mint, the module reads `ON_CHAIN` with no further step. Add `--dry-run` to print the body without building anything.
+The command reads each module's SLTs from the record step 4 created and builds the `modules_manage` transaction itself, so you never write the body. The body carries the SLT text exactly as the record holds it, so each minted module's hash is the `slt_hash` on its record. A module that step 4 imported is a DRAFT, and its record isn't linked to the minted module until it's approved. So for each DRAFT the command prints a `register-module` command with the hash. Run it once the mint is confirmed (step 6). An APPROVED module reads `ON_CHAIN` once andamioscan indexes the mint, with no further step. Add `--dry-run` to print the body without building anything.
 
 To write the body by hand instead, use `tx run`:
 
@@ -501,9 +501,9 @@ andamio tx run /v2/tx/course/teacher/modules/manage \
   --instance-id <course-id>
 ```
 
-### 6. Link On-Chain Modules to DB (hand-written `tx run` only)
+### 6. Link On-Chain Modules to DB
 
-Skip this step after `mint-modules`. It applies only to a module minted with `andamio tx run /v2/tx/course/teacher/modules/manage` and a hand-written body. A minted module reads `ON_CHAIN` once andamioscan indexes it with the SLT hash its DB record carries. If one does not, link it by `slt_hash`:
+After `mint-modules`, run the `register-module` command it printed for each DRAFT. It checks the draft's SLTs against the hash and approves the module, which links it. The same command links a module minted with `tx run` and a hand-written body that doesn't read `ON_CHAIN` once indexed:
 
 ```bash
 andamio course teacher register-module \
