@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Andamio-Platform/andamio-cli/internal/apierr"
+	"github.com/Andamio-Platform/andamio-cli/internal/cardano"
 	"github.com/Andamio-Platform/andamio-cli/internal/client"
 	"github.com/Andamio-Platform/andamio-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -250,7 +251,7 @@ func TestLookupTeacherModule(t *testing.T) {
 					map[string]interface{}{
 						"content": map[string]interface{}{
 							"course_module_code": "101",
-							"module_status":      "DRAFT",
+							"module_status":      "APPROVED",
 						},
 					},
 				},
@@ -375,6 +376,24 @@ func strPtr(s string) *string { return &s }
 // but every observable contract of the envelope — key presence, action/status values,
 // advanced_from nullability, response nesting — is locked in here.
 func TestRegisterOrRecoverModule(t *testing.T) {
+	// cli#222: a DRAFT that was never approved, as the teacher list returns it.
+	draftSLTs := []string{"Learner can a", "Learner can b"}
+	draftHash := cardano.ComputeSltHash(draftSLTs)
+	neverApprovedDraft := func(slts []string) map[string]interface{} {
+		items := make([]interface{}, len(slts))
+		for i, s := range slts {
+			items[i] = map[string]interface{}{"slt_index": i + 1, "slt_text": s}
+		}
+		return map[string]interface{}{
+			"data": []interface{}{
+				map[string]interface{}{"content": map[string]interface{}{
+					"course_module_code": "101",
+					"module_status":      "DRAFT",
+					"slts":               items,
+				}},
+			},
+		}
+	}
 	tests := []struct {
 		name               string
 		suppliedHash       string
@@ -499,6 +518,25 @@ func TestRegisterOrRecoverModule(t *testing.T) {
 				},
 			},
 			wantErrSubstr: "stored",
+		},
+		{
+			name:             "conflict + never-approved DRAFT whose SLTs hash to the supplied hash, action=advanced",
+			suppliedHash:     draftHash,
+			registerStatus:   http.StatusConflict,
+			listResponse:     neverApprovedDraft(draftSLTs),
+			wantAction:       "advanced",
+			wantStatus:       "APPROVED",
+			wantSltHash:      draftHash,
+			wantAdvancedFrom: strPtr("DRAFT"),
+			wantResponseNil:  false,
+			wantSuccessMsg:   "Module 101: advanced from DRAFT to APPROVED.",
+		},
+		{
+			name:           "conflict + never-approved DRAFT with no readable SLTs errors, nothing changed",
+			suppliedHash:   draftHash,
+			registerStatus: http.StatusConflict,
+			listResponse:   neverApprovedDraft(nil),
+			wantErrSubstr:  "could not be read",
 		},
 		{
 			// Covers the non-conflict error path in registerOrRecoverModule. Guards the
@@ -1008,4 +1046,77 @@ func TestCourseHelpNamesOnlyCurrentModuleStatuses(t *testing.T) {
 		}
 	}
 	walk(courseCmd)
+}
+
+// cli#222: a never-approved DRAFT (no stored hash) is passed on with its SLTs,
+// not reported as response-shape drift.
+func TestLookupTeacherModule_NeverApprovedDraftCarriesSLTs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": []interface{}{
+				map[string]interface{}{"content": map[string]interface{}{
+					"course_module_code": "101",
+					"module_status":      "DRAFT",
+					"slts": []interface{}{
+						map[string]interface{}{"slt_index": 2, "slt_text": "second"},
+						map[string]interface{}{"slt_index": 1, "slt_text": "first"},
+					},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := client.New(&config.Config{BaseURL: srv.URL})
+	got, err := lookupTeacherModule(context.Background(), c, "course-x", "101")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got.Status != "DRAFT" || got.SltHash != "" {
+		t.Errorf("Status/SltHash = %q/%q, want DRAFT/empty", got.Status, got.SltHash)
+	}
+	if len(got.SLTs) != 2 || got.SLTs[0] != "first" || got.SLTs[1] != "second" {
+		t.Errorf("SLTs = %q, want [first second] in slt_index order", got.SLTs)
+	}
+}
+
+// cli#222: when a never-approved DRAFT's SLTs don't produce the supplied hash,
+// register-module approves nothing and doesn't send the user to delete-module.
+func TestRegisterOrRecover_NeverApprovedDraftWithOtherSLTsChangesNothing(t *testing.T) {
+	updateCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/course/teacher/course-module/register":
+			http.Error(w, "course_module_code already exists in this course", http.StatusConflict)
+		case "/api/v2/course/teacher/course-modules/list":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"data": []interface{}{
+					map[string]interface{}{"content": map[string]interface{}{
+						"course_module_code": "101",
+						"module_status":      "DRAFT",
+						"slts":               []interface{}{map[string]interface{}{"slt_index": 1, "slt_text": "edited after the mint"}},
+					}},
+				},
+			})
+		case "/api/v2/course/teacher/course-module/update-status":
+			updateCalled = true
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c := client.New(&config.Config{BaseURL: srv.URL})
+	supplied := cardano.ComputeSltHash([]string{"what was minted"})
+	envelope, _, err := registerOrRecoverModule(context.Background(), c, "course-x", "101", supplied, true)
+	if err == nil || envelope != nil {
+		t.Fatalf("err = %v, envelope = %v; want an error and no envelope", err, envelope)
+	}
+	if updateCalled {
+		t.Error("update-status was called: the draft was approved with a hash its SLTs don't produce")
+	}
+	if !strings.Contains(err.Error(), "nothing was changed") || strings.Contains(err.Error(), "delete-module") {
+		t.Errorf("err = %v, want 'nothing was changed' and no delete-module suggestion", err)
+	}
 }
