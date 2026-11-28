@@ -147,6 +147,13 @@ andamio dev logout
 andamio dev refresh
 andamio dev status
 andamio exit-codes
+andamio init
+name: alias | shorthand:  | type: string
+name: blockfrost-id | shorthand:  | type: string
+name: course-title | shorthand:  | type: string
+name: keys-dir | shorthand:  | type: string
+name: project-title | shorthand:  | type: string
+name: skip-fund-check | shorthand:  | type: bool
 andamio manager
 andamio manager projects
 andamio project
